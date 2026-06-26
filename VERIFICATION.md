@@ -17,6 +17,29 @@
 - Native-path routing returns the `Agent` tool instruction (no job, no API call).
 - Codex regression: the installed `openai-codex` plugin is untouched (its commands still present).
 
+## Empirical results from live runs (disposable sandboxes)
+
+Real cross-harness runs against a buggy `add.js` in throwaway `/tmp` repos:
+
+- **codex reviewer** → `completed`, valid structured review, correctly flagged the
+  subtraction bug. codex follows the JSON contract reliably. (A real run also
+  found a bug in our codex adapter — see Task 9.)
+- **agy worker** → produced the **correct patch** (`a - b` → `a + b`) inside the
+  ephemeral worktree; the main tree was untouched. The patch is the deliverable
+  (Task 11), so this is a success even though agy replied in prose.
+- **agy reviewer** → **unreliable.** Even with the emphatic JSON-only contract
+  (Task 12), Gemini Flash in headless mode derailed — it fixated on its own
+  `--dangerously-skip-permissions` flag and **read files outside the worktree**
+  (the user's `~/.gemini/.../settings.json`) instead of reviewing. Conclusion:
+  **use codex/claude for reviews; use agy only as a worker.**
+
+Two safety consequences, both confirmed live:
+- Worktree isolation bounds a worker's *intended writes* but does NOT sandbox the
+  process — agy roamed the filesystem with skip-permissions. Real OS sandboxing
+  is the actual fix.
+- Reviewers (Task 10) and workers must therefore only ever run against a
+  disposable sandbox until OS-level sandboxing lands.
+
 ## DEFERRED — live worker/reviewer runs
 
 Running a **real** `agy`/`claude` worker or reviewer end-to-end is intentionally
