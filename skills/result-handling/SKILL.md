@@ -52,10 +52,10 @@ from a review is forbidden, even when the fix looks obvious.
 
 - **codex / claude** — emit structured findings/result JSON: present findings by
   severity, preserve evidence boundaries.
-- **agy** — for a *worker*, the **patch is the deliverable** (a `completed` worker
-  may have `resultValid: false` — that just means it replied in prose; show the
-  patch). agy *reviews* are unreliable (it narrates on Flash) — prefer codex/claude
-  for reviews; if an agy review came back invalid, show its prose and say so.
+- **agy** — reviews work (on its default Gemini 3.1 Pro): present findings like any
+  other harness. For a *worker*, the **patch is the deliverable** (a `completed`
+  worker may have `resultValid: false` — that just means it replied in prose; show
+  the patch).
 
 ## Why this matters
 

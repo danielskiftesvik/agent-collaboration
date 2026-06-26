@@ -35,7 +35,7 @@ The companion appends the harness's output contract automatically — don't hand
 |---|---|---|
 | **codex** (GPT-5.x) | reviewer **and** worker; reliable JSON | [references/codex.md](references/codex.md) |
 | **claude** | reviewer **and** worker; native `Agent` tool when same-harness | [references/claude.md](references/claude.md) |
-| **agy** (Gemini) | **worker only** — strong patches, unreliable reviews | [references/agy.md](references/agy.md) |
+| **agy** (Gemini) | reviewer **and** worker on its default Gemini 3.1 Pro (don't pass `--model`) | [references/agy.md](references/agy.md) |
 
 Each guide has the model-specific style, copy-paste recipes, and anti-patterns.
 

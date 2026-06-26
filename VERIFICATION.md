@@ -28,11 +28,13 @@ Real cross-harness runs against a buggy `add.js` in throwaway `/tmp` repos:
 - **agy worker** → produced the **correct patch** (`a - b` → `a + b`) inside the
   ephemeral worktree; the main tree was untouched. The patch is the deliverable
   (Task 11), so this is a success even though agy replied in prose.
-- **agy reviewer** → **unreliable.** Even with the emphatic JSON-only contract
-  (Task 12), Gemini Flash in headless mode derailed — it fixated on its own
-  `--dangerously-skip-permissions` flag and **read files outside the worktree**
-  (the user's `~/.gemini/.../settings.json`) instead of reviewing. Conclusion:
-  **use codex/claude for reviews; use agy only as a worker.**
+- **agy reviewer** → **works** (verified 2/2 via the companion: `completed`,
+  `resultValid: true`, valid findings) on agy's default **Gemini 3.1 Pro**.
+  Earlier this looked broken, but the cause was two adapter bugs, not agy:
+  (1) `-p` was placed first, so agy leaked later flags into the prompt and
+  corrupted it; (2) forcing `--model` downgraded agy to **Flash**, which narrates
+  instead of emitting JSON. Fixed by invoking `agy [flags] … -p <brief>` (flags
+  first, `-p <brief>` last) with **no `--model`**. agy is a worker **and** reviewer.
 
 Two safety consequences, both confirmed live:
 - Worktree isolation bounds a worker's *intended writes* but does NOT sandbox the

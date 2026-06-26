@@ -11,10 +11,9 @@ strongest reasons the change should NOT ship. Review-only: do not fix or apply.
 Raw arguments:
 `$ARGUMENTS`
 
-Prefer **codex** or **claude** as the worker — agy reviews are unreliable (see the
-`harness-prompting` skill). Gather the diff to review (`git diff` / `git diff --cached`)
-and pass it as the brief; it becomes the template's `{{REVIEW_INPUT}}`. Use `--focus`
-to weight an area.
+Any worker (**codex**, **claude**, or **agy**) can review. Gather the diff to review
+(`git diff` / `git diff --cached`) and pass it as the brief; it becomes the
+template's `{{REVIEW_INPUT}}`. Use `--focus` to weight an area.
 
 ```bash
 node "${CLAUDE_PLUGIN_ROOT}/scripts/agent-companion.mjs" adversarial-review $ARGUMENTS --driver claude

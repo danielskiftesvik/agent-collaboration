@@ -10,10 +10,10 @@ Request a cross-harness review. Review-only: do not fix issues or apply patches.
 Raw arguments:
 `$ARGUMENTS`
 
-Prefer **codex** or **claude** as the worker — agy reviews are unreliable (see the
-`harness-prompting` skill). Gather the diff (`git diff` / `git diff --cached`) and
-pass it as the brief; it becomes the review template's `{{REVIEW_INPUT}}`. Use
-`--focus` to weight an area.
+Any worker (**codex**, **claude**, or **agy**) can review — agy reviews on its
+default Gemini 3.1 Pro. Gather the diff (`git diff` / `git diff --cached`) and pass
+it as the brief; it becomes the review template's `{{REVIEW_INPUT}}`. Use `--focus`
+to weight an area.
 
 ```bash
 node "${CLAUDE_PLUGIN_ROOT}/scripts/agent-companion.mjs" review $ARGUMENTS --driver claude
