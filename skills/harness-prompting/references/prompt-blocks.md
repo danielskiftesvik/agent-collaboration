@@ -80,6 +80,14 @@ Do not present inferences as facts. Label hypotheses clearly.
 </grounding_rules>
 ```
 
+### `citation_rules`
+Use when external research or quotes matter.
+```xml
+<citation_rules>
+Back important claims with explicit references to the sources you inspected. Prefer primary sources.
+</citation_rules>
+```
+
 ## Safety and scope
 
 ### `action_safety`
@@ -90,6 +98,15 @@ Keep changes tightly scoped to the stated task.
 Avoid unrelated refactors, renames, or cleanup unless required for correctness.
 Call out any risky or irreversible action before taking it.
 </action_safety>
+```
+
+### `tool_persistence_rules`
+Use for long-running, tool-heavy tasks.
+```xml
+<tool_persistence_rules>
+Keep using tools until you have enough evidence to finish confidently.
+Do not abandon the workflow after a partial read when another targeted check would change the answer.
+</tool_persistence_rules>
 ```
 
 ## Task-specific
@@ -108,4 +125,12 @@ Use for review and adversarial inspection.
 <dig_deeper_nudge>
 After the first plausible issue, check for second-order failures, empty-state behavior, retries, stale state, and rollback paths before finalizing.
 </dig_deeper_nudge>
+```
+
+### `progress_updates`
+Use when the run may take a while.
+```xml
+<progress_updates>
+If you provide progress updates, keep them brief and outcome-based. Mention only major phase changes or blockers.
+</progress_updates>
 ```
