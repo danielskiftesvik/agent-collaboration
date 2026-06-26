@@ -23,6 +23,12 @@ the default. Why pinning matters: agy's default model is a **shared setting** th
 separate interactive agy session can switch (e.g. to Flash) — pinning keeps our runs
 deterministic on Pro regardless. Override with `AGENT_COLLAB_AGY_MODEL` (a label).
 
+**Flash also reviews fine.** With the fixed ordering + the strict template/contract,
+`--model "Gemini 3.5 Flash (High)"` produced valid schema-conformant reviews 3/3
+(the old "Flash narrates instead of JSON" was the prompt-corruption bug, not Flash).
+We default to **Pro** for the strongest reasoning, but Flash is a legitimate
+faster/cheaper reviewer — set `AGENT_COLLAB_AGY_MODEL="Gemini 3.5 Flash (High)"`.
+
 ## How to prompt agy
 
 - **Reviews:** use `/agent-collab:review` or `/agent-collab:adversarial-review` —
@@ -41,6 +47,8 @@ Make only that change.
 ```
 
 ## Anti-patterns (agy-specific)
+- Assuming Flash can't review — it can (3/3 valid with the strict template). The
+  old failure was prompt corruption, not the model.
 - `--model gemini-3.1-pro` / `--model pro` — not valid values; use the full label.
 - Putting `-p`/the prompt before other flags — the rest leaks into the prompt and
   flags (incl. `--model`) are never parsed (the companion handles ordering).
