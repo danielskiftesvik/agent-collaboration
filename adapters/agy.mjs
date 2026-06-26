@@ -14,10 +14,19 @@ export default defineAdapter({
     const seconds = Math.ceil((timeoutMs ?? 300000) / 1000);
     const args = ["-p", "--dangerously-skip-permissions"];
     
-    // Default to gemini-2.5-pro for reviews to ensure structured JSON compliance
-    const defaultModel = role === "reviewer" ? "gemini-2.5-pro" : "gemini-2.5-flash";
-    const model = process.env.AGENT_COLLAB_AGY_MODEL || defaultModel;
-    args.push("--model", model);
+    // Support fine-grained model overrides or default to latest models within classes.
+    // For reviewers, default to gemini-3.1-pro-preview for advanced reasoning.
+    // For workers, default to using the CLI's default model (so it is always the latest)
+    // unless explicitly overridden.
+    if (role === "reviewer") {
+      const model = process.env.AGENT_COLLAB_AGY_MODEL_PRO || process.env.AGENT_COLLAB_AGY_MODEL || "gemini-3.1-pro-preview";
+      args.push("--model", model);
+    } else {
+      const model = process.env.AGENT_COLLAB_AGY_MODEL_FLASH || process.env.AGENT_COLLAB_AGY_MODEL;
+      if (model) {
+        args.push("--model", model);
+      }
+    }
 
     if (workspace) args.push("--add-dir", workspace);
     args.push("--print-timeout", `${seconds}s`);
