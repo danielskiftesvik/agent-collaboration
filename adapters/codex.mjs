@@ -36,10 +36,17 @@ export default defineAdapter({
     return { command: process.execPath, args };
   },
   parseOutput({ stdout }) {
-    const obj = extractJson(stdout);
-    const answerText =
-      obj && typeof obj.output === "string" ? obj.output : (stdout ?? "").trim();
-    return { answerText, structured: obj };
+    // codex-companion `task --json` wraps the answer in an envelope:
+    // { status, threadId, rawOutput, touchedFiles, reasoningSummary }.
+    // The agent's actual answer is the rawOutput string.
+    const env = extractJson(stdout);
+    if (env && typeof env.rawOutput === "string") {
+      return { answerText: env.rawOutput, structured: null };
+    }
+    if (env && typeof env.output === "string") {
+      return { answerText: env.output, structured: null };
+    }
+    return { answerText: (stdout ?? "").trim(), structured: null };
   },
   probe() {
     const companion = resolveCompanion();

@@ -68,6 +68,20 @@ test("claude parseOutput falls back to raw stdout when not a JSON envelope", () 
   assert.equal(r.answerText, "plain text answer");
 });
 
+test("codex parseOutput unwraps rawOutput from the companion envelope", () => {
+  const codex = getAdapter("codex");
+  const envelope = JSON.stringify({
+    status: 0,
+    threadId: "t",
+    rawOutput: '{"verdict":"approve","summary":"ok","findings":[],"next_steps":[]}',
+    touchedFiles: [],
+    reasoningSummary: []
+  });
+  const r = codex.parseOutput({ stdout: envelope });
+  assert.equal(r.answerText, '{"verdict":"approve","summary":"ok","findings":[],"next_steps":[]}');
+  assert.equal(r.structured, null);
+});
+
 test("probe reports availability and version from the binary", () => {
   const bin = stubBin('if (process.argv.includes("--version")) { console.log("1.0.12"); }');
   process.env.AGENT_COLLAB_AGY_BIN = bin;
