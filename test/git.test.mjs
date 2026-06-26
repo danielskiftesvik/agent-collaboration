@@ -31,6 +31,23 @@ test("captureWorkingDiff + applyPatch reproduces an edit on a clean checkout", (
   assert.equal(fs.readFileSync(path.join(repo, "new.txt"), "utf8"), "brand new\n");
 });
 
+test("captureWorkingDiff(baseRef) captures changes even after the worker COMMITS them", () => {
+  const repo = makeRepo();
+  const base = headRef(repo);
+
+  // A worker that edits AND commits inside its worktree (agy does this).
+  fs.writeFileSync(path.join(repo, "README.md"), "seed\nfixed\n");
+  git(["add", "-A"], repo);
+  git(["commit", "-q", "-m", "worker committed the fix"], repo);
+
+  // Working tree is now clean and HEAD has moved.
+  assert.equal(captureWorkingDiff(repo).trim(), "", "no baseRef misses committed work");
+
+  const diff = captureWorkingDiff(repo, base);
+  assert.match(diff, /README\.md/);
+  assert.match(diff, /fixed/);
+});
+
 test("applyPatch --3way merges around an unrelated change", () => {
   const repo = makeRepo();
   // Base file with several lines.

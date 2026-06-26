@@ -169,7 +169,7 @@ export function runWorkerSync(cwd, opts) {
   if (role === "worker") {
     let diff = "";
     try {
-      diff = captureWorkingDiff(workspace);
+      diff = captureWorkingDiff(workspace, baseRef);
     } catch {
       diff = "";
     }

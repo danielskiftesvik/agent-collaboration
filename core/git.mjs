@@ -6,15 +6,18 @@ export function headRef(cwd) {
 }
 
 /**
- * Capture all working-tree changes (including new files) as a unified diff,
- * without leaving the index modified. Staging is used only transiently so that
- * untracked files appear in the patch with their blob index lines (which
- * `git apply --3way` needs for its merge fallback).
+ * Capture a worker's changes as a unified diff. When `baseRef` is given, the
+ * diff is taken from that commit to the current staged state — so it captures
+ * the worker's full delta whether it left changes uncommitted OR committed them
+ * inside the worktree (autonomous harnesses like agy often `git commit`). New
+ * files appear with their blob index lines (which `git apply --3way` needs).
+ * The index is staged transiently; the working tree is untouched.
  */
-export function captureWorkingDiff(cwd) {
+export function captureWorkingDiff(cwd, baseRef) {
   runOk("git", ["add", "-A"], { cwd });
-  const diff = runOk("git", ["diff", "--cached"], { cwd });
-  run("git", ["reset", "-q"], { cwd }); // restore index; working tree untouched
+  const args = ["diff", "--cached", ...(baseRef ? [baseRef] : [])];
+  const diff = runOk("git", args, { cwd });
+  run("git", ["reset", "-q"], { cwd });
   return diff;
 }
 
