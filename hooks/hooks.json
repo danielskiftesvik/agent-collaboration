@@ -1,0 +1,16 @@
+{
+  "description": "Opt-in stop-time cross-harness review gate. No-op unless enabled via `agent-companion setup --gate on`.",
+  "hooks": {
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/scripts/stop-review-gate-hook.mjs\"",
+            "timeout": 30
+          }
+        ]
+      }
+    ]
+  }
+}
