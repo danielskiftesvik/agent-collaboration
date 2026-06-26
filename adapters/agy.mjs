@@ -10,9 +10,15 @@ const bin = () => process.env.AGENT_COLLAB_AGY_BIN || "agy";
 export default defineAdapter({
   name: "agy",
   supportsStructuredOutput: false,
-  buildCommand({ brief, workspace, timeoutMs }) {
+  buildCommand({ role, brief, workspace, timeoutMs }) {
     const seconds = Math.ceil((timeoutMs ?? 300000) / 1000);
     const args = ["-p", "--dangerously-skip-permissions"];
+    
+    // Default to gemini-2.5-pro for reviews to ensure structured JSON compliance
+    const defaultModel = role === "reviewer" ? "gemini-2.5-pro" : "gemini-2.5-flash";
+    const model = process.env.AGENT_COLLAB_AGY_MODEL || defaultModel;
+    args.push("--model", model);
+
     if (workspace) args.push("--add-dir", workspace);
     args.push("--print-timeout", `${seconds}s`);
     args.push(brief); // Go-style flags: positional prompt must come last

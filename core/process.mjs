@@ -1,19 +1,144 @@
 // Derived from codex-plugin-cc (Apache-2.0, Copyright 2026 OpenAI).
 import { spawnSync } from "node:child_process";
+import fs from "node:fs";
+import path from "node:path";
+import os from "node:os";
+
+/** Helper to generate macOS sandbox-exec profile contents. */
+function generateMacSandboxProfile(workspace, artifactDir) {
+  const home = process.env.HOME || "/Users";
+  const sensitiveDirs = [
+    path.join(home, ".ssh"),
+    path.join(home, ".gemini"),
+    path.join(home, ".config"),
+    path.join(home, ".aws"),
+    path.join(home, ".kube"),
+    path.join(home, ".netrc")
+  ];
+
+  const profileLines = [
+    "(version 1)",
+    "(deny default)",
+    "(allow process-fork)",
+    "(allow process-exec)",
+    "(allow network-outbound)"
+  ];
+
+  // Deny read/write on sensitive paths
+  for (const dir of sensitiveDirs) {
+    profileLines.push(`(deny file-read* file-write* (subpath "${dir}"))`);
+  }
+
+  // Allow read-only access globally (so system binaries/node modules can be read)
+  profileLines.push("(allow file-read*)");
+
+  // Allow full read/write to the specific workspace, artifact directory, and standard temp paths
+  const allowedPaths = [
+    workspace,
+    artifactDir,
+    "/tmp",
+    "/private/var",
+    "/var/folders"
+  ];
+
+  for (const p of allowedPaths) {
+    profileLines.push(`(allow file* (subpath "${p}"))`);
+  }
+
+  return profileLines.join("\n");
+}
+
+/** Check if bubblewrap is available on Linux. */
+let isBwrapAvailableCached = null;
+function isBwrapAvailable() {
+  if (isBwrapAvailableCached !== null) return isBwrapAvailableCached;
+  try {
+    const r = spawnSync("which", ["bwrap"], { encoding: "utf8" });
+    isBwrapAvailableCached = r.status === 0;
+  } catch {
+    isBwrapAvailableCached = false;
+  }
+  return isBwrapAvailableCached;
+}
 
 /** Run a command synchronously and return { status, stdout, stderr } without throwing. */
 export function run(command, args = [], opts = {}) {
-  const result = spawnSync(command, args, {
-    encoding: "utf8",
-    maxBuffer: 64 * 1024 * 1024,
-    ...opts
-  });
-  return {
-    status: result.status ?? (result.signal ? -1 : null),
-    stdout: result.stdout ?? "",
-    stderr: result.stderr ?? "",
-    error: result.error
-  };
+  let finalCommand = command;
+  let finalArgs = args;
+  let tempProfileFile = null;
+
+  if (opts.sandbox) {
+    const platform = os.platform();
+    if (platform === "darwin") {
+      const workspace = opts.sandboxWorkspace || opts.cwd || process.cwd();
+      const artifactDir = opts.sandboxArtifactDir || workspace;
+      const profile = generateMacSandboxProfile(workspace, artifactDir);
+
+      const tempDir = os.tmpdir();
+      const profileName = `sandbox-${Math.random().toString(36).substring(2)}.sb`;
+      tempProfileFile = path.join(tempDir, profileName);
+      fs.writeFileSync(tempProfileFile, profile, "utf8");
+
+      finalCommand = "/usr/bin/sandbox-exec";
+      finalArgs = ["-f", tempProfileFile, command, ...args];
+    } else if (platform === "linux") {
+      if (isBwrapAvailable()) {
+        const workspace = opts.sandboxWorkspace || opts.cwd || process.cwd();
+        const artifactDir = opts.sandboxArtifactDir || workspace;
+
+        finalCommand = "bwrap";
+        finalArgs = [
+          "--ro-bind", "/usr", "/usr",
+          "--ro-bind-try", "/lib", "/lib",
+          "--ro-bind-try", "/lib64", "/lib64",
+          "--ro-bind-try", "/bin", "/bin",
+          "--ro-bind-try", "/sbin", "/sbin",
+          "--ro-bind-try", "/etc", "/etc",
+          "--ro-bind-try", "/var", "/var",
+          "--ro-bind-try", "/run", "/run",
+          "--ro-bind-try", "/sys", "/sys",
+          "--ro-bind-try", "/proc", "/proc",
+          "--ro-bind-try", "/dev", "/dev",
+          "--dir", "/tmp",
+          "--bind", workspace, workspace,
+          "--bind", artifactDir, artifactDir,
+          "--unshare-all",
+          "--share-net",
+          command,
+          ...args
+        ];
+      } else {
+        process.stderr.write("Warning: bubblewrap (bwrap) not found. Linux worker executed without sandbox isolation.\n");
+      }
+    }
+  }
+
+  const spawnOpts = { ...opts };
+  delete spawnOpts.sandbox;
+  delete spawnOpts.sandboxWorkspace;
+  delete spawnOpts.sandboxArtifactDir;
+
+  try {
+    const result = spawnSync(finalCommand, finalArgs, {
+      encoding: "utf8",
+      maxBuffer: 64 * 1024 * 1024,
+      ...spawnOpts
+    });
+    return {
+      status: result.status ?? (result.signal ? -1 : null),
+      stdout: result.stdout ?? "",
+      stderr: result.stderr ?? "",
+      error: result.error
+    };
+  } finally {
+    if (tempProfileFile && fs.existsSync(tempProfileFile)) {
+      try {
+        fs.unlinkSync(tempProfileFile);
+      } catch {
+        // ignore
+      }
+    }
+  }
 }
 
 /** Like run, but throws when the command exits non-zero. Returns stdout. */
@@ -26,3 +151,4 @@ export function runOk(command, args = [], opts = {}) {
   }
   return r.stdout;
 }
+

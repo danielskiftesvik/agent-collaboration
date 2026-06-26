@@ -1,6 +1,6 @@
 # Verification
 
-## Automated (run: `npm test` → 56 tests passing)
+## Automated (run: `npm test` → 63 tests passing)
 
 | Plan scenario | Covered by |
 |---|---|
@@ -10,6 +10,7 @@
 | Native path (driver == worker → no job) | `test/dispatch.test.mjs`, `test/cli.test.mjs` |
 | Malformed output → retry then fail | `test/dispatch.test.mjs` |
 | Worktree shared-state / outside-repo | `test/workspace.test.mjs` |
+| OS-level sandboxing (macOS / Linux) | `test/process.test.mjs` |
 
 ## Real binaries (read-only)
 
@@ -51,12 +52,9 @@ Before any live-harness run:
 1. Run it against a **throwaway copy/sandbox**, never the live working tree.
 2. Ensure the repo is committed first (clean `git status`).
 
-## KNOWN RISK — reviewer permissions (follow-up)
+## Hardening and Sandboxing (Task 14 Completed)
 
-`adapters/agy.mjs` passes `--dangerously-skip-permissions` and `runWorkerSync`
-runs a **reviewer in `cwd`** (the live tree). A misbehaving reviewer could
-therefore write/execute in the real tree. Recommended hardening (not yet
-applied — pending decision):
-- Reviewers run read-only (no skip-permissions; rely on the harness's read-only
-  mode), or inside a throwaway worktree whose changes are discarded.
-- Workers always run inside the ephemeral worktree (already the case).
+To prevent workers and reviewers from roaming the filesystem or making unauthorized edits/reads, we have implemented OS-level sandboxing:
+- **macOS (`sandbox-exec`)**: Generates an ephemeral sandbox profile that strictly permits read/write operations *only* inside the worktree/workspace, artifact directory, and standard temp paths (`/tmp`, `/private/var`, `/var/folders`). Outbound network access is allowed for API calls, but all sensitive user config directories (e.g., `~/.ssh`, `~/.gemini`, `~/.config`, `~/.aws`, `~/.kube`) are explicitly denied.
+- **Linux (`bwrap` / Bubblewrap)**: Restricts namespace and bind-mounts standard directories, confining writes strictly to the workspace and artifact directories.
+- **Configuration**: Toggleable globally via `agent-companion setup --sandbox on|off`, or overrideable via `AGENT_COLLAB_SANDBOX=off`.

@@ -7,7 +7,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { getAdapter, listAdapters } from "../adapters/index.mjs";
-import { resolveStateDir, appendJob, updateJob, getJob } from "./state.mjs";
+import { resolveStateDir, appendJob, updateJob, getJob, loadState } from "./state.mjs";
 import { createWorktree, removeWorktree } from "./workspace.mjs";
 import { headRef, captureWorkingDiff, applyPatch, checkPatchApplies } from "./git.mjs";
 import { run } from "./process.mjs";
@@ -130,13 +130,19 @@ export function runWorkerSync(cwd, opts) {
   let attempts = 0;
   let promptBrief = `${brief ?? ""}${contract}`;
 
+  const state = loadState(cwd);
+  const useSandbox = state.config.sandbox !== false && process.env.AGENT_COLLAB_SANDBOX !== "off";
+
   while (attempts < maxAttempts) {
     attempts += 1;
     const cmd = adapter.buildCommand({ role, brief: promptBrief, workspace, timeoutMs });
     const proc = run(cmd.command, cmd.args, {
       cwd: workspace,
       timeout: timeoutMs,
-      env: { ...process.env, ...(cmd.env ?? {}) }
+      env: { ...process.env, ...(cmd.env ?? {}) },
+      sandbox: useSandbox,
+      sandboxWorkspace: workspace,
+      sandboxArtifactDir: artifactDir
     });
     exitCode = proc.status;
     const parsed = adapter.parseOutput({

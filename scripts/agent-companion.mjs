@@ -10,7 +10,7 @@ import { listJobs, getJob, updateJob, sortJobsNewestFirst, loadState, saveState 
 import { isPidAlive } from "../core/heartbeat.mjs";
 import { renderSetup, renderJob, renderJobList } from "../core/render.mjs";
 
-const VALUE_FLAGS = new Set(["worker", "role", "driver", "base", "timeout", "gate"]);
+const VALUE_FLAGS = new Set(["worker", "role", "driver", "base", "timeout", "gate", "sandbox"]);
 const BOOL_FLAGS = new Set(["json", "apply", "wait", "background"]);
 
 function parseArgs(tokens) {
@@ -50,9 +50,14 @@ const cwd = process.cwd();
 
 switch (subcommand) {
   case "setup": {
-    if (options.gate) {
+    if (options.gate || options.sandbox) {
       const state = loadState(cwd);
-      state.config.stopReviewGate = options.gate === "on";
+      if (options.gate) {
+        state.config.stopReviewGate = options.gate === "on";
+      }
+      if (options.sandbox) {
+        state.config.sandbox = options.sandbox === "on";
+      }
       saveState(cwd, state);
     }
     const rows = runSetup();
@@ -142,7 +147,7 @@ switch (subcommand) {
     fail(
       [
         "usage: agent-companion <command>",
-        "  setup [--json] [--gate on|off]",
+        "  setup [--json] [--gate on|off] [--sandbox on|off]",
         "  delegate --worker <name> [--driver <name>] [--role worker|reviewer] [--apply] [--timeout s] <brief>",
         "  review  --worker <name> [--driver <name>] <brief>",
         "  status [jobId] [--json]",
