@@ -5,6 +5,7 @@ import os from "node:os";
 import path from "node:path";
 
 import { getAdapter, listAdapters } from "../adapters/index.mjs";
+import { pickLatestModel } from "../adapters/agy.mjs";
 
 function stubBin(body) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "ac-bin-"));
@@ -66,6 +67,21 @@ test("claude parseOutput falls back to raw stdout when not a JSON envelope", () 
   const claude = getAdapter("claude");
   const r = claude.parseOutput({ stdout: "plain text answer", stderr: "", exitCode: 0 });
   assert.equal(r.answerText, "plain text answer");
+});
+
+test("pickLatestModel selects the newest in-class label, preferring High", () => {
+  const models = [
+    "Gemini 3.5 Flash (High)",
+    "Gemini 3.1 Pro (Low)",
+    "Gemini 3.1 Pro (High)",
+    "Gemini 3.2 Pro (High)",
+    "Claude Opus 4.6 (Thinking)"
+  ];
+  assert.equal(pickLatestModel(models, "Pro"), "Gemini 3.2 Pro (High)");
+});
+
+test("pickLatestModel returns null when the class is absent", () => {
+  assert.equal(pickLatestModel(["Gemini 3.5 Flash (High)"], "Pro"), null);
 });
 
 test("agy.outputContract is an example-anchored, JSON-only instruction", () => {

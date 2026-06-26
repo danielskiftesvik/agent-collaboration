@@ -7,26 +7,59 @@ import { run } from "../core/process.mjs";
 
 const bin = () => process.env.AGENT_COLLAB_AGY_BIN || "agy";
 
+/** Pick the newest label in a model class from `agy models` output, preferring
+ *  a higher thinking level. Returns null when the class isn't present. This is
+ *  how we get "latest within class" without pinning a version that goes stale. */
+export function pickLatestModel(models, className) {
+  const re = new RegExp(`\\b${className}\\b`, "i");
+  const matching = models.filter((m) => re.test(m));
+  if (!matching.length) return null;
+  const version = (m) => {
+    const v = m.match(/(\d+(?:\.\d+)?)/);
+    return v ? parseFloat(v[1]) : 0;
+  };
+  const level = (m) => (/high/i.test(m) ? 2 : /medium/i.test(m) ? 1 : 0);
+  const score = (m) => version(m) * 10 + level(m);
+  return [...matching].sort((a, b) => score(b) - score(a))[0];
+}
+
+const _modelCache = new Map();
+function listModels() {
+  const b = bin();
+  if (_modelCache.has(b)) return _modelCache.get(b);
+  const r = run(b, ["models"]);
+  const list =
+    r.status === 0 ? r.stdout.split(/\r?\n/).map((s) => s.trim()).filter(Boolean) : [];
+  _modelCache.set(b, list);
+  return list;
+}
+
+/**
+ * Resolve the model for a role. Mirrors codex-plugin-cc's philosophy ("leave the
+ * model unset by default so the CLI's latest default is used; pin only on an
+ * explicit request"), with one addition: reviewers need strong reasoning + strict
+ * JSON, so we steer them to the LATEST "Pro" in its class rather than agy's
+ * headless default (which is a weak Flash). Never pins a specific version.
+ */
+function resolveModel(role) {
+  const envPro = process.env.AGENT_COLLAB_AGY_MODEL_PRO;
+  const envFlash = process.env.AGENT_COLLAB_AGY_MODEL_FLASH;
+  const envAny = process.env.AGENT_COLLAB_AGY_MODEL;
+  if (role === "reviewer") {
+    return envPro || envAny || pickLatestModel(listModels(), "Pro");
+  }
+  return envFlash || envAny || null; // unset => agy's own (latest) default
+}
+
 export default defineAdapter({
   name: "agy",
   supportsStructuredOutput: false,
   buildCommand({ role, brief, workspace, timeoutMs }) {
     const seconds = Math.ceil((timeoutMs ?? 300000) / 1000);
     const args = ["-p", "--dangerously-skip-permissions"];
-    
-    // Support fine-grained model overrides or default to latest models within classes.
-    // For reviewers, default to gemini-3.1-pro-preview for advanced reasoning.
-    // For workers, default to using the CLI's default model (so it is always the latest)
-    // unless explicitly overridden.
-    if (role === "reviewer") {
-      const model = process.env.AGENT_COLLAB_AGY_MODEL_PRO || process.env.AGENT_COLLAB_AGY_MODEL || "gemini-3.1-pro-preview";
-      args.push("--model", model);
-    } else {
-      const model = process.env.AGENT_COLLAB_AGY_MODEL_FLASH || process.env.AGENT_COLLAB_AGY_MODEL;
-      if (model) {
-        args.push("--model", model);
-      }
-    }
+
+    const model = resolveModel(role);
+    if (model) args.push("--model", model);
 
     if (workspace) args.push("--add-dir", workspace);
     args.push("--print-timeout", `${seconds}s`);

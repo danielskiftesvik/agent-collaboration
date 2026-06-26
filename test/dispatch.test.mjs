@@ -188,6 +188,8 @@ test("runWorkerSync retries on malformed output then fails after maxAttempts", (
   process.env.AC_COUNT_FILE = countFile;
   process.env.AGENT_COLLAB_AGY_BIN = stubBin(`
     import fs from 'node:fs';
+    // The reviewer path lists models first; don't count that as a task attempt.
+    if (process.argv.includes('models')) { process.stdout.write('Gemini 3.5 Flash (High)'); process.exit(0); }
     const f = process.env.AC_COUNT_FILE;
     const n = (fs.existsSync(f) ? Number(fs.readFileSync(f,'utf8')) : 0) + 1;
     fs.writeFileSync(f, String(n));
