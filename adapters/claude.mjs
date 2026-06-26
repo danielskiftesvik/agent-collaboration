@@ -15,6 +15,23 @@ export default defineAdapter({
     if (workspace) args.push("--add-dir", workspace);
     return { command: bin(), args };
   },
+  // Claude follows instructions well, so the contract can be concise/structured
+  // (no need for agy's emphatic example-anchoring).
+  outputContract(role) {
+    if (role === "reviewer") {
+      return (
+        "\n\n<output_contract>\nReturn ONLY a JSON object of the form:\n" +
+        '{"verdict":"approve"|"needs-attention","summary":string,' +
+        '"findings":[{"severity":"critical"|"high"|"medium"|"low","title":string,"body":string,' +
+        '"file":string,"line_start":int,"line_end":int,"confidence":0..1,"recommendation":string}],' +
+        '"next_steps":[string]}\nPut the highest-severity findings first. No prose outside the JSON.\n</output_contract>'
+      );
+    }
+    return (
+      "\n\n<output_contract>\nWhen done, return ONLY a JSON object of the form:\n" +
+      '{"status":"completed"|"failed"|"blocked","summary":string,"changed":boolean}\n</output_contract>'
+    );
+  },
   parseOutput({ stdout }) {
     const text = stdout ?? "";
     // Try the whole thing, then the last non-empty line (stream-json).

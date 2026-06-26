@@ -181,6 +181,35 @@ test("the worker prompt includes the required output schema on the first attempt
   delete process.env.AC_PROMPT_FILE;
 });
 
+test("a review (kind) uses the template + the harness output contract", () => {
+  isolateStateRoot();
+  const repo = makeRepo();
+  const promptFile = path.join(isolateStateRoot(), "p.txt");
+  process.env.AC_PROMPT_FILE = promptFile;
+  process.env.AGENT_COLLAB_AGY_BIN = stubBin(`
+    import fs from 'node:fs';
+    if (process.argv.includes('models')) { process.exit(0); }
+    fs.writeFileSync(process.env.AC_PROMPT_FILE, process.argv[process.argv.length - 1]);
+    process.stdout.write('\`\`\`json\\n{"verdict":"approve","summary":"ok","findings":[],"next_steps":[]}\\n\`\`\`');
+  `);
+
+  runWorkerSync(repo, {
+    driver: "claude",
+    worker: "agy",
+    role: "reviewer",
+    kind: "adversarial-review",
+    brief: "DIFF_TO_REVIEW_XYZ"
+  });
+
+  const sent = fs.readFileSync(promptFile, "utf8");
+  assert.match(sent, /<attack_surface>/, "uses the adversarial-review template");
+  assert.match(sent, /DIFF_TO_REVIEW_XYZ/, "review input injected");
+  assert.match(sent, /ONLY a JSON/i, "agy output contract injected into {{OUTPUT_CONTRACT}}");
+
+  delete process.env.AGENT_COLLAB_AGY_BIN;
+  delete process.env.AC_PROMPT_FILE;
+});
+
 test("runWorkerSync retries on malformed output then fails after maxAttempts", () => {
   isolateStateRoot();
   const repo = makeRepo();

@@ -12,6 +12,9 @@ import { createWorktree, removeWorktree } from "./workspace.mjs";
 import { headRef, captureWorkingDiff, applyPatch, checkPatchApplies } from "./git.mjs";
 import { run } from "./process.mjs";
 import { coerceArtifact } from "./schema.mjs";
+import { buildFromTemplate } from "./prompts.mjs";
+
+const TEMPLATE_KINDS = new Set(["review", "adversarial-review"]);
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const reviewSchema = JSON.parse(
@@ -82,7 +85,7 @@ function ensureDirs(base, role) {
  * here (only the driver applies). Returns a summary including the artifact.
  */
 export function runWorkerSync(cwd, opts) {
-  const { driver, worker, role = "worker", brief, timeoutMs = 300000, maxAttempts = 2 } = opts;
+  const { driver, worker, role = "worker", brief, kind, focus, targetLabel, timeoutMs = 300000, maxAttempts = 2 } = opts;
   const adapter = getAdapter(worker);
   const schema = role === "reviewer" ? reviewSchema : resultSchema;
 
@@ -127,8 +130,19 @@ export function runWorkerSync(cwd, opts) {
   // otherwise fall back to the generic instruction.
   const contract = adapter.outputContract ? adapter.outputContract(role) : schemaInstruction(role);
 
+  // Review-grade work uses a code-loaded template (with the harness contract
+  // filling {{OUTPUT_CONTRACT}}); free-form work is the driver-composed brief.
+  const basePrompt = TEMPLATE_KINDS.has(kind)
+    ? buildFromTemplate(kind, {
+        TARGET_LABEL: targetLabel || "the provided changes",
+        USER_FOCUS: focus || "No extra focus provided.",
+        REVIEW_INPUT: brief ?? "",
+        OUTPUT_CONTRACT: contract
+      })
+    : `${brief ?? ""}${contract}`;
+
   let attempts = 0;
-  let promptBrief = `${brief ?? ""}${contract}`;
+  let promptBrief = basePrompt;
 
   // Sandbox is OPT-IN: it is not yet proven safe for every harness (a deny-default
   // profile crashed agy), so it stays off unless explicitly enabled.
@@ -158,7 +172,7 @@ export function runWorkerSync(cwd, opts) {
     coerce = coerceArtifact(schema, candidate);
     if (coerce.ok) break;
     promptBrief =
-      `${brief ?? ""}${contract}\n\nIMPORTANT: your previous reply was not valid. ` +
+      `${basePrompt}\n\nIMPORTANT: your previous reply was not valid. ` +
       `Respond with ONLY a single JSON object matching the schema above — no prose.`;
   }
 

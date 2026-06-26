@@ -82,6 +82,12 @@ test("agy buildCommand honors an explicit model env override", () => {
   delete process.env.AGENT_COLLAB_AGY_MODEL;
 });
 
+test("claude.outputContract gives a structured contract per role", () => {
+  const claude = getAdapter("claude");
+  assert.match(claude.outputContract("reviewer"), /verdict/);
+  assert.match(claude.outputContract("worker"), /status/);
+});
+
 test("agy.outputContract is an example-anchored, JSON-only instruction", () => {
   const agy = getAdapter("agy");
   const c = agy.outputContract("reviewer");

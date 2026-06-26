@@ -10,7 +10,7 @@ import { listJobs, getJob, updateJob, sortJobsNewestFirst, loadState, saveState 
 import { isPidAlive } from "../core/heartbeat.mjs";
 import { renderSetup, renderJob, renderJobList } from "../core/render.mjs";
 
-const VALUE_FLAGS = new Set(["worker", "role", "driver", "base", "timeout", "gate", "sandbox"]);
+const VALUE_FLAGS = new Set(["worker", "role", "driver", "base", "timeout", "gate", "sandbox", "focus"]);
 const BOOL_FLAGS = new Set(["json", "apply", "wait", "background"]);
 
 function parseArgs(tokens) {
@@ -66,13 +66,15 @@ switch (subcommand) {
   }
 
   case "delegate":
-  case "review": {
+  case "review":
+  case "adversarial-review": {
     const driver = options.driver || process.env.AGENT_COLLAB_DRIVER || "claude";
     const worker = options.worker;
-    if (!worker) fail("delegate: --worker <name> is required");
-    const role = options.role || (subcommand === "review" ? "reviewer" : "worker");
+    if (!worker) fail(`${subcommand}: --worker <name> is required`);
+    const role = options.role || (subcommand === "delegate" ? "worker" : "reviewer");
+    const kind = subcommand === "delegate" ? undefined : subcommand; // review | adversarial-review
     const brief = positionals.join(" ");
-    if (!brief) fail("delegate: a brief is required");
+    if (!brief) fail(`${subcommand}: a brief is required`);
 
     const route = decideRoute({ driver, worker });
     if (route.mode === "native") {
@@ -81,7 +83,7 @@ switch (subcommand) {
     }
 
     const timeoutMs = options.timeout ? Number(options.timeout) * 1000 : undefined;
-    const res = runWorkerSync(cwd, { driver, worker, role, brief, timeoutMs });
+    const res = runWorkerSync(cwd, { driver, worker, role, brief, kind, focus: options.focus, timeoutMs });
     if (options.apply && res.status === "completed" && role === "worker") {
       res.applied = applyResult(cwd, res.jobId);
     }
@@ -149,7 +151,8 @@ switch (subcommand) {
         "usage: agent-companion <command>",
         "  setup [--json] [--gate on|off] [--sandbox on|off]",
         "  delegate --worker <name> [--driver <name>] [--role worker|reviewer] [--apply] [--timeout s] <brief>",
-        "  review  --worker <name> [--driver <name>] <brief>",
+        "  review  --worker <name> [--driver <name>] [--focus <text>] <diff/context>",
+        "  adversarial-review --worker <name> [--focus <text>] <diff/context>",
         "  status [jobId] [--json]",
         "  result <jobId> [--json]",
         "  apply  <jobId>",
