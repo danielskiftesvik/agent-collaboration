@@ -10,6 +10,11 @@ Delegate the task described in the arguments to the chosen worker harness.
 Raw arguments:
 `$ARGUMENTS`
 
+Compose the brief using the `harness-prompting` skill — pick the right blocks for
+the task and read the target harness's guide (codex/claude/agy). For a concrete
+fix, agy is a strong worker; for anything needing structured review output, prefer
+codex or claude. The companion appends the harness's output contract automatically.
+
 Authority model (do not violate):
 - The worker runs in an isolated git worktree and only PRODUCES artifacts (a patch, a report, a result JSON). It never touches the main branch.
 - Only the driver (you) applies changes, via `apply` or `--apply`.

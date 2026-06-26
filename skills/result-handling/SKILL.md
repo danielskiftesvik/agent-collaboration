@@ -48,6 +48,15 @@ from a review is forbidden, even when the fix looks obvious.
 - If setup or authentication is required, direct the user to
   `/agent-collab:setup` rather than improvising an auth flow.
 
+## By harness
+
+- **codex / claude** — emit structured findings/result JSON: present findings by
+  severity, preserve evidence boundaries.
+- **agy** — for a *worker*, the **patch is the deliverable** (a `completed` worker
+  may have `resultValid: false` — that just means it replied in prose; show the
+  patch). agy *reviews* are unreliable (it narrates on Flash) — prefer codex/claude
+  for reviews; if an agy review came back invalid, show its prose and say so.
+
 ## Why this matters
 
 A delegated agent runs unattended (e.g. `agy --dangerously-skip-permissions`).
