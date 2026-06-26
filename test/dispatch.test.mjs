@@ -100,6 +100,27 @@ test("runWorkerSync (reviewer) validates against the review schema, no patch", (
   delete process.env.AGENT_COLLAB_AGY_BIN;
 });
 
+test("a reviewer cannot write to the main tree (runs isolated)", () => {
+  isolateStateRoot();
+  const repo = makeRepo();
+  process.env.AGENT_COLLAB_AGY_BIN = stubBin(`
+    import fs from 'node:fs';
+    fs.writeFileSync('reviewer-wrote-this.txt', 'should not reach main\\n');
+    process.stdout.write('\`\`\`json\\n' + JSON.stringify({verdict:'approve',summary:'ok',findings:[],next_steps:[]}) + '\\n\`\`\`');
+  `);
+
+  const res = runWorkerSync(repo, { driver: "claude", worker: "agy", role: "reviewer", brief: "review" });
+
+  assert.equal(res.valid, true, "review still validates");
+  assert.equal(
+    fs.existsSync(path.join(repo, "reviewer-wrote-this.txt")),
+    false,
+    "a reviewer's stray write must not reach the main tree"
+  );
+
+  delete process.env.AGENT_COLLAB_AGY_BIN;
+});
+
 test("the worker prompt includes the required output schema on the first attempt", () => {
   isolateStateRoot();
   const repo = makeRepo();

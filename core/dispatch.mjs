@@ -91,17 +91,19 @@ export function runWorkerSync(cwd, opts) {
   ensureDirs(artifactDir, role);
   fs.writeFileSync(path.join(artifactDir, "brief.md"), brief ?? "");
 
+  // Both workers AND reviewers run in an ephemeral worktree so an unattended
+  // harness (e.g. `agy --dangerously-skip-permissions`) can never write to the
+  // live tree. Only a worker's changes are captured as a patch; a reviewer's are
+  // discarded with the worktree.
   let baseRef = null;
   let workspace = cwd;
   let worktree = null;
-  if (role === "worker") {
-    try {
-      baseRef = headRef(cwd);
-      worktree = createWorktree(cwd, jobId, baseRef);
-      workspace = worktree;
-    } catch {
-      workspace = cwd; // not a git repo: run in place, no patch isolation
-    }
+  try {
+    baseRef = headRef(cwd);
+    worktree = createWorktree(cwd, jobId, baseRef);
+    workspace = worktree;
+  } catch {
+    workspace = cwd; // not a git repo: cannot isolate, run in place
   }
 
   appendJob(cwd, {
