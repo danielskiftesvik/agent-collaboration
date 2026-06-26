@@ -122,8 +122,13 @@ export function runWorkerSync(cwd, opts) {
   let answerText = "";
   let coerce = { ok: false, value: null, errors: ["no attempts ran"] };
   let exitCode = null;
+  // Harness-aware output contract: each adapter may tune how it asks for the
+  // structured shape (agy gets emphatic JSON-only; codex gets XML blocks);
+  // otherwise fall back to the generic instruction.
+  const contract = adapter.outputContract ? adapter.outputContract(role) : schemaInstruction(role);
+
   let attempts = 0;
-  let promptBrief = `${brief ?? ""}${schemaInstruction(role)}`;
+  let promptBrief = `${brief ?? ""}${contract}`;
 
   while (attempts < maxAttempts) {
     attempts += 1;
@@ -145,7 +150,7 @@ export function runWorkerSync(cwd, opts) {
     coerce = coerceArtifact(schema, candidate);
     if (coerce.ok) break;
     promptBrief =
-      `${brief ?? ""}${schemaInstruction(role)}\n\nIMPORTANT: your previous reply was not valid. ` +
+      `${brief ?? ""}${contract}\n\nIMPORTANT: your previous reply was not valid. ` +
       `Respond with ONLY a single JSON object matching the schema above — no prose.`;
   }
 

@@ -68,6 +68,20 @@ test("claude parseOutput falls back to raw stdout when not a JSON envelope", () 
   assert.equal(r.answerText, "plain text answer");
 });
 
+test("agy.outputContract is an example-anchored, JSON-only instruction", () => {
+  const agy = getAdapter("agy");
+  const c = agy.outputContract("reviewer");
+  assert.match(c, /only.*json/i, "demands JSON only");
+  assert.match(c, /nothing else|no prose|no text (before|outside)/i, "forbids surrounding prose");
+  assert.match(c, /"verdict"/, "includes a concrete example");
+});
+
+test("codex.outputContract uses an XML structured-output block", () => {
+  const codex = getAdapter("codex");
+  const c = codex.outputContract("worker");
+  assert.match(c, /<structured_output_contract>/);
+});
+
 test("codex parseOutput unwraps rawOutput from the companion envelope", () => {
   const codex = getAdapter("codex");
   const envelope = JSON.stringify({

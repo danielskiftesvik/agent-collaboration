@@ -35,6 +35,22 @@ export default defineAdapter({
     args.push(brief);
     return { command: process.execPath, args };
   },
+  // Codex/GPT-5.x respond best to XML-tagged, block-structured contracts
+  // (see codex-plugin-cc's gpt-5-4-prompting skill).
+  outputContract(role) {
+    const shape =
+      role === "reviewer"
+        ? "verdict (approve|needs-attention), summary, findings[] " +
+          "(severity, title, body, file, line_start, line_end, confidence, recommendation), next_steps[]"
+        : "status (completed|failed|blocked), summary, changed (boolean)";
+    return (
+      "\n\n<structured_output_contract>\n" +
+      "Return only valid JSON with this shape and nothing else:\n" +
+      shape +
+      "\nPut the highest-value items first. Keep it compact.\n" +
+      "</structured_output_contract>"
+    );
+  },
   parseOutput({ stdout }) {
     // codex-companion `task --json` wraps the answer in an envelope:
     // { status, threadId, rawOutput, touchedFiles, reasoningSummary }.

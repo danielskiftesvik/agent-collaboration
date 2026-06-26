@@ -18,6 +18,27 @@ export default defineAdapter({
     args.push(brief); // Go-style flags: positional prompt must come last
     return { command: bin(), args };
   },
+  // Gemini (esp. Flash) is weak at strict JSON-only output, so the contract is
+  // emphatic and example-anchored: demand JSON only, forbid surrounding prose,
+  // and show the exact shape to fill in.
+  outputContract(role) {
+    if (role === "reviewer") {
+      return (
+        "\n\n---\nReturn ONLY a JSON object and NOTHING else — no prose before or after it, " +
+        "no markdown headings, no commentary. Do not edit any files; only review. " +
+        "Match this exact shape (replace the values):\n" +
+        '{"verdict":"approve" | "needs-attention","summary":"<one line>",' +
+        '"findings":[{"severity":"high","title":"...","body":"...","file":"path",' +
+        '"line_start":1,"line_end":1,"confidence":0.9,"recommendation":"..."}],' +
+        '"next_steps":["..."]}'
+      );
+    }
+    return (
+      "\n\n---\nWhen finished, return ONLY a JSON object and NOTHING else — no prose " +
+      "before or after it. Match this exact shape:\n" +
+      '{"status":"completed" | "failed" | "blocked","summary":"<one line>","changed":true | false}'
+    );
+  },
   parseOutput({ stdout }) {
     return { answerText: (stdout ?? "").trim(), structured: null };
   },
