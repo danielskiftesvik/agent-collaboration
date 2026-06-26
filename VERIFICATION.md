@@ -34,7 +34,10 @@ Real cross-harness runs against a buggy `add.js` in throwaway `/tmp` repos:
   (1) `-p` was placed first, so agy leaked later flags into the prompt and
   corrupted it; (2) forcing `--model` downgraded agy to **Flash**, which narrates
   instead of emitting JSON. Fixed by invoking `agy [flags] … -p <brief>` (flags
-  first, `-p <brief>` last) with **no `--model`**. agy is a worker **and** reviewer.
+  first, `-p <brief>` last) and pinning the latest Pro **label** via `--model`
+  (`--model` works with the `agy models` label + flags-before-prompt ordering;
+  the earlier "Flash" reads were a wrong id plus a separate agy session changing
+  the shared default). agy is a worker **and** reviewer.
 
 Two safety consequences, both confirmed live:
 - Worktree isolation bounds a worker's *intended writes* but does NOT sandbox the

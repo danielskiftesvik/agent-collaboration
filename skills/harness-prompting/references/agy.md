@@ -1,34 +1,38 @@
 # Prompting agy (Antigravity / Gemini)
 
-agy is a capable **worker and reviewer**. Its default model is **Gemini 3.1 Pro**
-(from `settings.json`), which follows the JSON output contract well.
+agy is a capable **worker and reviewer**. We pin it to the latest **Gemini Pro**
+model, which follows the JSON output contract well.
 
-History worth knowing: agy *looked* worker-only for a while, but that was two bugs
-in our adapter, not an agy limitation:
-- the adapter put `-p` **first**, and agy's flag parser leaks anything after the
-  first non-flag token into the prompt — corrupting it; and
-- forcing a model via `--model <label/id>` silently **downgraded agy to Flash**
-  (the labels from `agy models` and ids like `gemini-3.1-pro` are not valid
-  `--model` values), and Flash narrates instead of emitting JSON.
+## Model selection — `--model` works (with two rules)
 
-Both are fixed: the companion now invokes `agy [flags] --print-timeout … -p <brief>`
-(flags first, `-p <brief>` last) with **no `--model`** (so the Pro default stands).
-With that, agy emits clean schema-valid reviews (verified through the companion).
+`--model` DOES control the model, verified empirically, **if** you obey two rules
+(the companion's `buildCommand` does both):
+1. **Use the `agy models` LABEL** as the value — e.g. `--model "Gemini 3.1 Pro (High)"`.
+   A bare id like `gemini-3.1-pro` or a class like `pro` is NOT valid and falls
+   back to the default.
+2. **Put flags before the prompt** — agy's Go flag parser stops at the first
+   positional argument, so anything after the prompt (including `--model`) leaks
+   into the prompt text and is never parsed. Invocation is
+   `agy [flags] --print-timeout … -p <brief>`.
+
+Proof: with correct ordering, `--model "Gemini 3.5 Flash (High)"` → Flash and
+`--model "Gemini 3.1 Pro (High)"` → Pro.
+
+We **pin the latest "Pro (High)" label** (`pickLatestModel`) rather than relying on
+the default. Why pinning matters: agy's default model is a **shared setting** that a
+separate interactive agy session can switch (e.g. to Flash) — pinning keeps our runs
+deterministic on Pro regardless. Override with `AGENT_COLLAB_AGY_MODEL` (a label).
 
 ## How to prompt agy
 
 - **Reviews:** use `/agent-collab:review` or `/agent-collab:adversarial-review` —
-  the companion supplies the template + the agy output contract. Verified: agy on
-  Pro returns valid JSON findings.
+  the companion supplies the template + agy's output contract. Verified: agy on
+  pinned Pro returns valid JSON findings.
 - **Workers:** strong at concrete edit tasks (the patch is the deliverable). Be
-  concrete and imperative — name the file and the exact change. Vague/meta tasks
-  make it ramble.
-- **Do NOT pass `--model`** to force Pro — it downgrades to Flash. The default is
-  already Pro. (The `AGENT_COLLAB_AGY_MODEL*` env hooks exist only for a future
-  known-good id.)
+  concrete and imperative — name the file and the exact change.
 - It runs with `--dangerously-skip-permissions` inside an ephemeral worktree —
   required so the background process never hangs on an approval prompt. Isolation,
-  not instructions, is what keeps a reviewer from writing to the real tree.
+  not instructions, keeps a reviewer from writing to the real tree.
 
 ### Fix (worker)
 ```
@@ -37,6 +41,7 @@ Make only that change.
 ```
 
 ## Anti-patterns (agy-specific)
-- Passing `--model "<label>"` / `--model gemini-3.1-pro` — downgrades to Flash.
-- Putting `-p` before other flags — corrupts the prompt (the companion handles this).
+- `--model gemini-3.1-pro` / `--model pro` — not valid values; use the full label.
+- Putting `-p`/the prompt before other flags — the rest leaks into the prompt and
+  flags (incl. `--model`) are never parsed (the companion handles ordering).
 - Abstract/meta tasks ("analyze the permissions") — give a concrete goal.
