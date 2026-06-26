@@ -18,6 +18,16 @@ export function captureWorkingDiff(cwd) {
   return diff;
 }
 
+/** Dry-run: would this diff apply (3-way) to `cwd`? Empty diffs trivially apply. */
+export function checkPatchApplies(cwd, diff) {
+  if (!diff || !diff.trim()) return true;
+  const r = run("git", ["apply", "--check", "--3way", "--whitespace=nowarn"], {
+    cwd,
+    input: diff
+  });
+  return r.status === 0;
+}
+
 /**
  * Apply a unified diff to `cwd` using a 3-way merge so it still lands when the
  * base has moved underneath it. Returns { applied, conflicted, stderr }.

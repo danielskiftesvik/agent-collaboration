@@ -9,7 +9,7 @@ import { fileURLToPath } from "node:url";
 import { getAdapter, listAdapters } from "../adapters/index.mjs";
 import { resolveStateDir, appendJob, updateJob, getJob } from "./state.mjs";
 import { createWorktree, removeWorktree } from "./workspace.mjs";
-import { headRef, captureWorkingDiff, applyPatch } from "./git.mjs";
+import { headRef, captureWorkingDiff, applyPatch, checkPatchApplies } from "./git.mjs";
 import { run } from "./process.mjs";
 import { coerceArtifact } from "./schema.mjs";
 
@@ -151,6 +151,8 @@ export function runWorkerSync(cwd, opts) {
 
   // Capture the worker's patch, then tear down the worktree (the diff is the artifact).
   let patchPath = null;
+  let changed = false;
+  let patchApplies = true;
   if (role === "worker") {
     let diff = "";
     try {
@@ -158,6 +160,8 @@ export function runWorkerSync(cwd, opts) {
     } catch {
       diff = "";
     }
+    changed = !!diff.trim();
+    patchApplies = changed ? checkPatchApplies(cwd, diff) : true;
     patchPath = path.join(artifactDir, "patches", `${worker}.diff`);
     fs.writeFileSync(patchPath, diff);
   }
@@ -169,11 +173,24 @@ export function runWorkerSync(cwd, opts) {
     JSON.stringify(coerce.value ?? { raw: answerText }, null, 2)
   );
 
-  const status = coerce.ok ? "completed" : "failed";
+  // A worker's deliverable is the PATCH, not the result-JSON. So a real,
+  // cleanly-applying patch means success even if the metadata JSON is missing.
+  // A reviewer's only artifact IS the JSON, so it must validate.
+  let status;
+  if (role === "reviewer") {
+    status = coerce.ok ? "completed" : "failed";
+  } else if (changed) {
+    status = patchApplies ? "completed" : "conflicted";
+  } else {
+    status = coerce.ok ? coerce.value.status ?? "completed" : "failed";
+  }
+
   updateJob(cwd, jobId, {
     status,
     exitCode,
-    valid: coerce.ok,
+    resultValid: coerce.ok,
+    changed,
+    patchApplies,
     attempts,
     patchPath,
     errors: coerce.ok ? undefined : coerce.errors
@@ -182,7 +199,10 @@ export function runWorkerSync(cwd, opts) {
   return {
     jobId,
     status,
-    valid: coerce.ok,
+    resultValid: coerce.ok,
+    valid: coerce.ok, // back-compat alias for resultValid
+    changed,
+    patchApplies,
     artifact: coerce.value,
     artifactDir,
     patchPath,

@@ -77,11 +77,11 @@ switch (subcommand) {
 
     const timeoutMs = options.timeout ? Number(options.timeout) * 1000 : undefined;
     const res = runWorkerSync(cwd, { driver, worker, role, brief, timeoutMs });
-    if (options.apply && res.valid && role === "worker") {
+    if (options.apply && res.status === "completed" && role === "worker") {
       res.applied = applyResult(cwd, res.jobId);
     }
     out(res, options, `${res.status} — ${res.jobId}\nartifacts: ${res.artifactDir}`);
-    if (!res.valid) process.exitCode = 2;
+    if (res.status !== "completed") process.exitCode = 2;
     break;
   }
 

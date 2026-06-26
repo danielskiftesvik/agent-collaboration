@@ -82,6 +82,46 @@ test("applyResult applies the worker's patch to the main repo", () => {
   delete process.env.AGENT_COLLAB_AGY_BIN;
 });
 
+// A worker that does real work (writes a file) but replies in prose, not JSON.
+const PROSE_WORKER_STUB = `
+import fs from 'node:fs';
+fs.writeFileSync('fix.txt', 'fixed\\n');
+process.stdout.write('All done — I fixed the bug for you.');
+`;
+
+test("a worker with a valid patch is completed even without result-JSON", () => {
+  isolateStateRoot();
+  const repo = makeRepo();
+  process.env.AGENT_COLLAB_AGY_BIN = stubBin(PROSE_WORKER_STUB);
+
+  const res = runWorkerSync(repo, { driver: "claude", worker: "agy", role: "worker", brief: "fix it" });
+
+  assert.equal(res.status, "completed", "the patch is the deliverable");
+  assert.equal(res.changed, true);
+  assert.equal(res.patchApplies, true);
+  assert.equal(res.resultValid, false, "no valid result-JSON, but still completed");
+  const diff = fs.readFileSync(path.join(res.artifactDir, "patches", "agy.diff"), "utf8");
+  assert.match(diff, /fix\.txt/);
+
+  delete process.env.AGENT_COLLAB_AGY_BIN;
+});
+
+// A worker that neither changes anything nor returns valid JSON => failed.
+const NOOP_WORKER_STUB = `process.stdout.write('I could not figure it out.');`;
+
+test("a worker that produces nothing and no valid result is failed", () => {
+  isolateStateRoot();
+  const repo = makeRepo();
+  process.env.AGENT_COLLAB_AGY_BIN = stubBin(NOOP_WORKER_STUB);
+
+  const res = runWorkerSync(repo, { driver: "claude", worker: "agy", role: "worker", brief: "fix it" });
+
+  assert.equal(res.status, "failed");
+  assert.equal(res.changed, false);
+
+  delete process.env.AGENT_COLLAB_AGY_BIN;
+});
+
 const REVIEW_STUB = `
 process.stdout.write('\`\`\`json\\n' + JSON.stringify({verdict:'approve',summary:'looks good',findings:[],next_steps:[]}) + '\\n\`\`\`');
 `;
