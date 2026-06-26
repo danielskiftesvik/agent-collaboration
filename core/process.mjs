@@ -4,48 +4,37 @@ import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
 
-/** Helper to generate macOS sandbox-exec profile contents. */
-function generateMacSandboxProfile(workspace, artifactDir) {
-  const home = process.env.HOME || "/Users";
-  const sensitiveDirs = [
-    path.join(home, ".ssh"),
-    path.join(home, ".gemini"),
-    path.join(home, ".config"),
-    path.join(home, ".aws"),
-    path.join(home, ".kube"),
-    path.join(home, ".netrc")
-  ];
+/**
+ * Generate a macOS sandbox-exec profile.
+ *
+ * We use an ALLOW-default base and deny the specific risks. A DENY-default
+ * profile crashes complex runtimes — agy's Go/Abseil allocator aborts with a
+ * `LowLevelAlloc` overflow under deny-default. Allow-default still blocks the
+ * real hazards (reading cross-cutting secrets, writing outside the workspace)
+ * while letting the harness read its own config and authenticate.
+ *
+ * macOS sandbox is last-match-wins, so denies placed after `(allow default)`
+ * take effect, and the work-area allows placed last re-open those paths.
+ */
+export function generateMacSandboxProfile(workspace, artifactDir) {
+  const home = process.env.HOME || os.homedir();
+  // Cross-cutting secrets that no worker should read.
+  const secretDirs = [".ssh", ".aws", ".kube", ".gnupg"].map((d) => path.join(home, d));
+  // The harness's own state dirs — needed for auth, logs, conversation history.
+  const harnessDirs = [".gemini", ".claude", ".codex", ".config/gcloud"].map((d) =>
+    path.join(home, d)
+  );
 
-  const profileLines = [
-    "(version 1)",
-    "(deny default)",
-    "(allow process-fork)",
-    "(allow process-exec)",
-    "(allow network-outbound)"
-  ];
-
-  // Deny read/write on sensitive paths
-  for (const dir of sensitiveDirs) {
-    profileLines.push(`(deny file-read* file-write* (subpath "${dir}"))`);
-  }
-
-  // Allow read-only access globally (so system binaries/node modules can be read)
-  profileLines.push("(allow file-read*)");
-
-  // Allow full read/write to the specific workspace, artifact directory, and standard temp paths
-  const allowedPaths = [
-    workspace,
-    artifactDir,
-    "/tmp",
-    "/private/var",
-    "/var/folders"
-  ];
-
-  for (const p of allowedPaths) {
-    profileLines.push(`(allow file* (subpath "${p}"))`);
-  }
-
-  return profileLines.join("\n");
+  const lines = ["(version 1)", "(allow default)"];
+  for (const d of secretDirs) lines.push(`(deny file-read* (subpath "${d}"))`);
+  lines.push(`(deny file-read* file-write* (literal "${path.join(home, ".netrc")}"))`);
+  // Block writes into the home tree (dotfiles/config) ...
+  lines.push(`(deny file-write* (subpath "${home}"))`);
+  // ... except the harness's own state dirs.
+  for (const d of harnessDirs) lines.push(`(allow file-write* (subpath "${d}"))`);
+  // Work areas (worktree + artifacts) are fully read/write.
+  for (const p of [workspace, artifactDir]) lines.push(`(allow file* (subpath "${p}"))`);
+  return lines.join("\n");
 }
 
 /** Check if bubblewrap is available on Linux. */

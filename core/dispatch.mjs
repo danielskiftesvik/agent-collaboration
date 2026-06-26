@@ -130,8 +130,10 @@ export function runWorkerSync(cwd, opts) {
   let attempts = 0;
   let promptBrief = `${brief ?? ""}${contract}`;
 
+  // Sandbox is OPT-IN: it is not yet proven safe for every harness (a deny-default
+  // profile crashed agy), so it stays off unless explicitly enabled.
   const state = loadState(cwd);
-  const useSandbox = state.config.sandbox !== false && process.env.AGENT_COLLAB_SANDBOX !== "off";
+  const useSandbox = state.config.sandbox === true || process.env.AGENT_COLLAB_SANDBOX === "on";
 
   while (attempts < maxAttempts) {
     attempts += 1;

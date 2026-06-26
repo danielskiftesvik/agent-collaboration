@@ -25,6 +25,16 @@ test("decideStop allows when the gate is off", () => {
   assert.equal(d.block, false);
 });
 
+test("sandbox is opt-in: off by default, on after setup --sandbox on", () => {
+  const dataDir = isolateStateRoot();
+  const repo = makeRepo();
+  const env = { ...process.env, AGENT_COLLAB_DATA: dataDir };
+  assert.notEqual(loadState(repo).config.sandbox, true, "off by default");
+  const r = run(process.execPath, [CLI, "setup", "--sandbox", "on"], { cwd: repo, env });
+  assert.equal(r.status, 0, r.stderr);
+  assert.equal(loadState(repo).config.sandbox, true);
+});
+
 test("setup --gate on persists the config flag", () => {
   const dataDir = isolateStateRoot();
   const repo = makeRepo();
