@@ -5,7 +5,6 @@ import os from "node:os";
 import path from "node:path";
 
 import { getAdapter, listAdapters } from "../adapters/index.mjs";
-import { pickLatestModel } from "../adapters/agy.mjs";
 
 function stubBin(body) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "ac-bin-"));
@@ -69,19 +68,18 @@ test("claude parseOutput falls back to raw stdout when not a JSON envelope", () 
   assert.equal(r.answerText, "plain text answer");
 });
 
-test("pickLatestModel selects the newest in-class label, preferring High", () => {
-  const models = [
-    "Gemini 3.5 Flash (High)",
-    "Gemini 3.1 Pro (Low)",
-    "Gemini 3.1 Pro (High)",
-    "Gemini 3.2 Pro (High)",
-    "Claude Opus 4.6 (Thinking)"
-  ];
-  assert.equal(pickLatestModel(models, "Pro"), "Gemini 3.2 Pro (High)");
+test("agy buildCommand omits --model by default (agy -p ignores it anyway)", () => {
+  delete process.env.AGENT_COLLAB_AGY_MODEL;
+  delete process.env.AGENT_COLLAB_AGY_MODEL_PRO;
+  const r = getAdapter("agy").buildCommand({ role: "reviewer", brief: "x", workspace: "/w" });
+  assert.equal(r.args.includes("--model"), false);
 });
 
-test("pickLatestModel returns null when the class is absent", () => {
-  assert.equal(pickLatestModel(["Gemini 3.5 Flash (High)"], "Pro"), null);
+test("agy buildCommand honors an explicit model env override", () => {
+  process.env.AGENT_COLLAB_AGY_MODEL = "some-known-good-id";
+  const r = getAdapter("agy").buildCommand({ role: "worker", brief: "x", workspace: "/w" });
+  assert.ok(r.args.includes("--model") && r.args.includes("some-known-good-id"));
+  delete process.env.AGENT_COLLAB_AGY_MODEL;
 });
 
 test("agy.outputContract is an example-anchored, JSON-only instruction", () => {

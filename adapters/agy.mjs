@@ -7,48 +7,24 @@ import { run } from "../core/process.mjs";
 
 const bin = () => process.env.AGENT_COLLAB_AGY_BIN || "agy";
 
-/** Pick the newest label in a model class from `agy models` output, preferring
- *  a higher thinking level. Returns null when the class isn't present. This is
- *  how we get "latest within class" without pinning a version that goes stale. */
-export function pickLatestModel(models, className) {
-  const re = new RegExp(`\\b${className}\\b`, "i");
-  const matching = models.filter((m) => re.test(m));
-  if (!matching.length) return null;
-  const version = (m) => {
-    const v = m.match(/(\d+(?:\.\d+)?)/);
-    return v ? parseFloat(v[1]) : 0;
-  };
-  const level = (m) => (/high/i.test(m) ? 2 : /medium/i.test(m) ? 1 : 0);
-  const score = (m) => version(m) * 10 + level(m);
-  return [...matching].sort((a, b) => score(b) - score(a))[0];
-}
-
-const _modelCache = new Map();
-function listModels() {
-  const b = bin();
-  if (_modelCache.has(b)) return _modelCache.get(b);
-  const r = run(b, ["models"]);
-  const list =
-    r.status === 0 ? r.stdout.split(/\r?\n/).map((s) => s.trim()).filter(Boolean) : [];
-  _modelCache.set(b, list);
-  return list;
-}
-
 /**
- * Resolve the model for a role. Mirrors codex-plugin-cc's philosophy ("leave the
- * model unset by default so the CLI's latest default is used; pin only on an
- * explicit request"), with one addition: reviewers need strong reasoning + strict
- * JSON, so we steer them to the LATEST "Pro" in its class rather than agy's
- * headless default (which is a weak Flash). Never pins a specific version.
+ * Resolve the model for a role. Mirrors codex-plugin-cc's philosophy: leave the
+ * model UNSET by default so the CLI's own default is used; only pass `--model`
+ * when explicitly requested via env.
+ *
+ * NB: empirically `agy -p` IGNORES `--model` — it stays on Gemini 3.5 Flash for
+ * the display labels from `agy models` and for class names like `pro`, and a
+ * value containing spaces breaks prompt delivery entirely. So we do NOT try to
+ * force Pro for reviewers (an earlier attempt broke agy reviewer runs). agy is
+ * effectively worker-only; route reviews to codex/claude. The env hooks remain
+ * as an escape hatch should a known-good identifier exist.
  */
 function resolveModel(role) {
-  const envPro = process.env.AGENT_COLLAB_AGY_MODEL_PRO;
-  const envFlash = process.env.AGENT_COLLAB_AGY_MODEL_FLASH;
-  const envAny = process.env.AGENT_COLLAB_AGY_MODEL;
-  if (role === "reviewer") {
-    return envPro || envAny || pickLatestModel(listModels(), "Pro");
-  }
-  return envFlash || envAny || null; // unset => agy's own (latest) default
+  const roleEnv =
+    role === "reviewer"
+      ? process.env.AGENT_COLLAB_AGY_MODEL_PRO
+      : process.env.AGENT_COLLAB_AGY_MODEL_FLASH;
+  return process.env.AGENT_COLLAB_AGY_MODEL || roleEnv || null;
 }
 
 export default defineAdapter({
