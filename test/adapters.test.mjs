@@ -5,6 +5,7 @@ import os from "node:os";
 import path from "node:path";
 
 import { getAdapter, listAdapters } from "../adapters/index.mjs";
+import { pickLatestModel } from "../adapters/agy.mjs";
 
 function stubBin(body) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "ac-bin-"));
@@ -71,17 +72,38 @@ test("claude parseOutput falls back to raw stdout when not a JSON envelope", () 
   assert.equal(r.answerText, "plain text answer");
 });
 
-test("agy buildCommand omits --model by default (agy -p ignores it anyway)", () => {
+test("pickLatestModel selects the newest in-class label, preferring High", () => {
+  const models = [
+    "Gemini 3.5 Flash (High)",
+    "Gemini 3.1 Pro (Low)",
+    "Gemini 3.1 Pro (High)",
+    "Gemini 3.2 Pro (High)",
+    "Claude Opus 4.6 (Thinking)"
+  ];
+  assert.equal(pickLatestModel(models, "Pro"), "Gemini 3.2 Pro (High)");
+});
+
+test("pickLatestModel returns null when the class is absent", () => {
+  assert.equal(pickLatestModel(["Gemini 3.5 Flash (High)"], "Pro"), null);
+});
+
+test("agy pins the latest Pro label via --model, placed BEFORE -p", () => {
   delete process.env.AGENT_COLLAB_AGY_MODEL;
-  delete process.env.AGENT_COLLAB_AGY_MODEL_PRO;
-  const r = getAdapter("agy").buildCommand({ role: "reviewer", brief: "x", workspace: "/w" });
-  assert.equal(r.args.includes("--model"), false);
+  process.env.AGENT_COLLAB_AGY_BIN = stubBin(
+    `if (process.argv.includes('models')) process.stdout.write('Gemini 3.5 Flash (High)\\nGemini 3.1 Pro (High)\\nGemini 3.1 Pro (Low)')`
+  );
+  const { args } = getAdapter("agy").buildCommand({ role: "reviewer", brief: "x", workspace: "/w" });
+  const mi = args.indexOf("--model");
+  assert.ok(mi >= 0, "--model present");
+  assert.equal(args[mi + 1], "Gemini 3.1 Pro (High)", "latest Pro (High) label");
+  assert.ok(mi < args.indexOf("-p"), "--model comes before -p (agy parses flags before the positional)");
+  delete process.env.AGENT_COLLAB_AGY_BIN;
 });
 
 test("agy buildCommand honors an explicit model env override", () => {
-  process.env.AGENT_COLLAB_AGY_MODEL = "some-known-good-id";
+  process.env.AGENT_COLLAB_AGY_MODEL = "Gemini 3.5 Flash (High)";
   const r = getAdapter("agy").buildCommand({ role: "worker", brief: "x", workspace: "/w" });
-  assert.ok(r.args.includes("--model") && r.args.includes("some-known-good-id"));
+  assert.ok(r.args.includes("--model") && r.args.includes("Gemini 3.5 Flash (High)"));
   delete process.env.AGENT_COLLAB_AGY_MODEL;
 });
 

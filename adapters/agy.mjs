@@ -7,24 +7,45 @@ import { run } from "../core/process.mjs";
 
 const bin = () => process.env.AGENT_COLLAB_AGY_BIN || "agy";
 
+/** Pick the newest label in a model class from `agy models` output, preferring a
+ *  higher thinking level. Returns null when the class isn't present. This is how
+ *  "latest within class" works without pinning a version that goes stale. */
+export function pickLatestModel(models, className) {
+  const re = new RegExp(`\\b${className}\\b`, "i");
+  const matching = models.filter((m) => re.test(m));
+  if (!matching.length) return null;
+  const version = (m) => {
+    const v = m.match(/(\d+(?:\.\d+)?)/);
+    return v ? parseFloat(v[1]) : 0;
+  };
+  const level = (m) => (/high/i.test(m) ? 2 : /medium/i.test(m) ? 1 : 0);
+  const score = (m) => version(m) * 10 + level(m);
+  return [...matching].sort((a, b) => score(b) - score(a))[0];
+}
+
+const _modelCache = new Map();
+function listModels() {
+  const b = bin();
+  if (_modelCache.has(b)) return _modelCache.get(b);
+  const r = run(b, ["models"]);
+  const list =
+    r.status === 0 ? r.stdout.split(/\r?\n/).map((s) => s.trim()).filter(Boolean) : [];
+  _modelCache.set(b, list);
+  return list;
+}
+
 /**
- * Resolve the model for a role. Mirrors codex-plugin-cc's philosophy: leave the
- * model UNSET by default so the CLI's own default is used; only pass `--model`
- * when explicitly requested via env.
+ * Resolve agy's model. `--model` DOES control the model — verified empirically —
+ * provided you use the `agy models` LABEL format (e.g. "Gemini 3.1 Pro (High)")
+ * AND place it before the positional prompt (the buildCommand ordering does).
  *
- * NB: empirically `agy -p` IGNORES `--model` — it stays on Gemini 3.5 Flash for
- * the display labels from `agy models` and for class names like `pro`, and a
- * value containing spaces breaks prompt delivery entirely. So we do NOT try to
- * force Pro for reviewers (an earlier attempt broke agy reviewer runs). agy is
- * effectively worker-only; route reviews to codex/claude. The env hooks remain
- * as an escape hatch should a known-good identifier exist.
+ * We PIN the latest "Pro (High)" label by default. This is both the strongest
+ * reviewer and a robustness fix: agy's default model is a *shared* setting that a
+ * separate interactive agy session can change to Flash — pinning makes our runs
+ * deterministic regardless. Override with AGENT_COLLAB_AGY_MODEL (a label).
  */
-function resolveModel(role) {
-  const roleEnv =
-    role === "reviewer"
-      ? process.env.AGENT_COLLAB_AGY_MODEL_PRO
-      : process.env.AGENT_COLLAB_AGY_MODEL_FLASH;
-  return process.env.AGENT_COLLAB_AGY_MODEL || roleEnv || null;
+function resolveModel() {
+  return process.env.AGENT_COLLAB_AGY_MODEL || pickLatestModel(listModels(), "Pro") || null;
 }
 
 export default defineAdapter({
@@ -38,10 +59,9 @@ export default defineAdapter({
     // downgrades the model to Flash. Verified empirically.
     const args = ["--dangerously-skip-permissions"];
 
-    // Default: no --model — agy's own default is Gemini 3.1 Pro (strong reviewer).
-    // Passing the model labels/ids we know of actually downgrades to Flash, so
-    // only pass --model when the user supplies a known-good id via env.
-    const model = resolveModel(role);
+    // Pin the latest Pro label (before -p). Robust against the shared default
+    // being changed externally; override with AGENT_COLLAB_AGY_MODEL.
+    const model = resolveModel();
     if (model) args.push("--model", model);
 
     if (workspace) args.push("--add-dir", workspace);
