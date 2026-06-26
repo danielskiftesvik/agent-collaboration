@@ -1,0 +1,144 @@
+import { test } from "node:test";
+import assert from "node:assert/strict";
+import fs from "node:fs";
+import path from "node:path";
+
+import { makeRepo, isolateStateRoot, stubBin } from "./helpers.mjs";
+import {
+  decideRoute,
+  runSetup,
+  runWorkerSync,
+  applyResult
+} from "../core/dispatch.mjs";
+
+// ---- routing ----
+
+test("decideRoute picks the native path when driver and worker match", () => {
+  const r = decideRoute({ driver: "claude", worker: "claude" });
+  assert.equal(r.mode, "native");
+  assert.match(r.instruction, /Agent tool/i);
+});
+
+test("decideRoute picks the cross-harness path for different harnesses", () => {
+  const r = decideRoute({ driver: "claude", worker: "agy" });
+  assert.equal(r.mode, "cross");
+  assert.equal(r.worker, "agy");
+});
+
+// ---- setup probe ----
+
+test("runSetup marks available+unattended harnesses as valid workers", () => {
+  const fakes = [
+    { name: "ok", probe: () => ({ available: true, version: "1" }), unattendedProbe: () => ({ ok: true }) },
+    { name: "blocks", probe: () => ({ available: true, version: "1" }), unattendedProbe: () => ({ ok: false, detail: "would prompt" }) },
+    { name: "missing", probe: () => ({ available: false, error: "not found" }), unattendedProbe: () => ({ ok: true }) }
+  ];
+  const rows = runSetup(fakes);
+  assert.equal(rows.find((r) => r.name === "ok").validWorker, true);
+  assert.equal(rows.find((r) => r.name === "blocks").validWorker, false);
+  assert.equal(rows.find((r) => r.name === "missing").validWorker, false);
+});
+
+// ---- cross-harness worker execution ----
+
+const WRITE_STUB = `
+import fs from 'node:fs';
+fs.writeFileSync('worker-was-here.txt', 'hi from worker\\n');
+process.stdout.write('Done.\\n\\n\`\`\`json\\n{"status":"completed","summary":"made a file","changed":true}\\n\`\`\`\\n');
+`;
+
+test("runWorkerSync (worker) writes a valid result and a captured patch", () => {
+  isolateStateRoot();
+  const repo = makeRepo();
+  process.env.AGENT_COLLAB_AGY_BIN = stubBin(WRITE_STUB);
+
+  const res = runWorkerSync(repo, { driver: "claude", worker: "agy", role: "worker", brief: "make a file" });
+
+  assert.equal(res.status, "completed");
+  assert.equal(res.valid, true);
+  assert.equal(res.artifact.summary, "made a file");
+
+  const diff = fs.readFileSync(path.join(res.artifactDir, "patches", "agy.diff"), "utf8");
+  assert.match(diff, /worker-was-here\.txt/);
+  const out = JSON.parse(fs.readFileSync(path.join(res.artifactDir, "outputs", "agy.json"), "utf8"));
+  assert.equal(out.status, "completed");
+  // worktree should NOT have leaked into the main repo
+  assert.equal(fs.existsSync(path.join(repo, "worker-was-here.txt")), false);
+
+  delete process.env.AGENT_COLLAB_AGY_BIN;
+});
+
+test("applyResult applies the worker's patch to the main repo", () => {
+  isolateStateRoot();
+  const repo = makeRepo();
+  process.env.AGENT_COLLAB_AGY_BIN = stubBin(WRITE_STUB);
+
+  const res = runWorkerSync(repo, { driver: "claude", worker: "agy", role: "worker", brief: "x" });
+  const applied = applyResult(repo, res.jobId);
+
+  assert.equal(applied.applied, true);
+  assert.equal(fs.readFileSync(path.join(repo, "worker-was-here.txt"), "utf8"), "hi from worker\n");
+
+  delete process.env.AGENT_COLLAB_AGY_BIN;
+});
+
+const REVIEW_STUB = `
+process.stdout.write('\`\`\`json\\n' + JSON.stringify({verdict:'approve',summary:'looks good',findings:[],next_steps:[]}) + '\\n\`\`\`');
+`;
+
+test("runWorkerSync (reviewer) validates against the review schema, no patch", () => {
+  isolateStateRoot();
+  const repo = makeRepo();
+  process.env.AGENT_COLLAB_AGY_BIN = stubBin(REVIEW_STUB);
+
+  const res = runWorkerSync(repo, { driver: "claude", worker: "agy", role: "reviewer", brief: "review" });
+
+  assert.equal(res.valid, true);
+  assert.equal(res.artifact.verdict, "approve");
+  assert.equal(fs.existsSync(path.join(res.artifactDir, "patches", "agy.diff")), false);
+
+  delete process.env.AGENT_COLLAB_AGY_BIN;
+});
+
+test("the worker prompt includes the required output schema on the first attempt", () => {
+  isolateStateRoot();
+  const repo = makeRepo();
+  const promptFile = path.join(isolateStateRoot(), "prompt.txt");
+  process.env.AC_PROMPT_FILE = promptFile;
+  process.env.AGENT_COLLAB_AGY_BIN = stubBin(`
+    import fs from 'node:fs';
+    fs.writeFileSync(process.env.AC_PROMPT_FILE, process.argv[process.argv.length - 1]);
+    process.stdout.write('\`\`\`json\\n{"verdict":"approve","summary":"ok","findings":[],"next_steps":[]}\\n\`\`\`');
+  `);
+
+  runWorkerSync(repo, { driver: "claude", worker: "agy", role: "reviewer", brief: "review X" });
+  const sent = fs.readFileSync(promptFile, "utf8");
+  assert.match(sent, /review X/);
+  assert.match(sent, /verdict/, "schema contract injected into the prompt");
+
+  delete process.env.AGENT_COLLAB_AGY_BIN;
+  delete process.env.AC_PROMPT_FILE;
+});
+
+test("runWorkerSync retries on malformed output then fails after maxAttempts", () => {
+  isolateStateRoot();
+  const repo = makeRepo();
+  const countFile = path.join(isolateStateRoot(), "count.txt");
+  process.env.AC_COUNT_FILE = countFile;
+  process.env.AGENT_COLLAB_AGY_BIN = stubBin(`
+    import fs from 'node:fs';
+    const f = process.env.AC_COUNT_FILE;
+    const n = (fs.existsSync(f) ? Number(fs.readFileSync(f,'utf8')) : 0) + 1;
+    fs.writeFileSync(f, String(n));
+    process.stdout.write('no json here, just prose');
+  `);
+
+  const res = runWorkerSync(repo, { driver: "claude", worker: "agy", role: "reviewer", brief: "review", maxAttempts: 2 });
+
+  assert.equal(res.valid, false);
+  assert.equal(res.status, "failed");
+  assert.equal(Number(fs.readFileSync(countFile, "utf8")), 2, "retried exactly maxAttempts times");
+
+  delete process.env.AGENT_COLLAB_AGY_BIN;
+  delete process.env.AC_COUNT_FILE;
+});
