@@ -60,6 +60,22 @@ test("validate rejects a wrong type in a nested array item", () => {
   assert.equal(validate(reviewSchema, v).valid, false);
 });
 
+test("review validation tolerates qualitative confidence and missing line numbers", () => {
+  // Real models (even codex) often return confidence as a word and omit line
+  // numbers when reviewing a pasted snippet. We validate post-hoc (no outputSchema
+  // enforcement), so the contract must accept what models actually produce.
+  const v = {
+    verdict: "needs-attention",
+    summary: "risky",
+    findings: [
+      { severity: "high", title: "t", body: "b", file: "bank.py", confidence: "high", recommendation: "fix it" }
+    ],
+    next_steps: []
+  };
+  const r = validate(reviewSchema, v);
+  assert.equal(r.valid, true, JSON.stringify(r.errors));
+});
+
 test("extractJson pulls an object out of a fenced code block", () => {
   const text = "Here is my answer:\n```json\n{\"status\":\"completed\",\"summary\":\"done\"}\n```\nthanks";
   assert.deepEqual(extractJson(text), { status: "completed", summary: "done" });

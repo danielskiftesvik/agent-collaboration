@@ -24,16 +24,11 @@
       "type": "array",
       "items": {
         "type": "object",
-        "additionalProperties": false,
+        "$comment": "Only severity/title/body are required; we validate post-hoc (no outputSchema enforcement), so the rest are optional and confidence is untyped (models often use a word like 'high').",
         "required": [
           "severity",
           "title",
-          "body",
-          "file",
-          "line_start",
-          "line_end",
-          "confidence",
-          "recommendation"
+          "body"
         ],
         "properties": {
           "severity": {
@@ -66,9 +61,7 @@
             "minimum": 1
           },
           "confidence": {
-            "type": "number",
-            "minimum": 0,
-            "maximum": 1
+            "$comment": "number 0-1 OR a qualitative word; untyped so both validate"
           },
           "recommendation": {
             "type": "string"
