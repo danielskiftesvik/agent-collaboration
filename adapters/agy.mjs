@@ -32,14 +32,21 @@ export default defineAdapter({
   supportsStructuredOutput: false,
   buildCommand({ role, brief, workspace, timeoutMs }) {
     const seconds = Math.ceil((timeoutMs ?? 300000) / 1000);
-    const args = ["-p", "--dangerously-skip-permissions"];
+    // ORDER MATTERS: agy's flag parser leaks anything after the first non-flag
+    // token into the prompt. So ALL flags first, then `-p <brief>` LAST (the
+    // prompt is -p's value). Putting -p first corrupts the prompt AND silently
+    // downgrades the model to Flash. Verified empirically.
+    const args = ["--dangerously-skip-permissions"];
 
+    // Default: no --model — agy's own default is Gemini 3.1 Pro (strong reviewer).
+    // Passing the model labels/ids we know of actually downgrades to Flash, so
+    // only pass --model when the user supplies a known-good id via env.
     const model = resolveModel(role);
     if (model) args.push("--model", model);
 
     if (workspace) args.push("--add-dir", workspace);
     args.push("--print-timeout", `${seconds}s`);
-    args.push(brief); // Go-style flags: positional prompt must come last
+    args.push("-p", brief);
     return { command: bin(), args };
   },
   // Gemini (esp. Flash) is weak at strict JSON-only output, so the contract is

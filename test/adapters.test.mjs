@@ -34,7 +34,10 @@ test("agy buildCommand runs headless, unattended, scoped to the workspace", () =
   assert.ok(args.includes("--dangerously-skip-permissions"), "unattended");
   assert.ok(args.includes("--add-dir") && args.includes("/tmp/wt"), "workspace scoped");
   assert.ok(args.includes("--print-timeout"), "bounded");
-  assert.equal(args[args.length - 1], "do the thing", "prompt is the trailing positional");
+  // Flag-ordering fix: -p must be LAST, immediately before the prompt. With -p
+  // first, agy leaks later flags into the prompt and downgrades to Flash.
+  assert.equal(args[args.length - 2], "-p", "-p immediately precedes the prompt");
+  assert.equal(args[args.length - 1], "do the thing", "prompt is the final arg");
   assert.equal(agy.supportsStructuredOutput, false);
 });
 
