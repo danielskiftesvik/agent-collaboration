@@ -1,0 +1,32 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$comment": "Worker task-result artifact for agent-collaboration.",
+  "type": "object",
+  "required": ["status", "summary", "changed"],
+  "properties": {
+    "status": {
+      "type": "string",
+      "enum": ["completed", "failed", "blocked"]
+    },
+    "summary": {
+      "type": "string",
+      "minLength": 1
+    },
+    "changed": {
+      "type": "boolean"
+    },
+    "checks": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["name", "passed"],
+        "properties": {
+          "name": { "type": "string", "minLength": 1 },
+          "passed": { "type": "boolean" },
+          "output": { "type": "string" }
+        }
+      }
+    },
+    "notes": { "type": "string" }
+  }
+}
