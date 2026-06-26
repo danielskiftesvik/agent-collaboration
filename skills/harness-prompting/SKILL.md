@@ -34,13 +34,14 @@ that fits:
 - Reliable at strict JSON output. Good for **both reviewer and worker**.
 - Use `task --resume-last` semantics for follow-ups (send only the delta).
 
-### agy (Antigravity / Gemini)
-- **Strong worker, weak at strict structured output** — especially Gemini Flash,
-  which tends to reply in prose. Prefer agy for **worker** tasks (the patch is
-  the deliverable, not JSON).
-- If you need structured output from agy, the adapter already sends an emphatic
-  example-anchored "JSON only, nothing else" contract; consider a Pro-tier model
-  for structured/reviewer work.
+### agy (Antigravity / Gemini) — worker-only
+- **Strong worker, unreliable reviewer.** Verified empirically: `agy -p` runs on
+  Gemini 3.5 Flash and **cannot be switched off it** — it ignores `--model` for
+  both `agy models` display labels and class names like `pro` (a spaced value
+  even breaks prompt delivery). Flash then narrates its analysis in prose instead
+  of emitting the JSON contract, so **agy reviews don't validate.**
+- **Use agy for `worker` tasks only** (the patch is the deliverable, not JSON);
+  it produces correct, applyable patches. **Route reviews to codex or claude.**
 - Runs with `--dangerously-skip-permissions`; **always isolated in a worktree**.
   Never rely on it honoring "review-only" by instruction alone.
 
