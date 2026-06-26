@@ -36,16 +36,20 @@ function listModels() {
 
 /**
  * Resolve agy's model. `--model` DOES control the model — verified empirically —
- * provided you use the `agy models` LABEL format (e.g. "Gemini 3.1 Pro (High)")
+ * provided you use the `agy models` LABEL format (e.g. "Gemini 3.5 Flash (High)")
  * AND place it before the positional prompt (the buildCommand ordering does).
  *
- * We PIN the latest "Pro (High)" label by default. This is both the strongest
- * reviewer and a robustness fix: agy's default model is a *shared* setting that a
- * separate interactive agy session can change to Flash — pinning makes our runs
- * deterministic regardless. Override with AGENT_COLLAB_AGY_MODEL (a label).
+ * Default: pin the latest **Flash** label for speed (Flash reviews validated 3/3
+ * with the strict template/contract). Pinning also makes runs deterministic — the
+ * bare default is a *shared* setting a separate agy session can change.
+ *
+ * Overrides: AGENT_COLLAB_AGY_MODEL = an exact label (wins); or
+ * AGENT_COLLAB_AGY_CLASS = "Pro" (or any class) to pin the latest in that class.
  */
 function resolveModel() {
-  return process.env.AGENT_COLLAB_AGY_MODEL || pickLatestModel(listModels(), "Pro") || null;
+  if (process.env.AGENT_COLLAB_AGY_MODEL) return process.env.AGENT_COLLAB_AGY_MODEL;
+  const klass = process.env.AGENT_COLLAB_AGY_CLASS || "Flash";
+  return pickLatestModel(listModels(), klass) || null;
 }
 
 export default defineAdapter({

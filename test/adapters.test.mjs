@@ -87,17 +87,30 @@ test("pickLatestModel returns null when the class is absent", () => {
   assert.equal(pickLatestModel(["Gemini 3.5 Flash (High)"], "Pro"), null);
 });
 
-test("agy pins the latest Pro label via --model, placed BEFORE -p", () => {
+const MODELS_STUB =
+  `if (process.argv.includes('models')) process.stdout.write('Gemini 3.5 Flash (High)\\nGemini 3.1 Pro (High)\\nGemini 3.1 Pro (Low)')`;
+
+test("agy pins the latest Flash label by default (speed), placed BEFORE -p", () => {
   delete process.env.AGENT_COLLAB_AGY_MODEL;
-  process.env.AGENT_COLLAB_AGY_BIN = stubBin(
-    `if (process.argv.includes('models')) process.stdout.write('Gemini 3.5 Flash (High)\\nGemini 3.1 Pro (High)\\nGemini 3.1 Pro (Low)')`
-  );
+  delete process.env.AGENT_COLLAB_AGY_CLASS;
+  process.env.AGENT_COLLAB_AGY_BIN = stubBin(MODELS_STUB);
   const { args } = getAdapter("agy").buildCommand({ role: "reviewer", brief: "x", workspace: "/w" });
   const mi = args.indexOf("--model");
   assert.ok(mi >= 0, "--model present");
-  assert.equal(args[mi + 1], "Gemini 3.1 Pro (High)", "latest Pro (High) label");
+  assert.equal(args[mi + 1], "Gemini 3.5 Flash (High)", "default = latest Flash (High) label");
   assert.ok(mi < args.indexOf("-p"), "--model comes before -p (agy parses flags before the positional)");
   delete process.env.AGENT_COLLAB_AGY_BIN;
+});
+
+test("AGENT_COLLAB_AGY_CLASS=Pro pins the latest Pro label", () => {
+  delete process.env.AGENT_COLLAB_AGY_MODEL;
+  process.env.AGENT_COLLAB_AGY_CLASS = "Pro";
+  process.env.AGENT_COLLAB_AGY_BIN = stubBin(MODELS_STUB);
+  const { args } = getAdapter("agy").buildCommand({ role: "reviewer", brief: "x", workspace: "/w" });
+  const mi = args.indexOf("--model");
+  assert.equal(args[mi + 1], "Gemini 3.1 Pro (High)");
+  delete process.env.AGENT_COLLAB_AGY_BIN;
+  delete process.env.AGENT_COLLAB_AGY_CLASS;
 });
 
 test("agy buildCommand honors an explicit model env override", () => {

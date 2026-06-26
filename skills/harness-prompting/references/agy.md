@@ -18,16 +18,22 @@ model, which follows the JSON output contract well.
 Proof: with correct ordering, `--model "Gemini 3.5 Flash (High)"` → Flash and
 `--model "Gemini 3.1 Pro (High)"` → Pro.
 
-We **pin the latest "Pro (High)" label** (`pickLatestModel`) rather than relying on
-the default. Why pinning matters: agy's default model is a **shared setting** that a
-separate interactive agy session can switch (e.g. to Flash) — pinning keeps our runs
-deterministic on Pro regardless. Override with `AGENT_COLLAB_AGY_MODEL` (a label).
+We **pin the latest "Flash (High)" label by default** (`pickLatestModel`) for
+speed — Flash reviews validated 3/3 with the strict template/contract. Pinning also
+makes runs deterministic: agy's bare default is a **shared setting** that a separate
+interactive agy session can change, so we always pass an explicit `--model`.
 
-**Flash also reviews fine.** With the fixed ordering + the strict template/contract,
-`--model "Gemini 3.5 Flash (High)"` produced valid schema-conformant reviews 3/3
-(the old "Flash narrates instead of JSON" was the prompt-corruption bug, not Flash).
-We default to **Pro** for the strongest reasoning, but Flash is a legitimate
-faster/cheaper reviewer — set `AGENT_COLLAB_AGY_MODEL="Gemini 3.5 Flash (High)"`.
+How "latest within class" is chosen: `pickLatestModel` reads the live `agy models`
+list, keeps the labels containing the class word ("Flash"), parses the version
+number out of each label, and returns the highest version, preferring the "High"
+thinking tier. So it auto-tracks the newest model agy offers in that class (when
+agy lists "Gemini 4 Flash", that wins). It's a label heuristic, not a "latest" API
+— it assumes the first number in the label is the version and higher = newer
+(true for Gemini's naming). Falls back to no `--model` (agy's default) if the class
+isn't found.
+
+Overrides: `AGENT_COLLAB_AGY_CLASS="Pro"` to pin the latest Pro instead (stronger
+reasoning), or `AGENT_COLLAB_AGY_MODEL="<exact label>"` to pin a specific model.
 
 ## How to prompt agy
 
