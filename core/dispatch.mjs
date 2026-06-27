@@ -60,15 +60,16 @@ export function recommendWorker({ task, driver, available = [] }) {
  *
  * Codex signals are CONFIRMED from a live session (CODEX_THREAD_ID is set every
  * session; CODEX_MANAGED_* for npm installs; CODEX_SANDBOX inside its sandbox).
- * The agy signals are still best-effort/unconfirmed — `AGENT_COLLAB_DRIVER` is the
- * deterministic override for that harness either way.
+ * agy is NOT detectable: a live agy session sets no agy/antigravity/gemini env
+ * var, so agy drivers must set `AGENT_COLLAB_DRIVER=agy` (the deterministic
+ * override). Claude Code is detected only as a tiebreaker — its slash commands
+ * already pass `--driver claude` explicitly.
  */
 export function detectDriver(env = process.env) {
   if (env.CODEX_THREAD_ID || env.CODEX_MANAGED_BY_NPM || env.CODEX_MANAGED_PACKAGE_ROOT || env.CODEX_SANDBOX)
     return "codex";
-  if (env.AGY_DRIVER || env.ANTIGRAVITY_CLI || env.ANTIGRAVITY_HOME) return "agy";
   if (env.CLAUDECODE || env.CLAUDE_CODE || env.CLAUDE_PLUGIN_ROOT) return "claude";
-  return null;
+  return null; // agy has no identifiable signal — relies on AGENT_COLLAB_DRIVER
 }
 
 /**

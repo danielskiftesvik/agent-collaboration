@@ -47,9 +47,18 @@ drive from **Codex or agy over the raw shell** and forget `--driver`, the driver
 would otherwise default to `claude`, so `--worker claude` would look like
 `driver === worker` and return a "use your own subagent" no-op **instead of
 actually delegating**. So a guessed driver always takes the cross-harness path.
-**Deterministic fix:** export `AGENT_COLLAB_DRIVER=<self>` (`codex`/`agy`) in your
-shell or harness config — the example `AGENTS.md` does this. The Claude Code slash
-commands already pass `--driver claude` explicitly, so native works there.
+
+Auto-detection status (mid-2026, verified from live sessions):
+- **Codex** — auto-detected via `CODEX_THREAD_ID` (every session) / `CODEX_MANAGED_*`.
+  No setup needed.
+- **Claude Code** — detected via `CLAUDECODE`/`CLAUDE_PLUGIN_ROOT`; and its slash
+  commands pass `--driver claude` anyway.
+- **agy** — **NOT auto-detectable** (a live agy session sets no
+  agy/antigravity/gemini env var). agy drivers **must** set
+  `AGENT_COLLAB_DRIVER=agy` for correct labeling (the example `AGENTS.md` does).
+  The footgun still can't bite — a non-authoritative driver never goes native —
+  but without it agy is mislabeled `claude`, which skews fallback-candidate
+  exclusion and `recommend`.
 
 ## Roles & kinds
 
