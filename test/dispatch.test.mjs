@@ -43,6 +43,7 @@ test("runSetup marks available+unattended harnesses as valid workers", () => {
 
 const WRITE_STUB = `
 import fs from 'node:fs';
+if (process.argv.includes('models')) { process.stdout.write('Gemini 3.5 Flash (High)'); process.exit(0); }
 fs.writeFileSync('worker-was-here.txt', 'hi from worker\\n');
 process.stdout.write('Done.\\n\\n\`\`\`json\\n{"status":"completed","summary":"made a file","changed":true}\\n\`\`\`\\n');
 `;
@@ -85,6 +86,7 @@ test("applyResult applies the worker's patch to the main repo", () => {
 // A worker that does real work (writes a file) but replies in prose, not JSON.
 const PROSE_WORKER_STUB = `
 import fs from 'node:fs';
+if (process.argv.includes('models')) { process.stdout.write('Gemini 3.5 Flash (High)'); process.exit(0); }
 fs.writeFileSync('fix.txt', 'fixed\\n');
 process.stdout.write('All done — I fixed the bug for you.');
 `;
@@ -145,6 +147,7 @@ test("a reviewer cannot write to the main tree (runs isolated)", () => {
   const repo = makeRepo();
   process.env.AGENT_COLLAB_AGY_BIN = stubBin(`
     import fs from 'node:fs';
+    if (process.argv.includes('models')) { process.stdout.write('Gemini 3.5 Flash (High)'); process.exit(0); }
     fs.writeFileSync('reviewer-wrote-this.txt', 'should not reach main\\n');
     process.stdout.write('\`\`\`json\\n' + JSON.stringify({verdict:'approve',summary:'ok',findings:[],next_steps:[]}) + '\\n\`\`\`');
   `);
