@@ -52,6 +52,7 @@ Two delegation paths, chosen automatically:
 | Command | Purpose |
 |---|---|
 | `/agent-collab:setup [--gate on\|off] [--sandbox on\|off]` | Detect worker-ready harnesses; toggle the stop-time review gate and the OS sandbox |
+| `/agent-collab:recommend --task <type> --driver <self>` (or `--profiles`) | Pick the strongest available worker for a task by underlying-model strength |
 | `/agent-collab:delegate --worker <agy\|codex\|claude> [--apply] <brief>` | Run a cross-harness **worker** task (produces a patch) |
 | `/agent-collab:review --worker <name> [--focus <text>] <diff>` | Read-only cross-harness **review** |
 | `/agent-collab:adversarial-review --worker <name> <diff>` | "Try to break it" review |
@@ -64,10 +65,21 @@ Two delegation paths, chosen automatically:
 
 | Skill | What it governs |
 |---|---|
-| `agent-collaboration` | Policy: when/how to delegate, the authority model |
-| `harness-prompting` | How to compose a brief; per-harness guides (`codex`/`claude`/`agy`) + reusable prompt blocks |
+| `agent-collaboration` | Policy: when/how to delegate, the authority model, routing by model strength |
+| `harness-prompting` | How to compose a brief; per-harness guides + prompt blocks + the model-strengths matrix |
+| `collaborative-investigation` | Two-party confidence gate: hypothesis + an independent second opinion from another harness before hard work |
 | `companion-runtime` | Internal contract for invoking the companion CLI |
 | `result-handling` | How to present a worker's output — and the "after a review, STOP and ask before fixing" guardrail |
+
+## Strength-based routing
+
+Classify the task; `recommend` maps it to the strongest **available** worker (excluding the
+driver) by the underlying model's strengths — codex for hard reasoning/review, claude for
+careful SWE/planning, agy (Gemini) for speed + large-context. See
+[`skills/harness-prompting/references/model-strengths.md`](./skills/harness-prompting/references/model-strengths.md)
+or run `recommend --profiles`. Wire it (and the investigation gate) into your project
+autonomously with the templates in [`examples/`](./examples/) (`CLAUDE.md` for a Claude Code
+driver, `AGENTS.md` for Codex/agy drivers).
 
 ## How it works
 
