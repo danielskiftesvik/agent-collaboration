@@ -12,6 +12,23 @@ This skill allows a driving agent to delegate tasks or code reviews to a worker 
 - **Parallel Reviews**: Use `/review` to launch a secondary agent to audit your proposed changes before they are committed.
 - **Isolated Execution**: Workers run in isolated workspaces/worktrees, ensuring they do not pollute your main branch until you explicitly approve and apply the patch.
 
+## Choosing the worker (route by model strength)
+
+Classify the task type, then let `recommend` pick the strongest *available* worker
+(it excludes the driver, so it stays cross-harness):
+
+```bash
+node scripts/agent-companion.mjs recommend --task <type> --driver <self> --json
+```
+
+Rough guide (full matrix + model profiles: [`harness-prompting/references/model-strengths.md`](../harness-prompting/references/model-strengths.md), or `recommend --profiles`):
+
+- **Hard reasoning / subtle bugs / adversarial review** → **codex** (GPT-5.x).
+- **Careful refactor / planning / general SWE** → **claude**.
+- **Fast/mechanical/bulk edits, large-context or whole-repo scans** → **agy** (Gemini Flash speed + big context window).
+- **Independent second opinion** → the *other* reasoner (codex↔claude); see the
+  `collaborative-investigation` skill.
+
 ## How to Delegate
 
 ### Claude Code
