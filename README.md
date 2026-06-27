@@ -11,29 +11,45 @@ harness-agnostic core plus per-harness adapters, prompt templates, and prompting
 
 ## Install
 
-### Claude Code
-The repo is a self-contained plugin marketplace:
+The repo is a self-contained plugin marketplace (it ships `.claude-plugin/` and
+`.codex-plugin/` manifests), so it installs natively per harness.
 
+### Claude Code
 ```
 /plugin marketplace add danielskiftesvik/agent-collaboration
 /plugin install agent-collaboration@agent-collaboration
 ```
 
-Then detect your harnesses and confirm they can run unattended:
-
+### Codex
 ```
-/agent-collab:setup
+codex plugin marketplace add https://github.com/danielskiftesvik/agent-collaboration
+codex plugin add agent-collaboration@agent-collaboration
 ```
 
-### Codex / other harnesses
-The repo also ships a `.codex-plugin/` manifest (per-harness, like `superpowers`), so the
-skills + runtime are available in Codex. From any harness you can also drive the runtime
-directly over the shell — see [Driving from any harness](#driving-from-any-harness).
+### Antigravity (`agy`)
+```
+git clone https://github.com/danielskiftesvik/agent-collaboration
+agy plugin install ./agent-collaboration
+```
+`agy` installs from the cloned directory. If you already installed it in Claude Code, you can
+instead run `agy plugin import claude`.
+
+> Codex and Antigravity plugin support is newer than Claude Code's and the exact marketplace
+> resolution can vary by CLI version — if a command above doesn't resolve, check
+> `codex plugin --help` / `agy plugin --help`. You can always skip install entirely and
+> [drive the runtime over the shell](#driving-from-any-harness).
+
+### After installing — detect your workers
+```
+/agent-collab:setup                                   # Claude Code
+node <plugin-dir>/scripts/agent-companion.mjs setup   # Codex / agy / any shell
+```
+`setup` reports which worker CLIs are **worker-ready** (installed + able to run unattended).
 
 ### Prerequisites
 - **Node ≥ 20.**
 - The worker CLIs you want to delegate to, on your `PATH`: `codex`, `agy` (Antigravity),
-  and/or `claude`. `/agent-collab:setup` reports which are **worker-ready**.
+  and/or `claude`.
 
 ## What it does
 

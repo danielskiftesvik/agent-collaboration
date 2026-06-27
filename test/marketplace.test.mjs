@@ -19,7 +19,7 @@ test("plugin.json name matches the marketplace entry", () => {
   assert.equal(read("../.claude-plugin/plugin.json").name, "agent-collaboration");
 });
 
-test("ships a .codex-plugin manifest for multi-harness install (like superpowers)", () => {
+test("ships a .codex-plugin manifest for multi-harness install", () => {
   const cx = read("../.codex-plugin/plugin.json");
   assert.equal(cx.name, "agent-collaboration");
   assert.equal(cx.skills, "./skills/", "declares skills for Codex");
