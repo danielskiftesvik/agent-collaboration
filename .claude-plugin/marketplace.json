@@ -1,0 +1,25 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-marketplace.json",
+  "name": "agent-collaboration",
+  "owner": {
+    "name": "Daniel Skiftesvik"
+  },
+  "metadata": {
+    "description": "Cross-harness agent collaboration: drive Codex, Antigravity (agy), or Claude Code as workers/reviewers from any of them.",
+    "version": "0.1.0"
+  },
+  "plugins": [
+    {
+      "name": "agent-collaboration",
+      "source": ".",
+      "description": "Delegate a task to a worker/reviewer on another harness (Codex or Antigravity) and apply the result.",
+      "version": "0.1.0",
+      "author": {
+        "name": "Daniel Skiftesvik"
+      },
+      "license": "Apache-2.0",
+      "keywords": ["codex", "antigravity", "gemini", "code-review", "delegation", "multi-agent"],
+      "strict": true
+    }
+  ]
+}

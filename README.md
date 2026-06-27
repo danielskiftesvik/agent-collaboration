@@ -8,6 +8,25 @@ This is a generalization of OpenAI's Apache-2.0 `codex-plugin-cc` (see `NOTICE`)
 its single CC→Codex direction is widened into a harness-agnostic core plus
 per-harness adapters.
 
+## Install (Claude Code)
+
+The repo is a self-contained plugin marketplace, so install is two commands:
+
+```
+/plugin marketplace add danielskiftesvik/agent-collaboration
+/plugin install agent-collaboration@agent-collaboration
+```
+
+Then detect the harnesses you have and confirm they can run unattended:
+
+```
+/agent-collab:setup
+```
+
+**Prerequisites:** Node ≥ 20, plus whichever worker CLIs you want to delegate to
+on your PATH — `codex`, `agy` (Antigravity), and/or `claude`. Cross-harness work
+spawns those CLIs; see `/agent-collab:setup` for which are worker-ready.
+
 ## Two delegation paths
 
 - **Native path (same harness):** when driver and worker are the same harness,
