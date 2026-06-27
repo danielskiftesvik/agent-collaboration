@@ -37,10 +37,17 @@ test("with nothing set, driver falls back to claude but is non-authoritative", (
   assert.equal(isAuthoritativeDriver(r.source), false);
 });
 
+test("detectDriver recognizes Codex's own env (real signals)", () => {
+  // Confirmed from a live Codex session: CODEX_THREAD_ID is set every session;
+  // CODEX_MANAGED_* appear for npm installs.
+  assert.equal(detectDriver({ CODEX_THREAD_ID: "019f08b6-8d5e-76a0" }), "codex");
+  assert.equal(detectDriver({ CODEX_MANAGED_BY_NPM: "1" }), "codex");
+});
+
 test("an actively-running harness beats an inherited Claude env", () => {
   // Codex/agy launched from a Claude Code shell may INHERIT CLAUDECODE; the
   // actively-running harness's own signal must win over the inherited one.
-  assert.equal(detectDriver({ CLAUDECODE: "1", CODEX_SANDBOX: "seatbelt" }), "codex");
+  assert.equal(detectDriver({ CLAUDECODE: "1", CODEX_THREAD_ID: "x" }), "codex");
   assert.equal(detectDriver({ CLAUDE_PLUGIN_ROOT: "/x", AGY_DRIVER: "1" }), "agy");
 });
 

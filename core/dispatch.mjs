@@ -58,11 +58,14 @@ export function recommendWorker({ task, driver, available = [] }) {
  * Code shell can INHERIT Claude's env vars, so the running harness's own signal
  * must win over an inherited one. Returns null when nothing matches.
  *
- * NOTE: the Codex/agy signal names are best-effort and may need updating per CLI
- * version — `AGENT_COLLAB_DRIVER` is the deterministic override either way.
+ * Codex signals are CONFIRMED from a live session (CODEX_THREAD_ID is set every
+ * session; CODEX_MANAGED_* for npm installs; CODEX_SANDBOX inside its sandbox).
+ * The agy signals are still best-effort/unconfirmed — `AGENT_COLLAB_DRIVER` is the
+ * deterministic override for that harness either way.
  */
 export function detectDriver(env = process.env) {
-  if (env.CODEX_SANDBOX || env.CODEX_HOME || env.CODEX_SANDBOX_NETWORK_DISABLED) return "codex";
+  if (env.CODEX_THREAD_ID || env.CODEX_MANAGED_BY_NPM || env.CODEX_MANAGED_PACKAGE_ROOT || env.CODEX_SANDBOX)
+    return "codex";
   if (env.AGY_DRIVER || env.ANTIGRAVITY_CLI || env.ANTIGRAVITY_HOME) return "agy";
   if (env.CLAUDECODE || env.CLAUDE_CODE || env.CLAUDE_PLUGIN_ROOT) return "claude";
   return null;
