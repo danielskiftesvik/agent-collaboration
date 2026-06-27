@@ -18,6 +18,14 @@ test("setup --json lists the three adapters", () => {
   assert.deepEqual(rows.map((x) => x.name).sort(), ["agy", "claude", "codex"]);
 });
 
+test("setup (human) prints a sandboxed-driver hint; --json stays pure JSON", () => {
+  const human = cli(["setup"]);
+  assert.equal(human.status, 0, human.stderr);
+  assert.match(human.stdout, /sandbox/i, "human output carries the escalation hint");
+  const json = cli(["setup", "--json"]);
+  assert.ok(Array.isArray(JSON.parse(json.stdout)), "--json output is still a pure array");
+});
+
 test("delegate to the same harness returns the native-path instruction", () => {
   const r = cli(["delegate", "--driver", "claude", "--worker", "claude", "do a thing"]);
   assert.equal(r.status, 0, r.stderr);

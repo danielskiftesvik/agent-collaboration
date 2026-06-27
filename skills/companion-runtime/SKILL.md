@@ -53,6 +53,17 @@ deliverable). Apply a worker patch only via `apply` / `--apply`, after inspectio
 - `AGENT_COLLAB_<AGY|CLAUDE|CODEX>_BIN` — override a harness binary.
 - `AGENT_COLLAB_AGY_MODEL[_PRO|_FLASH]` — explicit agy model id (default: unset).
 
+## Driving from a sandboxed harness
+
+A cross-harness delegation **spawns another agent that makes a network call** (to the
+worker's model API) and creates a git worktree. If the driver harness sandboxes shell
+commands by default (e.g. **Codex**), the first run comes back empty ("no worker JSON")
+because the sandbox blocks the spawn/network. Run the companion with **escalated /
+network-enabled permissions** (Codex will offer to escalate; or pre-approve
+`node …/agent-companion.mjs` in the harness config). Harnesses that already run
+unattended (e.g. `agy --dangerously-skip-permissions`) don't need this. This is
+expected: a sandbox *should* gate "spawn a process that calls the internet."
+
 ## Rules
 
 - One job per invocation. Don't fabricate results if a run fails — surface stderr.

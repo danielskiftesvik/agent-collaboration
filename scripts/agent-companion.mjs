@@ -61,7 +61,11 @@ switch (subcommand) {
       saveState(cwd, state);
     }
     const rows = runSetup();
-    out(rows, options, renderSetup(rows));
+    const hint =
+      "\nTip: when driving from a sandboxed harness (e.g. Codex), run the companion " +
+      "with escalated/network-enabled permissions — it spawns a worker that calls an " +
+      "external API, which a default sandbox will block.";
+    out(rows, options, renderSetup(rows) + "\n" + hint);
     break;
   }
 
