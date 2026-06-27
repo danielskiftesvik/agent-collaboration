@@ -18,3 +18,9 @@ test("marketplace.json is a valid single-plugin catalog pointing at the repo roo
 test("plugin.json name matches the marketplace entry", () => {
   assert.equal(read("../.claude-plugin/plugin.json").name, "agent-collaboration");
 });
+
+test("ships a .codex-plugin manifest for multi-harness install (like superpowers)", () => {
+  const cx = read("../.codex-plugin/plugin.json");
+  assert.equal(cx.name, "agent-collaboration");
+  assert.equal(cx.skills, "./skills/", "declares skills for Codex");
+});
