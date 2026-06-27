@@ -51,6 +51,42 @@ test("delegate to the same harness returns the native-path instruction", () => {
   assert.match(out.instruction, /Agent tool/i);
 });
 
+test("raw delegate to claude with no --driver/env does NOT short-circuit to native", () => {
+  // The Codex/agy raw-CLI footgun: without --driver the runtime used to default
+  // driver=claude, so `--worker claude` looked like driver==worker and returned a
+  // native no-op instead of actually delegating. A guessed driver must never do that.
+  const dataDir = isolateStateRoot();
+  const repo = makeRepo();
+  const claudeBin = stubBin(`
+    import fs from 'node:fs';
+    if (process.argv.includes('--version')) { process.stdout.write('claude 1.0.0'); process.exit(0); }
+    fs.writeFileSync('done.txt','ok\\n');
+    process.stdout.write(JSON.stringify({ result: 'ok\\n\\n\`\`\`json\\n{"status":"completed","summary":"did","changed":true}\\n\`\`\`' }));
+  `);
+  const env = {
+    AGENT_COLLAB_DATA: dataDir,
+    AGENT_COLLAB_CLAUDE_BIN: claudeBin,
+    AGENT_COLLAB_DRIVER: "",
+    CLAUDECODE: "",
+    CLAUDE_CODE: "",
+    CLAUDE_PLUGIN_ROOT: ""
+  };
+
+  const r = cli(["delegate", "--worker", "claude", "--json", "do it"], { cwd: repo, env });
+  assert.equal(r.status, 0, r.stderr);
+  const res = JSON.parse(r.stdout);
+  assert.notEqual(res.mode, "native", "a fallback-guessed driver must not yield a native no-op");
+  assert.equal(res.status, "completed");
+  assert.equal(res.worker, "claude");
+});
+
+test("delegate to the same harness IS native when --driver is explicit (authoritative)", () => {
+  const r = cli(["delegate", "--driver", "claude", "--worker", "claude", "do a thing"]);
+  assert.equal(r.status, 0, r.stderr);
+  const out = JSON.parse(r.stdout);
+  assert.equal(out.mode, "native");
+});
+
 test("delegate auto-falls-back to another worker when the first is rate-limited", () => {
   const dataDir = isolateStateRoot();
   const repo = makeRepo();

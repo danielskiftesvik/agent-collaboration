@@ -5,7 +5,7 @@
 import fs from "node:fs";
 import path from "node:path";
 
-import { decideRoute, runSetup, runWorkerSync, runWithFallback, applyResult, recommendWorker } from "../core/dispatch.mjs";
+import { decideRoute, resolveDriver, isAuthoritativeDriver, runSetup, runWorkerSync, runWithFallback, applyResult, recommendWorker } from "../core/dispatch.mjs";
 import { listJobs, getJob, updateJob, sortJobsNewestFirst, loadState, saveState } from "../core/state.mjs";
 import { isPidAlive } from "../core/heartbeat.mjs";
 import { renderSetup, renderJob, renderJobList, renderRecommendation, renderProfiles } from "../core/render.mjs";
@@ -73,7 +73,7 @@ switch (subcommand) {
   case "delegate":
   case "review":
   case "adversarial-review": {
-    const driver = options.driver || process.env.AGENT_COLLAB_DRIVER || "claude";
+    const { driver, source: driverSource } = resolveDriver(options);
     const worker = options.worker;
     if (!worker) fail(`${subcommand}: --worker <name> is required`);
     const role = options.role || (subcommand === "delegate" ? "worker" : "reviewer");
@@ -81,8 +81,12 @@ switch (subcommand) {
     const brief = positionals.join(" ");
     if (!brief) fail(`${subcommand}: a brief is required`);
 
+    // Take the native (same-harness) path ONLY when the driver is authoritatively
+    // known (explicit --driver or AGENT_COLLAB_DRIVER). A guessed/fallback driver
+    // must never turn a real cross-harness delegation into a "use your own
+    // subagent" no-op — the Codex/agy raw-CLI footgun.
     const route = decideRoute({ driver, worker });
-    if (route.mode === "native") {
+    if (route.mode === "native" && isAuthoritativeDriver(driverSource)) {
       out({ mode: "native", harness: route.harness, instruction: route.instruction }, options);
       break;
     }
@@ -111,7 +115,7 @@ switch (subcommand) {
     }
     const task = options.task || positionals[0];
     if (!task) fail("recommend: --task <type> is required (or pass it as the argument). Use --profiles to list model strengths.");
-    const driver = options.driver || process.env.AGENT_COLLAB_DRIVER || "claude";
+    const { driver } = resolveDriver(options);
     const available = runSetup().filter((r) => r.validWorker).map((r) => r.name);
     const rec = recommendWorker({ task, driver, available });
     out(rec, options, renderRecommendation(rec));

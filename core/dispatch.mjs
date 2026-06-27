@@ -52,6 +52,44 @@ export function recommendWorker({ task, driver, available = [] }) {
   return { mode: "none", task, driver, worker: null, reason: "no worker-ready harness available" };
 }
 
+/**
+ * Best-effort detection of which harness is DRIVING from environment signals.
+ * Checked actively-running-harness-first: Codex/agy launched from inside a Claude
+ * Code shell can INHERIT Claude's env vars, so the running harness's own signal
+ * must win over an inherited one. Returns null when nothing matches.
+ *
+ * NOTE: the Codex/agy signal names are best-effort and may need updating per CLI
+ * version — `AGENT_COLLAB_DRIVER` is the deterministic override either way.
+ */
+export function detectDriver(env = process.env) {
+  if (env.CODEX_SANDBOX || env.CODEX_HOME || env.CODEX_SANDBOX_NETWORK_DISABLED) return "codex";
+  if (env.AGY_DRIVER || env.ANTIGRAVITY_CLI || env.ANTIGRAVITY_HOME) return "agy";
+  if (env.CLAUDECODE || env.CLAUDE_CODE || env.CLAUDE_PLUGIN_ROOT) return "claude";
+  return null;
+}
+
+/**
+ * Resolve the driver harness + WHERE the value came from. Precedence:
+ *   1. explicit `--driver` flag  (authoritative)
+ *   2. AGENT_COLLAB_DRIVER env    (authoritative)
+ *   3. env detection             (label only — NOT authoritative)
+ *   4. "claude" fallback         (label only — NOT authoritative)
+ * Only an *authoritative* driver may trigger the native (same-harness) path: a
+ * mere guess must never silently turn a real cross-harness delegation into a
+ * "use your own subagent" no-op (the Codex/agy raw-CLI footgun).
+ */
+export function resolveDriver(options = {}, env = process.env) {
+  if (options.driver) return { driver: options.driver, source: "flag" };
+  if (env.AGENT_COLLAB_DRIVER) return { driver: env.AGENT_COLLAB_DRIVER, source: "env" };
+  const detected = detectDriver(env);
+  if (detected) return { driver: detected, source: "detected" };
+  return { driver: "claude", source: "fallback" };
+}
+
+export function isAuthoritativeDriver(source) {
+  return source === "flag" || source === "env";
+}
+
 const here = path.dirname(fileURLToPath(import.meta.url));
 const reviewSchema = JSON.parse(
   fs.readFileSync(path.join(here, "../schemas/review-output.schema.json"))
@@ -309,10 +347,13 @@ export function runWithFallback(cwd, opts) {
   const avail =
     available || runSetup().filter((r) => r.validWorker).map((r) => r.name);
 
-  // Candidate order: the requested/recommended worker first, then the remaining
-  // worker-ready harnesses (never the driver — delegation stays cross-harness).
+  // Candidate order: the EXPLICITLY-requested worker first — always honored, even
+  // if it equals the (possibly merely guessed) driver label — then the remaining
+  // worker-ready harnesses as auto-fallbacks, which DO exclude the driver so a
+  // fallback never spawns the driver's own harness behind its back.
   const candidates = [];
-  for (const w of [worker, ...avail]) {
+  if (worker) candidates.push(worker);
+  for (const w of avail) {
     if (w && w !== driver && !candidates.includes(w)) candidates.push(w);
   }
 

@@ -285,6 +285,28 @@ test("runWithFallback falls back to another worker when the first is rate-limite
   delete process.env.AGENT_COLLAB_CLAUDE_BIN;
 });
 
+test("runWithFallback always tries the explicit worker, even if it equals the driver label", () => {
+  // The driver is only a guessed "claude" label, but the user explicitly asked
+  // for the claude worker — it must still run (not get excluded as the driver).
+  isolateStateRoot();
+  const repo = makeRepo();
+  process.env.AGENT_COLLAB_CLAUDE_BIN = stubBin(CLAUDE_SUCCESS_STUB);
+
+  const res = runWithFallback(repo, {
+    driver: "claude",
+    worker: "claude",
+    role: "worker",
+    brief: "x",
+    available: ["claude", "agy"],
+    maxAttempts: 1
+  });
+
+  assert.equal(res.status, "completed");
+  assert.equal(res.worker, "claude");
+
+  delete process.env.AGENT_COLLAB_CLAUDE_BIN;
+});
+
 test("runWithFallback surfaces a clear note when ALL workers are limited", () => {
   isolateStateRoot();
   const repo = makeRepo();

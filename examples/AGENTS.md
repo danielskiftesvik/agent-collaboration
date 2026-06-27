@@ -14,6 +14,11 @@
 Delegate work to the strongest model for each task and gate hard work behind an independent
 second opinion. Do this without asking.
 
+> **Set this once (important).** Export `AGENT_COLLAB_DRIVER=<self>` — `codex` or `agy` — in
+> your shell/harness config. Without it the runtime can't tell who is driving and defaults to
+> `claude`, so a `--worker claude` delegation gets mistaken for "use your own subagent" and
+> silently does nothing. Either set the env var, or pass `--driver <self>` on every call.
+
 ### Route by model strength
 Classify the task type, then let the runtime pick the worker (it excludes you, the driver):
 

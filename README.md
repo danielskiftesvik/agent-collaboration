@@ -146,7 +146,7 @@ node /path/to/agent-collaboration/scripts/agent-companion.mjs \
 | Env var | Effect |
 |---|---|
 | `AGENT_COLLAB_DATA` | Out-of-repo state root (default: a per-plugin / tmp dir) |
-| `AGENT_COLLAB_DRIVER` | Default driver harness |
+| `AGENT_COLLAB_DRIVER` | Which harness is driving (`codex`/`agy`/`claude`). Set this when driving from Codex/agy over the shell, else the driver defaults to `claude` and a `--worker claude` delegation is mistaken for a native no-op |
 | `AGENT_COLLAB_SANDBOX=on` | Opt-in macOS/Linux OS sandbox for workers (off by default) |
 | `AGENT_COLLAB_FALLBACK=off` | Disable auto-fallback to another worker on a rate/subscription limit (on by default) |
 | `AGENT_COLLAB_AGY_CLASS` | agy model class to pin (`Flash` default, `Pro`, …) |

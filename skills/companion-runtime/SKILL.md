@@ -26,10 +26,30 @@ cancel <jobId>
 
 ## Routing (decide before spawning)
 
-- `delegate` returns `{"mode":"native", instruction}` when `driver === worker`.
-  In that case do NOT use the companion — follow the instruction (use the
-  harness's native subagent; for Claude Code that's the `Agent` tool).
+- `delegate` returns `{"mode":"native", instruction}` when `driver === worker`
+  **and the driver is authoritatively known**. In that case do NOT use the
+  companion — follow the instruction (use the harness's native subagent; for
+  Claude Code that's the `Agent` tool).
 - Otherwise it runs the cross-harness path (worktree → spawn → collect).
+
+### Who is the driver? (avoid the native no-op footgun)
+
+The driver is resolved in this order — only the first two are **authoritative**
+and may trigger the native path:
+
+1. `--driver <name>` flag (authoritative)
+2. `AGENT_COLLAB_DRIVER` env (authoritative)
+3. env auto-detection (label only)
+4. `claude` fallback (label only)
+
+Native short-circuiting requires an *authoritative* driver on purpose: when you
+drive from **Codex or agy over the raw shell** and forget `--driver`, the driver
+would otherwise default to `claude`, so `--worker claude` would look like
+`driver === worker` and return a "use your own subagent" no-op **instead of
+actually delegating**. So a guessed driver always takes the cross-harness path.
+**Deterministic fix:** export `AGENT_COLLAB_DRIVER=<self>` (`codex`/`agy`) in your
+shell or harness config — the example `AGENTS.md` does this. The Claude Code slash
+commands already pass `--driver claude` explicitly, so native works there.
 
 ## Roles & kinds
 
