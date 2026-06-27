@@ -28,11 +28,10 @@ codex plugin add agent-collaboration@agent-collaboration
 
 ### Antigravity (`agy`)
 ```
-git clone https://github.com/danielskiftesvik/agent-collaboration
-agy plugin install ./agent-collaboration
+agy plugin install https://github.com/danielskiftesvik/agent-collaboration
 ```
-`agy` installs from the cloned directory. If you already installed it in Claude Code, you can
-instead run `agy plugin import claude`.
+Reinstall with the same command to update. (Or `agy plugin import claude` if you've already
+installed it in Claude Code.)
 
 > Codex and Antigravity plugin support is newer than Claude Code's and the exact marketplace
 > resolution can vary by CLI version — if a command above doesn't resolve, check

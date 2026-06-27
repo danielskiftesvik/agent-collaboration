@@ -8,5 +8,6 @@
   "homepage": "https://github.com/danielskiftesvik/agent-collaboration",
   "repository": "https://github.com/danielskiftesvik/agent-collaboration",
   "license": "Apache-2.0",
-  "keywords": ["codex", "antigravity", "gemini", "code-review", "delegation", "multi-agent"]
+  "keywords": ["codex", "antigravity", "gemini", "code-review", "delegation", "multi-agent"],
+  "skills": "./skills/"
 }
