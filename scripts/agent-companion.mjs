@@ -5,14 +5,14 @@
 import fs from "node:fs";
 import path from "node:path";
 
-import { decideRoute, runSetup, runWorkerSync, applyResult, recommendWorker } from "../core/dispatch.mjs";
+import { decideRoute, runSetup, runWorkerSync, runWithFallback, applyResult, recommendWorker } from "../core/dispatch.mjs";
 import { listJobs, getJob, updateJob, sortJobsNewestFirst, loadState, saveState } from "../core/state.mjs";
 import { isPidAlive } from "../core/heartbeat.mjs";
 import { renderSetup, renderJob, renderJobList, renderRecommendation, renderProfiles } from "../core/render.mjs";
 import { MODEL_PROFILES } from "../core/model-profiles.mjs";
 
 const VALUE_FLAGS = new Set(["worker", "role", "driver", "base", "timeout", "gate", "sandbox", "focus", "task"]);
-const BOOL_FLAGS = new Set(["json", "apply", "wait", "background", "profiles"]);
+const BOOL_FLAGS = new Set(["json", "apply", "wait", "background", "profiles", "no-fallback"]);
 
 function parseArgs(tokens) {
   const options = {};
@@ -88,11 +88,18 @@ switch (subcommand) {
     }
 
     const timeoutMs = options.timeout ? Number(options.timeout) * 1000 : undefined;
-    const res = runWorkerSync(cwd, { driver, worker, role, brief, kind, focus: options.focus, timeoutMs });
+    // Auto-fallback on a subscription/rate limit (or auth) is ON by default; a
+    // genuine task failure never triggers it. Disable with --no-fallback or
+    // AGENT_COLLAB_FALLBACK=off (single worker, surface the limit).
+    const fallback = !options["no-fallback"] && process.env.AGENT_COLLAB_FALLBACK !== "off";
+    const res = runWithFallback(cwd, { driver, worker, role, brief, kind, focus: options.focus, timeoutMs, fallback });
     if (options.apply && res.status === "completed" && role === "worker") {
       res.applied = applyResult(cwd, res.jobId);
     }
-    out(res, options, `${res.status} — ${res.jobId}\nartifacts: ${res.artifactDir}`);
+    const human =
+      `${res.status} — ${res.worker} — ${res.jobId}\nartifacts: ${res.artifactDir}` +
+      (res.note ? `\n${res.note}` : "");
+    out(res, options, human);
     if (res.status !== "completed") process.exitCode = 2;
     break;
   }

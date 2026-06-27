@@ -51,6 +51,31 @@ test("delegate to the same harness returns the native-path instruction", () => {
   assert.match(out.instruction, /Agent tool/i);
 });
 
+test("delegate auto-falls-back to another worker when the first is rate-limited", () => {
+  const dataDir = isolateStateRoot();
+  const repo = makeRepo();
+  const agyBin = stubBin(`
+    if (process.argv.includes('--version')) { process.stdout.write('agy 1.0.0'); process.exit(0); }
+    if (process.argv.includes('models')) { process.exit(0); }
+    process.stderr.write('429 RESOURCE_EXHAUSTED quota; retry-after: 60'); process.exit(1);
+  `);
+  const claudeBin = stubBin(`
+    import fs from 'node:fs';
+    if (process.argv.includes('--version')) { process.stdout.write('claude 1.0.0'); process.exit(0); }
+    fs.writeFileSync('done.txt','ok\\n');
+    process.stdout.write(JSON.stringify({ result: 'Done.\\n\\n\`\`\`json\\n{"status":"completed","summary":"did it","changed":true}\\n\`\`\`' }));
+  `);
+  const env = { AGENT_COLLAB_DATA: dataDir, AGENT_COLLAB_AGY_BIN: agyBin, AGENT_COLLAB_CLAUDE_BIN: claudeBin };
+
+  const del = cli(["delegate", "--driver", "codex", "--worker", "agy", "--json", "do a thing"], { cwd: repo, env });
+  assert.equal(del.status, 0, del.stderr);
+  const res = JSON.parse(del.stdout);
+  assert.equal(res.status, "completed");
+  assert.equal(res.worker, "claude", "fell back to claude");
+  assert.match(res.note, /agy/);
+  assert.equal(res.fellBackFrom[0].failureKind, "rate-limit");
+});
+
 test("delegate cross-harness reviewer runs and result prints the artifact", () => {
   const dataDir = isolateStateRoot();
   const repo = makeRepo();

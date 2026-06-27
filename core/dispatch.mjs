@@ -13,6 +13,7 @@ import { headRef, captureWorkingDiff, applyPatch, checkPatchApplies } from "./gi
 import { run } from "./process.mjs";
 import { coerceArtifact } from "./schema.mjs";
 import { buildFromTemplate } from "./prompts.mjs";
+import { classifyFailure, isFallbackKind } from "./failures.mjs";
 import { MODEL_PROFILES, TASK_ROUTING, DEFAULT_ROUTING } from "./model-profiles.mjs";
 
 const TEMPLATE_KINDS = new Set(["review", "adversarial-review"]);
@@ -160,6 +161,8 @@ export function runWorkerSync(cwd, opts) {
   let answerText = "";
   let coerce = { ok: false, value: null, errors: ["no attempts ran"] };
   let exitCode = null;
+  let lastStdout = "";
+  let lastStderr = "";
   // Harness-aware output contract: each adapter may tune how it asks for the
   // structured shape (agy gets emphatic JSON-only; codex gets XML blocks);
   // otherwise fall back to the generic instruction.
@@ -196,6 +199,8 @@ export function runWorkerSync(cwd, opts) {
       sandboxArtifactDir: artifactDir
     });
     exitCode = proc.status;
+    lastStdout = proc.stdout ?? "";
+    lastStderr = proc.stderr ?? "";
     const parsed = adapter.parseOutput({
       stdout: proc.stdout,
       stderr: proc.stderr,
@@ -247,6 +252,17 @@ export function runWorkerSync(cwd, opts) {
     status = coerce.ok ? coerce.value.status ?? "completed" : "failed";
   }
 
+  // On a failed run, classify WHY from the worker's last output: a subscription/
+  // rate limit or an auth problem makes the worker unusable right now and is what
+  // the driver acts on (auto-fallback). A genuine task failure stays `other`.
+  let failureKind;
+  let resetAt = null;
+  if (status === "failed") {
+    const cls = classifyFailure({ stdout: lastStdout, stderr: lastStderr, exitCode, worker });
+    failureKind = cls.kind;
+    resetAt = cls.resetAt;
+  }
+
   updateJob(cwd, jobId, {
     status,
     exitCode,
@@ -255,11 +271,14 @@ export function runWorkerSync(cwd, opts) {
     patchApplies,
     attempts,
     patchPath,
+    failureKind,
+    resetAt,
     errors: coerce.ok ? undefined : coerce.errors
   });
 
   return {
     jobId,
+    worker,
     status,
     resultValid: coerce.ok,
     valid: coerce.ok, // back-compat alias for resultValid
@@ -268,8 +287,67 @@ export function runWorkerSync(cwd, opts) {
     artifact: coerce.value,
     artifactDir,
     patchPath,
+    failureKind,
+    resetAt,
     errors: coerce.ok ? undefined : coerce.errors
   };
+}
+
+/**
+ * Run a cross-harness worker/reviewer with automatic fallback: if the chosen
+ * worker hits a subscription/rate limit (or an auth problem), retry on the next
+ * worker-ready harness instead of silently giving up or falling back to the
+ * driver doing it itself. Always attaches a `note` + `fellBackFrom` trail so the
+ * driver can tell the user what happened; if EVERY worker is limited it returns
+ * the last failure with `allWorkersLimited: true` for the driver to surface.
+ *
+ * `available` is the list of worker-ready harness names (from `runSetup`); pass it
+ * explicitly or it is probed. `fallback: false` disables the chain (single worker).
+ */
+export function runWithFallback(cwd, opts) {
+  const { driver, worker, available, fallback = true, task, ...rest } = opts;
+  const avail =
+    available || runSetup().filter((r) => r.validWorker).map((r) => r.name);
+
+  // Candidate order: the requested/recommended worker first, then the remaining
+  // worker-ready harnesses (never the driver — delegation stays cross-harness).
+  const candidates = [];
+  for (const w of [worker, ...avail]) {
+    if (w && w !== driver && !candidates.includes(w)) candidates.push(w);
+  }
+
+  const fellBackFrom = [];
+  let last = null;
+  for (const w of candidates) {
+    const res = runWorkerSync(cwd, { driver, worker: w, ...rest });
+    last = res;
+    const limited = fallback && res.status === "failed" && isFallbackKind(res.failureKind);
+    if (!limited) {
+      if (fellBackFrom.length) {
+        res.fellBackFrom = fellBackFrom;
+        res.note =
+          `Auto-fell back to ${w} after ${fellBackFrom
+            .map((f) => `${f.worker} (${f.failureKind}${f.resetAt ? `, resets ${f.resetAt}` : ""})`)
+            .join(", ")} was unavailable.`;
+      }
+      return res;
+    }
+    fellBackFrom.push({ worker: w, failureKind: res.failureKind, resetAt: res.resetAt });
+  }
+
+  // Every worker-ready harness was limited/blocked — surface, never silently
+  // single-party. The driver must tell the user (see the result-handling skill).
+  if (last) {
+    last.allWorkersLimited = true;
+    last.fellBackFrom = fellBackFrom;
+    last.note =
+      "All worker-ready harnesses hit a limit/auth failure: " +
+      fellBackFrom
+        .map((f) => `${f.worker} (${f.failureKind}${f.resetAt ? `, resets ${f.resetAt}` : ""})`)
+        .join("; ") +
+      ". Surface this to the user — do not silently complete the task single-party.";
+  }
+  return last;
 }
 
 /** Driver-side: apply a completed worker's patch to the main branch (3-way). */

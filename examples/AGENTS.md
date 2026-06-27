@@ -27,6 +27,12 @@ Then `node "$COMPANION" delegate --worker <returned> --driver <self> "<brief>"` 
 - **Fast/mechanical/bulk edits, or large-context / whole-repo scans →** `agy` (Gemini).
 - Full matrix + model profiles: `node "$COMPANION" recommend --profiles`.
 
+### When a worker hits a subscription / rate limit
+The runtime detects it (`failureKind: "rate-limit" | "auth"`) and **auto-falls-back to the
+next worker-ready harness** — relay the result's `note` so the user knows a *different* model
+did the work. If `allWorkersLimited: true`, **stop and surface it** (with the soonest
+`resetAt`); never silently complete the task single-party. See the `result-handling` skill.
+
 ### Collaborative-investigation gate (mandatory before non-trivial work)
 This is the `collaborative-investigation` methodology (see the plugin's skill of that name).
 Before debugging a non-trivial bug or designing a non-trivial implementation: form a

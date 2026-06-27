@@ -111,6 +111,11 @@ driver, `AGENTS.md` for Codex/agy drivers).
   is missing (the patch is the deliverable).
 - **Stall detection:** jobs carry a heartbeat; a job whose heartbeat is stale **and** whose
   process is gone is treated as stalled.
+- **Limit handling:** a failed run is classified (`failureKind` = `rate-limit` | `auth` |
+  `other` + a best-effort `resetAt`). On a subscription/rate or auth limit the runtime
+  **auto-falls-back to the next worker-ready harness** (never the driver), tagging the result
+  with a `note` + `fellBackFrom[]`; if every worker is limited it returns `allWorkersLimited`
+  for the driver to surface. Disable with `--no-fallback` / `AGENT_COLLAB_FALLBACK=off`.
 - **State** lives **outside** the repo (keyed by a hash of the workspace root), so it survives
   worktrees and is never committed.
 
@@ -143,6 +148,7 @@ node /path/to/agent-collaboration/scripts/agent-companion.mjs \
 | `AGENT_COLLAB_DATA` | Out-of-repo state root (default: a per-plugin / tmp dir) |
 | `AGENT_COLLAB_DRIVER` | Default driver harness |
 | `AGENT_COLLAB_SANDBOX=on` | Opt-in macOS/Linux OS sandbox for workers (off by default) |
+| `AGENT_COLLAB_FALLBACK=off` | Disable auto-fallback to another worker on a rate/subscription limit (on by default) |
 | `AGENT_COLLAB_AGY_CLASS` | agy model class to pin (`Flash` default, `Pro`, …) |
 | `AGENT_COLLAB_AGY_MODEL` | Pin an exact agy model label (overrides the class) |
 | `AGENT_COLLAB_<AGY\|CLAUDE\|CODEX>_BIN` | Override a harness binary path |

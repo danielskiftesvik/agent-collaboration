@@ -24,6 +24,13 @@ node "${CLAUDE_PLUGIN_ROOT}/scripts/agent-collaboration/scripts/agent-companion.
 - **Fast/mechanical/bulk edits, or large-context / whole-repo scans →** `agy` (Gemini: speed + big context).
 - Full matrix + model profiles: `agent-companion.mjs recommend --profiles`.
 
+### When a worker hits a subscription / rate limit
+The runtime detects it (`failureKind: "rate-limit" | "auth"`) and **auto-falls-back to the
+next worker-ready harness** — relay the result's `note` so the user knows a *different* model
+did the work. If the result has `allWorkersLimited: true`, **stop and tell the user** (give
+the soonest `resetAt`); never quietly do the task yourself in the driver. See the
+`result-handling` skill.
+
 ### Collaborative-investigation gate (mandatory before non-trivial work)
 Invoke the **`collaborative-investigation`** skill before debugging a non-trivial bug or
 designing a non-trivial implementation. You form a hypothesis with an explicit confidence

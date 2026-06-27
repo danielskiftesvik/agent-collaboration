@@ -8,6 +8,7 @@ import {
   decideRoute,
   runSetup,
   runWorkerSync,
+  runWithFallback,
   applyResult
 } from "../core/dispatch.mjs";
 
@@ -211,6 +212,148 @@ test("a review (kind) uses the template + the harness output contract", () => {
 
   delete process.env.AGENT_COLLAB_AGY_BIN;
   delete process.env.AC_PROMPT_FILE;
+});
+
+// ---- failure classification + auto-fallback ----
+
+// A worker that hits a subscription/rate limit: prints a limit error, exits non-zero,
+// changes nothing.
+const RATE_LIMITED_STUB = `
+  if (process.argv.includes('models')) { process.exit(0); }
+  process.stderr.write('Error: 429 RESOURCE_EXHAUSTED quota exceeded; retry-after: 60\\n');
+  process.exit(1);
+`;
+
+test("runWorkerSync tags a rate-limited failure with failureKind + worker", () => {
+  isolateStateRoot();
+  const repo = makeRepo();
+  process.env.AGENT_COLLAB_AGY_BIN = stubBin(RATE_LIMITED_STUB);
+
+  const res = runWorkerSync(repo, { driver: "claude", worker: "agy", role: "worker", brief: "x", maxAttempts: 1 });
+
+  assert.equal(res.status, "failed");
+  assert.equal(res.failureKind, "rate-limit");
+  assert.equal(res.worker, "agy");
+  assert.match(res.resetAt, /60/);
+
+  delete process.env.AGENT_COLLAB_AGY_BIN;
+});
+
+test("an ordinary failure is tagged failureKind=other, not a limit", () => {
+  isolateStateRoot();
+  const repo = makeRepo();
+  process.env.AGENT_COLLAB_AGY_BIN = stubBin(NOOP_WORKER_STUB);
+
+  const res = runWorkerSync(repo, { driver: "claude", worker: "agy", role: "worker", brief: "x", maxAttempts: 1 });
+
+  assert.equal(res.status, "failed");
+  assert.equal(res.failureKind, "other");
+
+  delete process.env.AGENT_COLLAB_AGY_BIN;
+});
+
+// A worker that succeeds: writes a file and returns a JSON result (claude envelope).
+const CLAUDE_SUCCESS_STUB = `
+  import fs from 'node:fs';
+  fs.writeFileSync('done.txt', 'ok\\n');
+  process.stdout.write(JSON.stringify({ result: 'Done.\\n\\n\`\`\`json\\n{"status":"completed","summary":"did it","changed":true}\\n\`\`\`' }));
+`;
+
+test("runWithFallback falls back to another worker when the first is rate-limited", () => {
+  isolateStateRoot();
+  const repo = makeRepo();
+  process.env.AGENT_COLLAB_AGY_BIN = stubBin(RATE_LIMITED_STUB);
+  process.env.AGENT_COLLAB_CLAUDE_BIN = stubBin(CLAUDE_SUCCESS_STUB);
+
+  const res = runWithFallback(repo, {
+    driver: "codex",
+    worker: "agy",
+    role: "worker",
+    brief: "x",
+    available: ["agy", "claude"],
+    maxAttempts: 1
+  });
+
+  assert.equal(res.status, "completed");
+  assert.equal(res.worker, "claude", "fell back to claude");
+  assert.ok(Array.isArray(res.fellBackFrom));
+  assert.equal(res.fellBackFrom[0].worker, "agy");
+  assert.equal(res.fellBackFrom[0].failureKind, "rate-limit");
+  assert.match(res.note, /agy/);
+
+  delete process.env.AGENT_COLLAB_AGY_BIN;
+  delete process.env.AGENT_COLLAB_CLAUDE_BIN;
+});
+
+test("runWithFallback surfaces a clear note when ALL workers are limited", () => {
+  isolateStateRoot();
+  const repo = makeRepo();
+  process.env.AGENT_COLLAB_AGY_BIN = stubBin(RATE_LIMITED_STUB);
+  process.env.AGENT_COLLAB_CLAUDE_BIN = stubBin(RATE_LIMITED_STUB);
+
+  const res = runWithFallback(repo, {
+    driver: "codex",
+    worker: "agy",
+    role: "worker",
+    brief: "x",
+    available: ["agy", "claude"],
+    maxAttempts: 1
+  });
+
+  assert.equal(res.status, "failed");
+  assert.equal(res.allWorkersLimited, true);
+  assert.equal(res.fellBackFrom.length, 2);
+  assert.match(res.note, /limit/i);
+
+  delete process.env.AGENT_COLLAB_AGY_BIN;
+  delete process.env.AGENT_COLLAB_CLAUDE_BIN;
+});
+
+test("runWithFallback does NOT fall back on an ordinary (non-limit) failure", () => {
+  isolateStateRoot();
+  const repo = makeRepo();
+  process.env.AGENT_COLLAB_AGY_BIN = stubBin(NOOP_WORKER_STUB);
+  process.env.AGENT_COLLAB_CLAUDE_BIN = stubBin(CLAUDE_SUCCESS_STUB);
+
+  const res = runWithFallback(repo, {
+    driver: "codex",
+    worker: "agy",
+    role: "worker",
+    brief: "x",
+    available: ["agy", "claude"],
+    maxAttempts: 1
+  });
+
+  assert.equal(res.status, "failed");
+  assert.equal(res.worker, "agy", "stayed on the originally-chosen worker");
+  assert.ok(!res.fellBackFrom, "no fallback chain for a genuine task failure");
+
+  delete process.env.AGENT_COLLAB_AGY_BIN;
+  delete process.env.AGENT_COLLAB_CLAUDE_BIN;
+});
+
+test("runWithFallback honors fallback=false (single-worker, surface the limit)", () => {
+  isolateStateRoot();
+  const repo = makeRepo();
+  process.env.AGENT_COLLAB_AGY_BIN = stubBin(RATE_LIMITED_STUB);
+  process.env.AGENT_COLLAB_CLAUDE_BIN = stubBin(CLAUDE_SUCCESS_STUB);
+
+  const res = runWithFallback(repo, {
+    driver: "codex",
+    worker: "agy",
+    role: "worker",
+    brief: "x",
+    available: ["agy", "claude"],
+    fallback: false,
+    maxAttempts: 1
+  });
+
+  assert.equal(res.status, "failed");
+  assert.equal(res.worker, "agy");
+  assert.equal(res.failureKind, "rate-limit");
+
+  delete process.env.AGENT_COLLAB_AGY_BIN;
+  delete process.env.AGENT_COLLAB_CLAUDE_BIN;
 });
 
 test("runWorkerSync retries on malformed output then fails after maxAttempts", () => {

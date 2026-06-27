@@ -15,9 +15,9 @@ generalization of codex-plugin-cc's `codex-cli-runtime` skill.
 
 ```
 setup [--json] [--gate on|off] [--sandbox on|off]
-delegate --worker <agy|codex|claude> [--driver <name>] [--role worker|reviewer] [--apply] [--timeout <s>] <brief>
-review  --worker <name> [--focus <text>] [--json] <diff/context>
-adversarial-review --worker <name> [--focus <text>] [--json] <diff/context>
+delegate --worker <agy|codex|claude> [--driver <name>] [--role worker|reviewer] [--apply] [--timeout <s>] [--no-fallback] <brief>
+review  --worker <name> [--focus <text>] [--no-fallback] [--json] <diff/context>
+adversarial-review --worker <name> [--focus <text>] [--no-fallback] [--json] <diff/context>
 status [jobId] [--json]
 result <jobId> [--json]
 apply  <jobId>
@@ -40,16 +40,33 @@ cancel <jobId>
 
 ## --json result fields
 
-`{ jobId, status (completed|conflicted|failed|blocked), resultValid, changed,
-patchApplies, artifact, artifactDir, patchPath, errors }`. A worker is `completed`
-on a clean non-empty patch even if `resultValid` is false (the patch is the
-deliverable). Apply a worker patch only via `apply` / `--apply`, after inspection.
+`{ jobId, worker, status (completed|conflicted|failed|blocked), resultValid,
+changed, patchApplies, artifact, artifactDir, patchPath, errors }`. A worker is
+`completed` on a clean non-empty patch even if `resultValid` is false (the patch
+is the deliverable). Apply a worker patch only via `apply` / `--apply`, after
+inspection. `worker` is the harness that actually ran (may differ from the one you
+asked for — see auto-fallback).
+
+On a **failed** run, two more fields explain why: `failureKind`
+(`rate-limit` | `auth` | `other`) and `resetAt` (best-effort reset hint for a
+limit). See the `result-handling` skill for how to present these.
+
+## Auto-fallback on limits
+
+`delegate`/`review`/`adversarial-review` auto-fall-back to the next worker-ready
+harness when the chosen worker hits a **subscription/rate limit or auth** failure
+(an `other` failure never triggers it). The result then carries `note` (a
+human sentence), `fellBackFrom[]` (`{worker, failureKind, resetAt}`), and — if
+every worker was limited — `allWorkersLimited: true`. Fallback only ever moves to
+another **worker** harness; it never silently makes the driver do the task.
+Disable with `--no-fallback` or `AGENT_COLLAB_FALLBACK=off`.
 
 ## Env
 
 - `AGENT_COLLAB_DATA` — out-of-repo state root (default: tmp/plugin-data).
 - `AGENT_COLLAB_DRIVER` — default driver harness.
 - `AGENT_COLLAB_SANDBOX=on` — opt-in OS sandbox (off by default).
+- `AGENT_COLLAB_FALLBACK=off` — disable auto-fallback on a limit (on by default).
 - `AGENT_COLLAB_<AGY|CLAUDE|CODEX>_BIN` — override a harness binary.
 - `AGENT_COLLAB_AGY_MODEL[_PRO|_FLASH]` — explicit agy model id (default: unset).
 

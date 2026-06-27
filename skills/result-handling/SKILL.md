@@ -48,6 +48,40 @@ from a review is forbidden, even when the fix looks obvious.
 - If setup or authentication is required, direct the user to
   `/agent-collab:setup` rather than improvising an auth flow.
 
+## Subscription / rate limits (how to tell, what to do)
+
+A failed result is **classified** so you don't have to guess. Read these fields:
+
+- `failureKind: "rate-limit"` — the worker hit a subscription/usage/quota/rate
+  limit (or transient `overloaded`). `resetAt` carries a best-effort reset hint
+  (e.g. `"10pm"`, `"60"` seconds) when the harness reported one.
+- `failureKind: "auth"` — the worker isn't logged in / the key is invalid. Point
+  the user at `/agent-collab:setup` (or the harness's own `login`); a different
+  worker can't fix the *config*, only get the work done meanwhile.
+- `failureKind: "other"` — an ordinary task failure. Surface it; do **not** treat
+  it as a limit.
+
+**What the runtime already did:** on a `rate-limit`/`auth` failure it
+**auto-falls-back to the next worker-ready harness** (never the driver) and the
+result carries:
+
+- `note` — a human sentence describing the fallback ("Auto-fell back to claude
+  after agy (rate-limit, resets 10pm) was unavailable."). **Always relay this
+  note to the user** — the work was done, but by a *different* model than asked.
+- `fellBackFrom[]` — `{worker, failureKind, resetAt}` for each skipped harness.
+- `allWorkersLimited: true` — **every** worker-ready harness was limited. Nothing
+  ran. Surface it, give the soonest `resetAt`, and ask whether to wait, switch
+  accounts, or proceed differently.
+
+**The one hard rule:** auto-fallback only ever moves to **another worker
+harness**. It must **never** become "the driver quietly does it single-party."
+When all workers are limited (`allWorkersLimited`), stop and tell the user — do
+not silently absorb the task into the driver.
+
+To force a single worker (no fallback), the caller can pass `--no-fallback` (or
+set `AGENT_COLLAB_FALLBACK=off`); then a limit just surfaces as a `rate-limit`
+failure for you to relay.
+
 ## By harness
 
 - **codex / claude** — emit structured findings/result JSON: present findings by
