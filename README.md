@@ -17,13 +17,13 @@ The repo is a self-contained plugin marketplace (it ships `.claude-plugin/` and
 ### Claude Code
 ```
 /plugin marketplace add danielskiftesvik/agent-collaboration
-/plugin install agent-collaboration@agent-collaboration
+/plugin install agent-collaboration@agent-collaboration-marketplace
 ```
 
 ### Codex
 ```
 codex plugin marketplace add https://github.com/danielskiftesvik/agent-collaboration
-codex plugin add agent-collaboration@agent-collaboration
+codex plugin add agent-collaboration@agent-collaboration-marketplace
 ```
 
 ### Antigravity (`agy`)

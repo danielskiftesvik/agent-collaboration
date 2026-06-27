@@ -7,12 +7,13 @@ const read = (p) => JSON.parse(fs.readFileSync(fileURLToPath(new URL(p, import.m
 
 test("marketplace.json is a valid single-plugin catalog pointing at the repo root", () => {
   const m = read("../.claude-plugin/marketplace.json");
-  assert.equal(typeof m.name, "string");
+  assert.match(m.name, /-marketplace$/, "marketplace name is suffixed for clarity (plugin@marketplace)");
   assert.equal(typeof m.owner?.name, "string");
   assert.ok(Array.isArray(m.plugins) && m.plugins.length >= 1);
   const p = m.plugins.find((x) => x.name === "agent-collaboration");
   assert.ok(p, "lists the agent-collaboration plugin");
   assert.equal(p.source, ".", "plugin source is the repo root");
+  assert.notEqual(p.name, m.name, "plugin and marketplace names differ (clear install string)");
 });
 
 test("plugin.json name matches the marketplace entry", () => {
