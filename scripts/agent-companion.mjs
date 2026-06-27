@@ -5,13 +5,14 @@
 import fs from "node:fs";
 import path from "node:path";
 
-import { decideRoute, runSetup, runWorkerSync, applyResult } from "../core/dispatch.mjs";
+import { decideRoute, runSetup, runWorkerSync, applyResult, recommendWorker } from "../core/dispatch.mjs";
 import { listJobs, getJob, updateJob, sortJobsNewestFirst, loadState, saveState } from "../core/state.mjs";
 import { isPidAlive } from "../core/heartbeat.mjs";
-import { renderSetup, renderJob, renderJobList } from "../core/render.mjs";
+import { renderSetup, renderJob, renderJobList, renderRecommendation, renderProfiles } from "../core/render.mjs";
+import { MODEL_PROFILES } from "../core/model-profiles.mjs";
 
-const VALUE_FLAGS = new Set(["worker", "role", "driver", "base", "timeout", "gate", "sandbox", "focus"]);
-const BOOL_FLAGS = new Set(["json", "apply", "wait", "background"]);
+const VALUE_FLAGS = new Set(["worker", "role", "driver", "base", "timeout", "gate", "sandbox", "focus", "task"]);
+const BOOL_FLAGS = new Set(["json", "apply", "wait", "background", "profiles"]);
 
 function parseArgs(tokens) {
   const options = {};
@@ -96,6 +97,20 @@ switch (subcommand) {
     break;
   }
 
+  case "recommend": {
+    if (options.profiles) {
+      out(MODEL_PROFILES, options, renderProfiles(MODEL_PROFILES));
+      break;
+    }
+    const task = options.task || positionals[0];
+    if (!task) fail("recommend: --task <type> is required (or pass it as the argument). Use --profiles to list model strengths.");
+    const driver = options.driver || process.env.AGENT_COLLAB_DRIVER || "claude";
+    const available = runSetup().filter((r) => r.validWorker).map((r) => r.name);
+    const rec = recommendWorker({ task, driver, available });
+    out(rec, options, renderRecommendation(rec));
+    break;
+  }
+
   case "status": {
     const id = positionals[0];
     if (id) {
@@ -154,6 +169,7 @@ switch (subcommand) {
       [
         "usage: agent-companion <command>",
         "  setup [--json] [--gate on|off] [--sandbox on|off]",
+        "  recommend --task <type> [--driver <name>] [--json]   |   recommend --profiles",
         "  delegate --worker <name> [--driver <name>] [--role worker|reviewer] [--apply] [--timeout s] <brief>",
         "  review  --worker <name> [--driver <name>] [--focus <text>] <diff/context>",
         "  adversarial-review --worker <name> [--focus <text>] <diff/context>",

@@ -26,6 +26,23 @@ test("setup (human) prints a sandboxed-driver hint; --json stays pure JSON", () 
   assert.ok(Array.isArray(JSON.parse(json.stdout)), "--json output is still a pure array");
 });
 
+test("recommend --profiles --json dumps the model profiles", () => {
+  const r = cli(["recommend", "--profiles", "--json"]);
+  assert.equal(r.status, 0, r.stderr);
+  const profiles = JSON.parse(r.stdout);
+  assert.deepEqual(Object.keys(profiles).sort(), ["agy", "claude", "codex"]);
+  assert.ok(profiles.agy.strongerAt.length > 0);
+});
+
+test("recommend --task --json returns a worker (or native) with a reason", () => {
+  const r = cli(["recommend", "--task", "mechanical", "--driver", "claude", "--json"]);
+  assert.equal(r.status, 0, r.stderr);
+  const rec = JSON.parse(r.stdout);
+  assert.equal(rec.task, "mechanical");
+  assert.ok(rec.worker || rec.mode === "native" || rec.mode === "none");
+  assert.ok(typeof rec.reason === "string");
+});
+
 test("delegate to the same harness returns the native-path instruction", () => {
   const r = cli(["delegate", "--driver", "claude", "--worker", "claude", "do a thing"]);
   assert.equal(r.status, 0, r.stderr);

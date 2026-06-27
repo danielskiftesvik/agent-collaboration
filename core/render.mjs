@@ -23,6 +23,29 @@ export function renderJob(job) {
     .join("\n");
 }
 
+export function renderRecommendation(rec) {
+  if (rec.mode === "native") return `native — use ${rec.harness}'s own subagent\n  ${rec.reason}`;
+  if (rec.mode === "none" || !rec.worker) return rec.reason;
+  const lines = [
+    `${rec.worker}  (${rec.profile.model}, ${rec.profile.vendor})`,
+    `  why: ${rec.reason}`,
+    `  strong at: ${rec.profile.strongerAt.slice(0, 3).join("; ")}`
+  ];
+  if (rec.alternatives?.length) lines.push(`  alternatives: ${rec.alternatives.join(", ")}`);
+  return lines.join("\n");
+}
+
+export function renderProfiles(profiles) {
+  return Object.values(profiles)
+    .map(
+      (p) =>
+        `${p.harness.padEnd(7)} ${p.model} (${p.vendor})\n` +
+        `  + ${p.strongerAt.join("; ")}\n` +
+        `  - ${p.weakerAt.join("; ")}`
+    )
+    .join("\n\n");
+}
+
 export function renderJobList(jobs) {
   if (!jobs.length) return "no jobs";
   return jobs

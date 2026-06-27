@@ -13,8 +13,43 @@ import { headRef, captureWorkingDiff, applyPatch, checkPatchApplies } from "./gi
 import { run } from "./process.mjs";
 import { coerceArtifact } from "./schema.mjs";
 import { buildFromTemplate } from "./prompts.mjs";
+import { MODEL_PROFILES, TASK_ROUTING, DEFAULT_ROUTING } from "./model-profiles.mjs";
 
 const TEMPLATE_KINDS = new Set(["review", "adversarial-review"]);
+
+/**
+ * Recommend a worker for a task by matching the task type to the strongest
+ * available harness (excluding the driver, so it stays cross-harness). The driver
+ * (an LLM) classifies the task type; this mapping is deterministic so routing is
+ * consistent and explainable. Returns the chosen worker, the underlying model's
+ * profile, and a reason. Falls back to `native` when the driver itself is the
+ * best/only fit.
+ */
+export function recommendWorker({ task, driver, available = [] }) {
+  const entry = TASK_ROUTING[task] || DEFAULT_ROUTING;
+  const avail = new Set(available);
+
+  const cross = entry.workers.filter((w) => avail.has(w) && w !== driver);
+  if (cross.length) {
+    const worker = cross[0];
+    return { mode: "cross", task, driver, worker, reason: entry.why, profile: MODEL_PROFILES[worker], alternatives: cross.slice(1) };
+  }
+  if (entry.workers.includes(driver) && avail.has(driver)) {
+    return {
+      mode: "native",
+      task,
+      driver,
+      harness: driver,
+      reason: `the driver (${driver}) is the strongest available for this task — use your own subagent`,
+      profile: MODEL_PROFILES[driver]
+    };
+  }
+  const other = available.find((w) => w !== driver);
+  if (other) {
+    return { mode: "cross", task, driver, worker: other, reason: "preferred workers unavailable; using the next worker-ready harness", profile: MODEL_PROFILES[other], alternatives: [] };
+  }
+  return { mode: "none", task, driver, worker: null, reason: "no worker-ready harness available" };
+}
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const reviewSchema = JSON.parse(
