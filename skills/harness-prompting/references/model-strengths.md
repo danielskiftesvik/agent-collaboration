@@ -1,51 +1,72 @@
 # Model strengths & routing
 
-Which underlying model is strongest at what, and how that maps to worker choice. This
-mirrors `core/model-profiles.mjs` (the code source of truth for `recommend`).
+Which underlying model is strongest at what, and how that maps to worker choice. Mirrors
+`core/model-profiles.mjs` (the code source of truth for `recommend`).
 
-> **These are general tendencies as of early 2026.** Models change fast — treat this as a
-> living guide, weigh task fit over vendor, and edit `core/model-profiles.mjs` as the models
-> evolve. Profiles lean on durable traits (context size, speed tiers, model lineage) plus
-> what this project verified empirically.
+> **Two governing caveats — read first.**
+> 1. **Harness > model.** The agent harness/scaffolding swings coding benchmarks **10–24
+>    points on identical model weights** (Harness-Bench, arXiv:2605.27922; Scale AI). So these
+>    are model+**harness** tendencies, and cross-vendor rankings are only valid on
+>    *same-scaffold* benchmarks. Undisclosed-harness scores are effectively non-reproducible.
+> 2. **Decays monthly.** Frontier models ship ~monthly (Claude Opus 4.5→4.6→4.7→4.8;
+>    GPT-5.2→5.4→5.5; Gemini 3.1 Pro). Version-stamped **mid-2026** — edit
+>    `core/model-profiles.mjs` as they evolve, and weigh task fit over vendor.
 
-## The three underlying models
+## The three underlying models (mid-2026)
 
-### Claude (Anthropic) — careful agentic engineer
-- **Stronger at:** sustained multi-step agentic coding; instruction-following & scope
-  discipline (less over-reach); refactoring and code taste; implementation planning; clear
-  explanation.
-- **Weaker at:** raw speed/cost vs Gemini Flash; max context size vs Gemini.
+### Claude (Anthropic — Opus 4.7+/Sonnet) — agentic engineer
+- **Stronger at:** general SWE & careful refactoring, long-horizon agentic terminal work,
+  instruction-following & scope discipline, planning.
+- **Evidence:** leads **SWE-bench Verified (87.6%, Opus 4.7, Apr 2026)** and **Terminal-Bench
+  2.0 (69.4%)** — the agentic/near-saturated sets. (Verified is near-saturated + largely
+  self-reported, so read it as direction, not precision.)
+- **Weaker at:** the hardest contamination-resistant set — trails GPT-5.x on standardized
+  SWE-bench Pro; raw speed/cost vs Gemini Flash.
 
-### GPT-5.x / Codex (OpenAI) — reasoner / analyst
-- **Stronger at:** hard reasoning & algorithmic problems; math; finding subtle bugs;
-  adversarial / critical review; strict structured output (schema-enforceable via its API).
-- **Weaker at:** less hand-holding-careful than Claude over long edit sessions; sandbox
-  friction when used as a driver.
+### GPT-5.x / Codex (OpenAI — GPT-5.4/5.5) — reasoner / analyst
+- **Stronger at:** hardest contamination-resistant debugging & reasoning, algorithms, math,
+  subtle bug-finding, adversarial analysis.
+- **Evidence:** leads the **standardized SWE-bench Pro** (Scale SEAL same-scaffold public set,
+  Jun 9 2026): GPT-5.4 xHigh **59.1%** > Claude Opus 4.6 thinking 51.9% > Gemini 3.1 Pro
+  thinking 46.1%. This is the fairest cross-vendor comparison (one identical scaffold).
+- **Weaker at:** trails the latest Claude on the near-saturated Verified / Terminal-Bench
+  agentic sets; sandbox friction when used as a driver.
 
-### Gemini 3.x (Google) — wide-context speedster
-- **Stronger at:** very large context window (whole-repo / big-doc ingestion); multimodal
-  input (images, PDFs, screens); speed & low cost on the **Flash** tier; broad scans; Google
-  Cloud tasks.
-- **Weaker at:** strict JSON/format adherence on Flash (we hit this — needed an emphatic
-  example-anchored contract); more variable on precise contracts than Claude/GPT.
+### Gemini 3.x (Google — 3.1 Pro / Flash) — fast & wide, but trails on coding benchmarks
+- **Stronger at:** speed & low cost (Flash tier) for high-throughput edits; multimodal input;
+  large context windows for whole-repo work.
+- **Weaker at:** currently **trails Claude/GPT-5.x on confirmed coding benchmarks** (~7–8 pts
+  behind on SWE-bench Verified at 80.6%; bottom of the standardized Pro cluster, within error
+  bars of Opus 4.5/Sonnet 4.5); strict JSON adherence on Flash (verified in this project).
+- **Refuted:** the often-cited **1M-token context *advantage* over Claude/Codex did NOT survive
+  adversarial verification** (0-3) — Gemini has large context, but "bigger than rivals" is
+  unconfirmed mid-2026.
 
 ## Task → worker
 
-Run `agent-companion.mjs recommend --task <type> --driver <self>` — it returns the strongest
-*available* worker (excluding the driver) plus the model's profile and a reason. The mapping:
+`agent-companion.mjs recommend --task <type> --driver <self>` returns the strongest *available*
+worker (excluding the driver) + the model's profile + a reason. The mapping:
 
-| Task type | Preferred | Why |
+| Task type | Preferred | Basis |
 |---|---|---|
 | `second-opinion` | other of codex/claude | independence + deep reasoning |
-| `adversarial-review`, `review` | codex, claude, agy | reliable structured findings |
-| `hard-bug`, `architecture`, `design-tradeoff` | codex, claude | reasoning depth |
-| `refactor`, `plan`, `general-swe` | claude, codex | careful SWE + planning |
-| `mechanical`, `bulk-edit`, `quick-fix` | agy, claude | Gemini Flash speed/cost |
-| `large-context`, `broad-scan` | agy, codex | Gemini context window |
+| `hard-bug`, `architecture`, `design-tradeoff` | codex, claude | GPT-5.x leads standardized SWE-bench Pro |
+| `refactor`, `plan`, `general-swe` | claude, codex | Claude leads SWE-bench Verified + Terminal-Bench 2.0 |
+| `review`, `adversarial-review` | codex, claude, agy | **under-benchmarked** — default to a strong reasoner |
+| `mechanical`, `bulk-edit`, `quick-fix` | agy, claude | Gemini Flash speed/cost — **not** benchmark-confirmed |
+| `large-context`, `broad-scan` | agy, codex | Gemini on cost — context-size advantage **unconfirmed** |
 
-`recommend --profiles` prints the full capability matrix.
+`recommend --profiles` prints the full matrix.
 
-## How to use it autonomously
-The driver classifies the task type (judgment), then `recommend` maps it to a worker
-(deterministic). Wire this into your project's CLAUDE.md / AGENTS.md so it runs without
-asking — see [`examples/`](../../../examples/).
+## What stayed unverified (don't route on these)
+Adversarial verification **killed** these popular claims — so we do *not* base routing on them:
+- Gemini's 1M-token context advantage over Claude/Codex (0-3).
+- Per-harness sandboxing/permission models, and Codex `--full-auto`/native CI headless (0-3).
+- Several blog SWE-bench/Terminal-Bench/Aider/LiveCodeBench numbers (refuted in favor of the
+  same-scaffold Scale SEAL set and primary vendor announcements).
+- Strict structured-JSON reliability and Flash-tier coding quality — **no** confirmed benchmark,
+  so those cells are defaults, not evidence-backed.
+
+## Using it autonomously
+The driver classifies the task type (judgment); `recommend` maps it to a worker
+(deterministic). Wire it into your project's CLAUDE.md / AGENTS.md — see [`examples/`](../../../examples/).

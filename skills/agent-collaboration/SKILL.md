@@ -25,7 +25,7 @@ Rough guide (full matrix + model profiles: [`harness-prompting/references/model-
 
 - **Hard reasoning / subtle bugs / adversarial review** → **codex** (GPT-5.x).
 - **Careful refactor / planning / general SWE** → **claude**.
-- **Fast/mechanical/bulk edits, large-context or whole-repo scans** → **agy** (Gemini Flash speed + big context window).
+- **Fast/mechanical/bulk edits, large-context or whole-repo scans** → **agy** (Gemini Flash speed/cost; note it trails Claude/GPT on coding benchmarks, so reserve it for cheap/throughput work).
 - **Independent second opinion** → the *other* reasoner (codex↔claude); see the
   `collaborative-investigation` skill.
 

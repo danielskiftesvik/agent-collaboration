@@ -1,55 +1,59 @@
 // Underlying-model capability profiles + task routing.
 //
-// These are GENERAL TENDENCIES as of early 2026, encoded as editable data — they
-// are the single source of truth for `recommend` and the model-strengths docs.
-// Update as models evolve, and weigh task fit over vendor. Profiles lean on
-// durable traits (context size, speed tiers, model lineage) and what this project
-// verified empirically (e.g. Gemini Flash's weak strict-JSON adherence).
+// GROUNDED IN RESEARCH (mid-2026 frontier-model review; citations in
+// skills/harness-prompting/references/model-strengths.md). Single source of truth
+// for `recommend`. Two hard caveats are baked in:
+//   1. HARNESS > MODEL noise — the agent harness/scaffolding swings coding
+//      benchmarks 10-24 points on identical model weights, so these are
+//      model+HARNESS tendencies and cross-vendor rankings only hold on
+//      same-scaffold benchmarks.
+//   2. Frontier models ship ~monthly and rankings decay fast — version-stamped as
+//      of mid-2026. Edit this file as they evolve, and weigh task fit over vendor.
+// Qualitative on purpose (no hardcoded percentages — they go stale in weeks).
 
 export const MODEL_PROFILES = {
   claude: {
     harness: "claude",
-    model: "Claude (Opus/Sonnet)",
+    model: "Claude Opus 4.7+/Sonnet (Anthropic, mid-2026)",
     vendor: "Anthropic",
     strongerAt: [
-      "sustained multi-step agentic coding",
+      "general software engineering & careful refactoring (leads SWE-bench Verified + Terminal-Bench 2.0)",
+      "long-horizon agentic terminal work",
       "instruction-following & scope discipline (less over-reach)",
-      "refactoring and code taste",
-      "implementation planning",
-      "clear explanation"
+      "implementation planning & clear explanation"
     ],
-    weakerAt: ["raw speed/cost vs Gemini Flash", "max context size vs Gemini"]
+    weakerAt: [
+      "the hardest contamination-resistant set (trails GPT-5.x on standardized SWE-bench Pro)",
+      "raw speed/cost vs Gemini Flash"
+    ]
   },
   codex: {
     harness: "codex",
-    model: "GPT-5.x (Codex)",
+    model: "GPT-5.x / Codex (OpenAI, GPT-5.4/5.5, mid-2026)",
     vendor: "OpenAI",
     strongerAt: [
-      "hard reasoning & algorithmic problems",
-      "math",
-      "finding subtle bugs",
-      "adversarial / critical review",
-      "strict structured output (schema-enforceable)"
+      "hardest contamination-resistant debugging & reasoning (leads the standardized SWE-bench Pro)",
+      "algorithmic problems & math",
+      "subtle bug-finding & adversarial/critical analysis"
     ],
     weakerAt: [
-      "less hand-holding-careful than Claude over long edit sessions",
+      "trails the latest Claude on the near-saturated Verified / Terminal-Bench agentic sets",
       "sandbox friction when used as a driver"
     ]
   },
   agy: {
     harness: "agy",
-    model: "Gemini 3.x (Flash/Pro)",
+    model: "Gemini 3.x (3.1 Pro / Flash, Google, mid-2026)",
     vendor: "Google",
     strongerAt: [
-      "very large context window (whole-repo / big-doc ingestion)",
+      "speed & low cost on the Flash tier (high-throughput mechanical work)",
       "multimodal input (images, PDFs, screens)",
-      "speed & low cost on the Flash tier",
-      "broad scans over a large surface",
-      "Google Cloud tasks"
+      "large context windows for whole-repo / big-doc work"
     ],
     weakerAt: [
-      "strict JSON/format adherence on the Flash tier",
-      "more variable on precise contracts than Claude/GPT"
+      "trails Claude/GPT-5.x on confirmed coding benchmarks (~7-8 pts behind on SWE-bench Verified; bottom of the standardized Pro cluster)",
+      "strict JSON adherence on the Flash tier (verified in this project)",
+      "its often-cited 1M-token context *advantage* over rivals did NOT survive verification"
     ]
   }
 };
@@ -57,19 +61,19 @@ export const MODEL_PROFILES = {
 // task type -> preferred worker order (+ the rationale shown in a recommendation).
 export const TASK_ROUTING = {
   "second-opinion": { workers: ["codex", "claude"], why: "independent second opinion from the other strong reasoner" },
-  "adversarial-review": { workers: ["codex", "claude", "agy"], why: "adversarial review — deep reasoning + reliable structured findings" },
-  review: { workers: ["codex", "claude", "agy"], why: "structured code review" },
-  "hard-bug": { workers: ["codex", "claude"], why: "deep reasoning to find a subtle root cause" },
-  architecture: { workers: ["codex", "claude"], why: "design reasoning and tradeoff analysis" },
-  "design-tradeoff": { workers: ["codex", "claude"], why: "design reasoning and tradeoff analysis" },
-  refactor: { workers: ["claude", "codex"], why: "careful, scope-disciplined refactoring" },
-  plan: { workers: ["claude", "codex"], why: "implementation planning" },
-  "general-swe": { workers: ["claude", "codex"], why: "general software engineering" },
-  mechanical: { workers: ["agy", "claude"], why: "fast, low-cost mechanical edits (Gemini Flash)" },
-  "bulk-edit": { workers: ["agy", "claude"], why: "high-throughput bulk edits (Gemini Flash)" },
-  "quick-fix": { workers: ["agy", "claude"], why: "fast turnaround (Gemini Flash)" },
-  "large-context": { workers: ["agy", "codex"], why: "large context window for whole-repo / big-doc ingestion (Gemini)" },
-  "broad-scan": { workers: ["agy", "codex"], why: "broad scan over a large surface (Gemini context window)" }
+  "adversarial-review": { workers: ["codex", "claude", "agy"], why: "adversarial review — default to a strong reasoner (structured-review routing is under-benchmarked)" },
+  review: { workers: ["codex", "claude", "agy"], why: "code review — default to a strong reasoner (under-benchmarked)" },
+  "hard-bug": { workers: ["codex", "claude"], why: "GPT-5.x leads the contamination-resistant SWE-bench Pro" },
+  architecture: { workers: ["codex", "claude"], why: "deep reasoning (GPT-5.x leads the hardest standardized set)" },
+  "design-tradeoff": { workers: ["codex", "claude"], why: "deep reasoning (GPT-5.x leads the hardest standardized set)" },
+  refactor: { workers: ["claude", "codex"], why: "Claude leads SWE-bench Verified + Terminal-Bench 2.0" },
+  plan: { workers: ["claude", "codex"], why: "Claude's planning + scope discipline" },
+  "general-swe": { workers: ["claude", "codex"], why: "Claude leads SWE-bench Verified + Terminal-Bench 2.0" },
+  mechanical: { workers: ["agy", "claude"], why: "Gemini Flash — fast/cheap (cost-based, not benchmark-confirmed)" },
+  "bulk-edit": { workers: ["agy", "claude"], why: "Gemini Flash — high-throughput (cost-based, not benchmark-confirmed)" },
+  "quick-fix": { workers: ["agy", "claude"], why: "Gemini Flash — fast turnaround (cost-based, not benchmark-confirmed)" },
+  "large-context": { workers: ["agy", "codex"], why: "Gemini for big scans on cost; context-size advantage unconfirmed" },
+  "broad-scan": { workers: ["agy", "codex"], why: "Gemini for big scans on cost; context-size advantage unconfirmed" }
 };
 
 export const DEFAULT_ROUTING = { workers: ["claude", "codex", "agy"], why: "general default" };
