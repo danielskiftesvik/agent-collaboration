@@ -59,14 +59,15 @@ export function resolveSandbox({ worker, role = "worker", config = {}, env = pro
   return { sandbox: false, reason: "opt-in" };
 }
 
-/** Did a run fail because the OS sandbox couldn't be applied (vs. a real task error)? */
+/** Did the sandbox WRAPPER fail to start (vs. a real task error or a correct
+ *  in-sandbox denial)? Must NOT match a bare "operation not permitted" — that's
+ *  exactly what a *correctly* sandbox-denied write prints (EPERM), and treating it
+ *  as a wrapper failure would re-run unsandboxed and let the denied write through. */
 export function isSandboxStartupFailure(proc) {
   if (!proc || proc.status === 0) return false;
   if (proc.error && proc.error.code === "ETIMEDOUT") return false; // a timeout is not a sandbox failure
-  // Match the actual seatbelt/bwrap apply error — NOT the bare command name, which
-  // appears in every spawnSync error message when the command IS sandbox-exec.
   const t = `${proc.stdout ?? ""}\n${proc.stderr ?? ""}`;
-  return /sandbox_apply|sandbox profile|operation not permitted|bwrap:/i.test(t);
+  return /sandbox_apply|sandbox profile|^bwrap:|\nbwrap:/i.test(t);
 }
 
 /**
@@ -348,6 +349,7 @@ export function runWorkerSync(cwd, opts) {
   // we degrade to an unsandboxed run (breach detection stays active).
   const state = loadState(cwd);
   const wantSandbox = resolveSandbox({ worker, role, config: state.config, env: process.env }).sandbox;
+  const wantStrict = process.env.AGENT_COLLAB_SANDBOX_STRICT === "on" || state.config.sandboxStrict === true;
   let sandboxDegraded = false;
 
   const exec = (cmd, sandbox) =>
@@ -356,16 +358,22 @@ export function runWorkerSync(cwd, opts) {
       timeout: timeoutMs,
       env: { ...process.env, ...(cmd.env ?? {}) },
       sandbox,
+      sandboxStrict: wantStrict,
       sandboxWorkspace: workspace,
       sandboxArtifactDir: artifactDir
     });
-  // Run with the sandbox; on a sandbox-startup failure, retry the SAME command
-  // unsandboxed and remember we degraded.
+  // Run with the sandbox; degrade to unsandboxed if it couldn't be applied
+  // (e.g. no bwrap → run() reports sandboxApplied:false and has already run
+  // unsandboxed) or the wrapper failed to start (retry once unsandboxed).
   const execGuarded = (cmd) => {
     let p = exec(cmd, wantSandbox);
-    if (wantSandbox && isSandboxStartupFailure(p)) {
-      sandboxDegraded = true;
-      p = exec(cmd, false);
+    if (wantSandbox) {
+      if (p.sandboxApplied === false) {
+        sandboxDegraded = true; // requested but not applied; already ran unsandboxed
+      } else if (isSandboxStartupFailure(p)) {
+        sandboxDegraded = true;
+        p = exec(cmd, false);
+      }
     }
     return p;
   };

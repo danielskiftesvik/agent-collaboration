@@ -16,7 +16,12 @@ import os from "node:os";
  * macOS sandbox is last-match-wins, so denies placed after `(allow default)`
  * take effect, and the work-area allows placed last re-open those paths.
  */
-export function generateMacSandboxProfile(workspace, artifactDir) {
+/** Escape a path for safe interpolation into a Scheme sandbox-profile string. */
+function sbEsc(p) {
+  return String(p).replace(/\\/g, "\\\\").replace(/"/g, '\\"');
+}
+
+export function generateMacSandboxProfile(workspace, artifactDir, opts = {}) {
   const home = process.env.HOME || os.homedir();
   // Cross-cutting secrets that no worker should read.
   const secretDirs = [".ssh", ".aws", ".kube", ".gnupg"].map((d) => path.join(home, d));
@@ -25,15 +30,29 @@ export function generateMacSandboxProfile(workspace, artifactDir) {
     path.join(home, d)
   );
 
+  if (opts.strict) {
+    // STRICT: deny FILE-WRITE by default (reads/process/mmap still allowed, so it
+    // won't trip Go's LowLevelAlloc the way a full deny-default did). Writes are
+    // confined to the work area + the process temp dir + the harness's own state,
+    // so an escape to a real repo, /tmp, /etc, or another volume is denied.
+    const writable = [workspace, artifactDir, os.tmpdir(), ...harnessDirs];
+    const lines = ["(version 1)", "(allow default)", "(deny file-write*)"];
+    for (const p of writable) lines.push(`(allow file-write* (subpath "${sbEsc(p)}"))`);
+    for (const d of secretDirs) lines.push(`(deny file-read* (subpath "${sbEsc(d)}"))`);
+    lines.push(`(deny file-read* file-write* (literal "${sbEsc(path.join(home, ".netrc"))}"))`);
+    return lines.join("\n");
+  }
+
+  // DEFAULT (proven not to crash agy): allow-default, deny writes under $HOME
+  // except the harness state + work dirs. Blocks the primary escape target (real
+  // repos under $HOME) but still permits writes elsewhere (e.g. /tmp). Enable
+  // `strict` for full work-area confinement.
   const lines = ["(version 1)", "(allow default)"];
-  for (const d of secretDirs) lines.push(`(deny file-read* (subpath "${d}"))`);
-  lines.push(`(deny file-read* file-write* (literal "${path.join(home, ".netrc")}"))`);
-  // Block writes into the home tree (dotfiles/config) ...
-  lines.push(`(deny file-write* (subpath "${home}"))`);
-  // ... except the harness's own state dirs.
-  for (const d of harnessDirs) lines.push(`(allow file-write* (subpath "${d}"))`);
-  // Work areas (worktree + artifacts) are fully read/write.
-  for (const p of [workspace, artifactDir]) lines.push(`(allow file* (subpath "${p}"))`);
+  for (const d of secretDirs) lines.push(`(deny file-read* (subpath "${sbEsc(d)}"))`);
+  lines.push(`(deny file-read* file-write* (literal "${sbEsc(path.join(home, ".netrc"))}"))`);
+  lines.push(`(deny file-write* (subpath "${sbEsc(home)}"))`);
+  for (const d of harnessDirs) lines.push(`(allow file-write* (subpath "${sbEsc(d)}"))`);
+  for (const p of [workspace, artifactDir]) lines.push(`(allow file* (subpath "${sbEsc(p)}"))`);
   return lines.join("\n");
 }
 
@@ -55,13 +74,16 @@ export function run(command, args = [], opts = {}) {
   let finalCommand = command;
   let finalArgs = args;
   let tempProfileFile = null;
+  // null = not requested; true/false = requested and (not) actually applied. Lets
+  // callers detect "sandbox asked for but couldn't be applied" (e.g. no bwrap).
+  let sandboxApplied = opts.sandbox ? false : null;
 
   if (opts.sandbox) {
     const platform = os.platform();
     if (platform === "darwin") {
       const workspace = opts.sandboxWorkspace || opts.cwd || process.cwd();
       const artifactDir = opts.sandboxArtifactDir || workspace;
-      const profile = generateMacSandboxProfile(workspace, artifactDir);
+      const profile = generateMacSandboxProfile(workspace, artifactDir, { strict: opts.sandboxStrict });
 
       const tempDir = os.tmpdir();
       const profileName = `sandbox-${Math.random().toString(36).substring(2)}.sb`;
@@ -70,11 +92,13 @@ export function run(command, args = [], opts = {}) {
 
       finalCommand = "/usr/bin/sandbox-exec";
       finalArgs = ["-f", tempProfileFile, command, ...args];
+      sandboxApplied = true;
     } else if (platform === "linux") {
       if (isBwrapAvailable()) {
         const workspace = opts.sandboxWorkspace || opts.cwd || process.cwd();
         const artifactDir = opts.sandboxArtifactDir || workspace;
 
+        sandboxApplied = true;
         finalCommand = "bwrap";
         finalArgs = [
           "--ro-bind", "/usr", "/usr",
@@ -106,6 +130,7 @@ export function run(command, args = [], opts = {}) {
   delete spawnOpts.sandbox;
   delete spawnOpts.sandboxWorkspace;
   delete spawnOpts.sandboxArtifactDir;
+  delete spawnOpts.sandboxStrict;
 
   try {
     const result = spawnSync(finalCommand, finalArgs, {
@@ -117,7 +142,8 @@ export function run(command, args = [], opts = {}) {
       status: result.status ?? (result.signal ? -1 : null),
       stdout: result.stdout ?? "",
       stderr: result.stderr ?? "",
-      error: result.error
+      error: result.error,
+      sandboxApplied
     };
   } finally {
     if (tempProfileFile && fs.existsSync(tempProfileFile)) {

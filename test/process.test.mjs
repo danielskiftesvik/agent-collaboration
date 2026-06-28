@@ -30,6 +30,39 @@ test("macOS profile is allow-default, denies secrets, allows harness config + wo
   assert.match(p, /allow file\* \(subpath "\/work\/ws"/);
 });
 
+test("profile interpolation escapes quotes in paths (no profile injection)", () => {
+  const p = generateMacSandboxProfile('/work/a"b', "/work/art");
+  assert.match(p, /subpath "\/work\/a\\"b"/, "a quote in the path must be escaped");
+});
+
+test("STRICT profile denies file-write by default and allows only the work area", () => {
+  const p = generateMacSandboxProfile("/work/ws", "/work/art", { strict: true });
+  assert.match(p, /\(deny file-write\*\)/, "writes denied by default");
+  assert.match(p, /allow file-write\* \(subpath "\/work\/ws"/, "workspace writable");
+  assert.match(p, /allow file-write\* \(subpath "\/work\/art"/, "artifactDir writable");
+});
+
+test("run reports sandboxApplied true on darwin, null when not requested", () => {
+  const plain = run("node", ["-e", "0"]);
+  assert.equal(plain.sandboxApplied, null, "not requested => null");
+  if (os.platform() === "darwin") {
+    const r = run("node", ["-e", "0"], { sandbox: true, sandboxWorkspace: os.tmpdir(), sandboxArtifactDir: os.tmpdir() });
+    assert.equal(r.sandboxApplied, true);
+  }
+});
+
+test("STRICT sandbox blocks a /tmp escape that the default profile would allow", () => {
+  if (os.platform() !== "darwin") return;
+  const ws = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), "sbstrict-")));
+  const target = "/tmp/agent-collab-strict-escape-DELETEME.txt";
+  try { fs.unlinkSync(target); } catch {}
+  const code = `import fs from 'node:fs'; try { fs.writeFileSync(${JSON.stringify(target)}, 'x'); console.log('WROTE'); } catch (e) { console.log('DENIED'); }`;
+  const r = run("node", ["-e", code], { sandbox: true, sandboxStrict: true, sandboxWorkspace: ws, sandboxArtifactDir: ws });
+  assert.match(r.stdout, /DENIED/, "strict profile must deny a /tmp write");
+  assert.equal(fs.existsSync(target), false);
+  try { fs.unlinkSync(target); } catch {}
+});
+
 test("a normal workload still SUCCEEDS under the sandbox (not just blocked secrets)", () => {
   if (os.platform() !== "darwin") return;
   const ws = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), "sbok-")));

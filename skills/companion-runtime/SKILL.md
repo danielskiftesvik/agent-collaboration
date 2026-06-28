@@ -144,6 +144,10 @@ read `tasks/<jobId>/reports/<worker>.md` before concluding nothing came back.
   write-workers** (preventive write confinement), opt-in otherwise; **never codex** (it
   self-sandboxes). If it can't be applied, the run degrades to unsandboxed (`sandboxed:false` +
   a note) — breach detection still active.
+- `AGENT_COLLAB_SANDBOX_STRICT=on` — tighten the macOS profile to **deny file-write by
+  default** (confine writes to the work area + temp + harness state; blocks /tmp, other
+  volumes, real repos). Default profile only blocks `$HOME`. Linux bwrap is already strict.
+  Validate against your worker with `doctor --live` before relying on it.
 - `AGENT_COLLAB_FALLBACK` — fallback policy: `off` | `on` (rate-limit+auth+timeout) | comma-list. Default: `rate-limit,timeout` (auth surfaces).
 - `AGENT_COLLAB_TIMEOUT=<s>` — per-attempt worker timeout in seconds (default 1200 = 20 min).
 - `AGENT_COLLAB_CODEX_RESUME=off` — repair with a fresh re-send instead of resuming the codex thread (resume is on by default).

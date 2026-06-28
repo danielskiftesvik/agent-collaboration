@@ -167,6 +167,7 @@ node /path/to/agent-collaboration/scripts/agent-companion.mjs \
 | `AGENT_COLLAB_DATA` | Out-of-repo state root (default: a per-plugin / tmp dir) |
 | `AGENT_COLLAB_DRIVER` | Override which harness is driving (`codex`/`agy`/`claude`). Normally auto-detected (Codex `CODEX_THREAD_ID`, agy `ANTIGRAVITY_*`, Claude Code `CLAUDECODE`); set only if detection misses |
 | `AGENT_COLLAB_SANDBOX` | OS sandbox: `on` (all non-codex) \| `off`. Default: **on for agy write-workers** (preventive confinement), opt-in for others, **never codex** (it self-sandboxes). Degrades to unsandboxed if it can't be applied |
+| `AGENT_COLLAB_SANDBOX_STRICT=on` | Tighten the macOS profile to deny file-write by default (confine writes to work area + temp + harness state; blocks /tmp & other volumes). Default profile only blocks `$HOME`; Linux bwrap is already strict |
 | `AGENT_COLLAB_FALLBACK` | Auto-fallback policy: `off` \| `on` (rate-limit+auth+timeout) \| comma-list of kinds. Default `rate-limit,timeout` (transient; **auth is surfaced**, not routed around) |
 | `AGENT_COLLAB_TIMEOUT` | Per-attempt worker timeout in **seconds** (default 1200 = 20 min). Deep reasoners on big diffs need a generous budget — too short SIGTERMs the run mid-flight and yields empty "no JSON" output |
 | `AGENT_COLLAB_CODEX_RESUME=off` | Repair a bad codex reply with a fresh re-send instead of resuming its thread (`task --resume-last`); resume is on by default |

@@ -542,12 +542,15 @@ test("resolveSandbox: default-on for agy write-workers, never codex, opt-in othe
   assert.equal(resolveSandbox({ worker: "agy", role: "reviewer", config: { sandbox: true }, env: {} }).sandbox, true);
 });
 
-test("isSandboxStartupFailure detects an apply error but NOT a timeout or normal failure", () => {
+test("isSandboxStartupFailure detects a WRAPPER failure but not a denial/timeout/task error", () => {
   assert.equal(isSandboxStartupFailure({ status: 1, stderr: "sandbox-exec: sandbox_apply: Operation not permitted" }), true);
   assert.equal(isSandboxStartupFailure({ status: 1, stderr: "bwrap: No permissions to create new namespace" }), true);
+  // CRITICAL (codex #1): a CORRECTLY sandbox-denied write prints bare EPERM
+  // "operation not permitted" — this must NOT be read as a wrapper failure, else
+  // we'd re-run unsandboxed and let the denied write through.
+  assert.equal(isSandboxStartupFailure({ status: 1, stderr: "Error: EPERM: operation not permitted, open '/Users/x/.ssh/pwn'" }), false);
   // a timeout (error message mentions the sandbox-exec COMMAND) must NOT count
   assert.equal(isSandboxStartupFailure({ status: -1, error: { code: "ETIMEDOUT", message: "spawnSync /usr/bin/sandbox-exec ETIMEDOUT" } }), false);
-  // an ordinary task failure
   assert.equal(isSandboxStartupFailure({ status: 1, stderr: "TypeError: undefined" }), false);
   assert.equal(isSandboxStartupFailure({ status: 0 }), false);
 });
