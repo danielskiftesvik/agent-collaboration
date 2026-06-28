@@ -198,7 +198,28 @@ export function runWorkerSync(cwd, opts) {
     worktree = createWorktree(cwd, jobId, baseRef);
     workspace = worktree;
   } catch {
-    workspace = cwd; // not a git repo: cannot isolate, run in place
+    // Could not isolate (not a git repo, or worktree creation failed). FAIL CLOSED:
+    // running the worker in the real cwd would violate the driver-only authority
+    // model — it's neither the reference's deliberate in-place path nor our isolated
+    // path. Require an explicit opt-in for an unisolated in-place run.
+    if (process.env.AGENT_COLLAB_ALLOW_INPLACE !== "on") {
+      const errors = [
+        "cannot isolate the worker — no git worktree could be created (is the cwd a git repository?). " +
+          "Workers run in an isolated worktree so they can never touch your real tree. cd into a git repo, " +
+          "or set AGENT_COLLAB_ALLOW_INPLACE=on to run UNISOLATED in the cwd (unsafe)."
+      ];
+      appendJob(cwd, {
+        id: jobId, driver, worker, role, status: "blocked", pid: process.pid,
+        baseRef: null, workspace: cwd, artifactDir, heartbeatAt: new Date().toISOString()
+      });
+      updateJob(cwd, jobId, { errors, failureKind: "isolation" });
+      return {
+        jobId, worker, status: "blocked", resultValid: false, valid: false,
+        changed: false, patchApplies: null, artifact: null, artifactDir,
+        patchPath: null, isolated: false, errors
+      };
+    }
+    workspace = cwd; // explicit opt-in: unsafe, unisolated in-place run
   }
 
   // Breach detection: snapshot the driver's REAL tree so we can tell if an

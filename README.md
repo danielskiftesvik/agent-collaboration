@@ -163,6 +163,7 @@ node /path/to/agent-collaboration/scripts/agent-companion.mjs \
 | `AGENT_COLLAB_FALLBACK=off` | Disable auto-fallback to another worker on a rate/subscription limit or timeout (on by default) |
 | `AGENT_COLLAB_TIMEOUT` | Per-attempt worker timeout in **seconds** (default 1200 = 20 min). Deep reasoners on big diffs need a generous budget — too short SIGTERMs the run mid-flight and yields empty "no JSON" output |
 | `AGENT_COLLAB_CODEX_RESUME=off` | Repair a bad codex reply with a fresh re-send instead of resuming its thread (`task --resume-last`); resume is on by default |
+| `AGENT_COLLAB_ALLOW_INPLACE=on` | Permit an **unisolated** in-place run when a git worktree can't be created. Off by default — without it such a job is `blocked` rather than run in your real tree |
 | `AGENT_COLLAB_AGY_CLASS` | agy model class to pin (`Flash` default, `Pro`, …) |
 | `AGENT_COLLAB_AGY_MODEL` | Pin an exact agy model label (overrides the class) |
 | `AGENT_COLLAB_<AGY\|CLAUDE\|CODEX>_BIN` | Override a harness binary path |

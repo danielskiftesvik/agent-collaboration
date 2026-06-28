@@ -126,6 +126,7 @@ read `tasks/<jobId>/reports/<worker>.md` before concluding nothing came back.
 - `AGENT_COLLAB_FALLBACK=off` — disable auto-fallback on a limit/timeout (on by default).
 - `AGENT_COLLAB_TIMEOUT=<s>` — per-attempt worker timeout in seconds (default 1200 = 20 min).
 - `AGENT_COLLAB_CODEX_RESUME=off` — repair with a fresh re-send instead of resuming the codex thread (resume is on by default).
+- `AGENT_COLLAB_ALLOW_INPLACE=on` — allow an UNISOLATED in-place run when a worktree can't be created (off by default → such a job is `blocked`, never run in the real cwd).
 - `AGENT_COLLAB_<AGY|CLAUDE|CODEX>_BIN` — override a harness binary.
 - `AGENT_COLLAB_AGY_MODEL[_PRO|_FLASH]` — explicit agy model id (default: unset).
 

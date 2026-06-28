@@ -4,7 +4,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-import { makeRepo, isolateStateRoot, stubBin } from "./helpers.mjs";
+import { makeRepo, isolateStateRoot, stubBin, real } from "./helpers.mjs";
 import {
   decideRoute,
   runSetup,
@@ -395,6 +395,41 @@ test("defaultTimeoutMs honors AGENT_COLLAB_TIMEOUT and defaults generously", () 
   process.env.AGENT_COLLAB_TIMEOUT = "60";
   assert.equal(defaultTimeoutMs(), 60000);
   delete process.env.AGENT_COLLAB_TIMEOUT;
+});
+
+// ---- isolation fail-closed (no implicit unisolated in-place runs) ----
+
+test("runWorkerSync fails CLOSED when it cannot isolate (non-git cwd)", () => {
+  isolateStateRoot();
+  const dir = real(fs.mkdtempSync(path.join(os.tmpdir(), "ac-nongit-")));
+  process.env.AGENT_COLLAB_AGY_BIN = stubBin(WRITE_STUB);
+
+  const res = runWorkerSync(dir, { driver: "claude", worker: "agy", role: "worker", brief: "x", maxAttempts: 1 });
+
+  assert.equal(res.status, "blocked");
+  assert.match(res.errors.join(" "), /isolat|git repo/i);
+  assert.equal(
+    fs.existsSync(path.join(dir, "worker-was-here.txt")),
+    false,
+    "the worker must NOT run unisolated in the real cwd"
+  );
+
+  delete process.env.AGENT_COLLAB_AGY_BIN;
+});
+
+test("AGENT_COLLAB_ALLOW_INPLACE=on permits an explicit unisolated in-place run", () => {
+  isolateStateRoot();
+  const dir = real(fs.mkdtempSync(path.join(os.tmpdir(), "ac-nongit-")));
+  process.env.AGENT_COLLAB_ALLOW_INPLACE = "on";
+  process.env.AGENT_COLLAB_AGY_BIN = stubBin(WRITE_STUB);
+
+  const res = runWorkerSync(dir, { driver: "claude", worker: "agy", role: "worker", brief: "x", maxAttempts: 1 });
+
+  assert.notEqual(res.status, "blocked");
+  assert.equal(fs.existsSync(path.join(dir, "worker-was-here.txt")), true, "ran in place as opted-in");
+
+  delete process.env.AGENT_COLLAB_ALLOW_INPLACE;
+  delete process.env.AGENT_COLLAB_AGY_BIN;
 });
 
 // ---- worker containment (breach detection) ----
