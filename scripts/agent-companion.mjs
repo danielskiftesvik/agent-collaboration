@@ -5,7 +5,7 @@
 import fs from "node:fs";
 import path from "node:path";
 
-import { decideRoute, resolveDriver, isAuthoritativeDriver, runSetup, runWorkerSync, runWithFallback, launchBackground, runJob, waitForJob, applyResult, recommendWorker } from "../core/dispatch.mjs";
+import { decideRoute, resolveDriver, isAuthoritativeDriver, runSetup, runWorkerSync, runWithFallback, resolveFallbackKinds, launchBackground, runJob, waitForJob, applyResult, recommendWorker } from "../core/dispatch.mjs";
 import { runDoctor } from "../core/doctor.mjs";
 import { listJobs, getJob, updateJob, sortJobsNewestFirst, loadState, saveState } from "../core/state.mjs";
 import { isPidAlive } from "../core/heartbeat.mjs";
@@ -103,11 +103,11 @@ switch (subcommand) {
       break;
     }
 
-    // Auto-fallback on a subscription/rate limit (or auth) is ON by default; a
-    // genuine task failure never triggers it. Disable with --no-fallback or
-    // AGENT_COLLAB_FALLBACK=off (single worker, surface the limit).
-    const fallback = !options["no-fallback"] && process.env.AGENT_COLLAB_FALLBACK !== "off";
-    const res = runWithFallback(cwd, { driver, worker, role, brief, kind, focus: options.focus, timeoutMs, fallback });
+    // Auto-fallback policy: by default fall back on transient capacity problems
+    // (rate-limit, timeout); auth surfaces. Tune via AGENT_COLLAB_FALLBACK
+    // (off|on|comma-list); --no-fallback forces a single worker.
+    const fallbackKinds = options["no-fallback"] ? new Set() : resolveFallbackKinds();
+    const res = runWithFallback(cwd, { driver, worker, role, brief, kind, focus: options.focus, timeoutMs, fallbackKinds });
     if (options.apply && res.status === "completed" && role === "worker") {
       res.applied = applyResult(cwd, res.jobId);
     }

@@ -10,12 +10,12 @@ import { fileURLToPath } from "node:url";
 import { getAdapter, listAdapters } from "../adapters/index.mjs";
 import { resolveStateDir, appendJob, updateJob, getJob, loadState } from "./state.mjs";
 import { createWorktree, removeWorktree } from "./workspace.mjs";
-import { headRef, captureWorkingDiff, applyPatch, checkPatchApplies, workingTreeStatus, newStatusPaths } from "./git.mjs";
+import { headRef, captureWorkingDiff, applyPatch, checkPatchApplies, workingTreeStatus, newStatusPaths, stageDiffIntoWorktree } from "./git.mjs";
 import { run } from "./process.mjs";
 import { isPidAlive } from "./heartbeat.mjs";
 import { coerceArtifact, normalizeReviewArtifact } from "./schema.mjs";
 import { buildFromTemplate } from "./prompts.mjs";
-import { classifyFailure, isFallbackKind } from "./failures.mjs";
+import { classifyFailure } from "./failures.mjs";
 import { MODEL_PROFILES, TASK_ROUTING, DEFAULT_ROUTING } from "./model-profiles.mjs";
 
 const TEMPLATE_KINDS = new Set(["review", "adversarial-review"]);
@@ -269,11 +269,33 @@ export function runWorkerSync(cwd, opts) {
 
   // Review-grade work uses a code-loaded template (with the harness contract
   // filling {{OUTPUT_CONTRACT}}); free-form work is the driver-composed brief.
+  // For review-grade work, try to STAGE the diff into the worktree so the reviewer
+  // reads real post-change files (not a stale HEAD baseline) — the diff is still
+  // included for small changes. Falls back to pasted-text when it isn't a diff or
+  // doesn't apply.
+  let reviewInput = brief ?? "";
+  if (TEMPLATE_KINDS.has(kind) && worktree) {
+    const staged = stageDiffIntoWorktree(workspace, brief ?? "");
+    if (staged.staged) {
+      reviewInput =
+        "The change under review has been APPLIED to your working tree. Read the affected files " +
+        "directly and run `git diff HEAD` to see exactly what changed — for large changes rely on " +
+        "that rather than the pasted diff below.\n\nFiles changed:\n" +
+        (staged.stat || "(run `git diff HEAD --stat`)") +
+        "\n\nThe same change as a unified diff:\n" +
+        (brief ?? "");
+    } else {
+      reviewInput =
+        "Your working tree is the repository's HEAD baseline; the change under review is the unified " +
+        "diff below, which is AUTHORITATIVE — do not 'correct' based on baseline code the diff changes.\n\n" +
+        (brief ?? "");
+    }
+  }
   const basePrompt = TEMPLATE_KINDS.has(kind)
     ? buildFromTemplate(kind, {
         TARGET_LABEL: targetLabel || "the provided changes",
         USER_FOCUS: focus || "No extra focus provided.",
-        REVIEW_INPUT: brief ?? "",
+        REVIEW_INPUT: reviewInput,
         OUTPUT_CONTRACT: contract
       })
     : `${brief ?? ""}${contract}`;
@@ -467,10 +489,33 @@ export function runWorkerSync(cwd, opts) {
  * the last failure with `allWorkersLimited: true` for the driver to surface.
  *
  * `available` is the list of worker-ready harness names (from `runSetup`); pass it
- * explicitly or it is probed. `fallback: false` disables the chain (single worker).
+ * explicitly or it is probed. Which failure kinds trigger fallback is policy:
+ * pass `fallbackKinds` (a Set), or `fallback: false` to disable, else the default
+ * policy (`resolveFallbackKinds`) applies.
  */
+/**
+ * Which failure kinds auto-trigger fallback. Policy via AGENT_COLLAB_FALLBACK:
+ *   off  -> none;  on -> rate-limit+auth+timeout;  "a,b" -> exactly those kinds.
+ * DEFAULT = rate-limit + timeout: fall back on TRANSIENT capacity problems (another
+ * worker can do it right now), but SURFACE auth — it's a persistent config issue, so
+ * routing around the worker the user chose would just hide a login they must fix.
+ */
+export function resolveFallbackKinds(env = process.env) {
+  const v = env.AGENT_COLLAB_FALLBACK;
+  if (v === "off") return new Set();
+  if (v === "on") return new Set(["rate-limit", "auth", "timeout"]);
+  if (v) return new Set(v.split(",").map((s) => s.trim().toLowerCase()).filter(Boolean));
+  return new Set(["rate-limit", "timeout"]);
+}
+
 export function runWithFallback(cwd, opts) {
-  const { driver, worker, available, fallback = true, task, ...rest } = opts;
+  const { driver, worker, available, fallback, fallbackKinds, task, ...rest } = opts;
+  const kinds =
+    fallbackKinds instanceof Set
+      ? fallbackKinds
+      : fallback === false
+        ? new Set()
+        : resolveFallbackKinds();
   const avail =
     available || runSetup().filter((r) => r.validWorker).map((r) => r.name);
 
@@ -489,7 +534,7 @@ export function runWithFallback(cwd, opts) {
   for (const w of candidates) {
     const res = runWorkerSync(cwd, { driver, worker: w, ...rest });
     last = res;
-    const limited = fallback && res.status === "failed" && isFallbackKind(res.failureKind);
+    const limited = res.status === "failed" && kinds.has(res.failureKind);
     if (!limited) {
       if (fellBackFrom.length) {
         res.fellBackFrom = fellBackFrom;
@@ -509,7 +554,7 @@ export function runWithFallback(cwd, opts) {
     last.allWorkersLimited = true;
     last.fellBackFrom = fellBackFrom;
     last.note =
-      "All worker-ready harnesses hit a limit/auth failure: " +
+      "All worker-ready harnesses failed in a fall-back-eligible way: " +
       fellBackFrom
         .map((f) => `${f.worker} (${f.failureKind}${f.resetAt ? `, resets ${f.resetAt}` : ""})`)
         .join("; ") +

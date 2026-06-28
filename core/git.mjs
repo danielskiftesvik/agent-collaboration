@@ -44,6 +44,35 @@ export function captureWorkingDiff(cwd, baseRef) {
   return diff;
 }
 
+/** Does this text look like a unified diff (vs. arbitrary prose to review)? */
+export function looksLikeDiff(text) {
+  if (typeof text !== "string") return false;
+  return (
+    /^diff --git /m.test(text) ||
+    /^@@ -\d/m.test(text) ||
+    (/^--- /m.test(text) && /^\+\+\+ /m.test(text))
+  );
+}
+
+/**
+ * Materialize a review's diff INTO the worker's worktree (apply + stage) so the
+ * reviewer reads the actual post-change files and `git diff HEAD`, instead of a
+ * stale HEAD baseline that can contradict a pasted diff. Best-effort: returns
+ * {staged:false} when the input isn't a diff or doesn't apply, so the caller falls
+ * back to the pasted-text path. (Reviewer worktrees are discarded, so staging is safe.)
+ */
+export function stageDiffIntoWorktree(worktree, diff) {
+  if (!looksLikeDiff(diff)) return { staged: false, reason: "input is not a unified diff" };
+  // git apply rejects a patch with no trailing newline; pasted/trimmed diffs often
+  // lack one, so normalize.
+  const patch = diff.endsWith("\n") ? diff : diff + "\n";
+  const r = run("git", ["apply", "--3way", "--whitespace=nowarn"], { cwd: worktree, input: patch });
+  if (r.status !== 0) return { staged: false, reason: r.stderr || "patch did not apply to HEAD" };
+  run("git", ["add", "-A"], { cwd: worktree });
+  const s = run("git", ["diff", "--cached", "--stat"], { cwd: worktree });
+  return { staged: true, stat: s.status === 0 ? s.stdout.trim() : "" };
+}
+
 /** Dry-run: would this diff apply (3-way) to `cwd`? Empty diffs trivially apply. */
 export function checkPatchApplies(cwd, diff) {
   if (!diff || !diff.trim()) return true;

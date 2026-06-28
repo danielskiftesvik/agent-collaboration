@@ -111,19 +111,22 @@ driver, `AGENTS.md` for Codex/agy drivers).
   `completed`. A valid self-report that captured **no** patch is `no-changes`, not `completed`.
 - **Prompts:** review-grade work uses code-loaded templates (`prompts/adversarial-review.md`,
   `prompts/review.md`) with a `{{OUTPUT_CONTRACT}}` filled per harness; free-form tasks are
-  composed by the driver using the `harness-prompting` skill.
+  composed by the driver using the `harness-prompting` skill. When the review input is a real
+  diff it's **staged into the reviewer's worktree** so it reads the actual post-change files
+  (not a stale HEAD baseline); non-diff input falls back to the pasted-text path.
 - **Output contracts + validation:** each worker's output is validated against a JSON schema
   (`schemas/`); a worker is `completed` on a clean, applying patch even if its metadata JSON
   is missing (the patch is the deliverable).
 - **Stall detection:** jobs carry a heartbeat; a job whose heartbeat is stale **and** whose
   process is gone is treated as stalled.
 - **Limit & timeout handling:** a failed run is classified (`failureKind` = `rate-limit` |
-  `auth` | `timeout` | `other` + a best-effort `resetAt`). On a rate/auth limit **or a
-  timeout** the runtime **auto-falls-back to the next worker-ready harness** (never the
-  driver), tagging the result with a `note` + `fellBackFrom[]`; if every worker fails that way
-  it returns `allWorkersLimited` for the driver to surface. Disable with `--no-fallback` /
-  `AGENT_COLLAB_FALLBACK=off`. The default per-attempt budget is 20 min so deep reviews aren't
-  killed mid-run (the empty "no JSON found" failure); tune with `AGENT_COLLAB_TIMEOUT`.
+  `auth` | `timeout` | `other` + a best-effort `resetAt`). On a **transient** failure
+  (`rate-limit`/`timeout` by default) the runtime **auto-falls-back to the next worker-ready
+  harness** (never the driver), tagging the result with a `note` + `fellBackFrom[]`; **`auth`
+  is surfaced** (a config fix), not routed around. Tune via `AGENT_COLLAB_FALLBACK`
+  (`off`/`on`/comma-list) or `--no-fallback`. The default per-attempt budget is 20 min so deep
+  reviews aren't killed mid-run (the empty "no JSON found" failure); tune with
+  `AGENT_COLLAB_TIMEOUT`.
 - **Review-output normalization:** reviewer JSON is normalized before validation (severity
   lowercased/trimmed, synonyms mapped, `next_steps` optional) so a complete report isn't
   false-failed over cosmetics like codex emitting `"High"`.
@@ -162,7 +165,7 @@ node /path/to/agent-collaboration/scripts/agent-companion.mjs \
 | `AGENT_COLLAB_DATA` | Out-of-repo state root (default: a per-plugin / tmp dir) |
 | `AGENT_COLLAB_DRIVER` | Override which harness is driving (`codex`/`agy`/`claude`). Normally auto-detected (Codex `CODEX_THREAD_ID`, agy `ANTIGRAVITY_*`, Claude Code `CLAUDECODE`); set only if detection misses |
 | `AGENT_COLLAB_SANDBOX=on` | Opt-in macOS/Linux OS sandbox for workers (off by default) |
-| `AGENT_COLLAB_FALLBACK=off` | Disable auto-fallback to another worker on a rate/subscription limit or timeout (on by default) |
+| `AGENT_COLLAB_FALLBACK` | Auto-fallback policy: `off` \| `on` (rate-limit+auth+timeout) \| comma-list of kinds. Default `rate-limit,timeout` (transient; **auth is surfaced**, not routed around) |
 | `AGENT_COLLAB_TIMEOUT` | Per-attempt worker timeout in **seconds** (default 1200 = 20 min). Deep reasoners on big diffs need a generous budget — too short SIGTERMs the run mid-flight and yields empty "no JSON" output |
 | `AGENT_COLLAB_CODEX_RESUME=off` | Repair a bad codex reply with a fresh re-send instead of resuming its thread (`task --resume-last`); resume is on by default |
 | `AGENT_COLLAB_ALLOW_INPLACE=on` | Permit an **unisolated** in-place run when a git worktree can't be created. Off by default — without it such a job is `blocked` rather than run in your real tree |

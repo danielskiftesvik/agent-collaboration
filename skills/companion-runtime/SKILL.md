@@ -83,15 +83,17 @@ On a **failed** run, two more fields explain why: `failureKind`
 (`rate-limit` | `auth` | `timeout` | `other`) and `resetAt` (best-effort reset
 hint for a limit). See the `result-handling` skill for how to present these.
 
-## Auto-fallback on limits & timeouts
+## Auto-fallback on transient failures
 
 `delegate`/`review`/`adversarial-review` auto-fall-back to the next worker-ready
-harness when the chosen worker hits a **subscription/rate limit, auth, or
-timeout** failure (an `other` failure never triggers it). The result then carries
-`note` (a human sentence), `fellBackFrom[]` (`{worker, failureKind, resetAt}`),
-and — if every worker failed that way — `allWorkersLimited: true`. Fallback only
-ever moves to another **worker** harness; it never silently makes the driver do
-the task. Disable with `--no-fallback` or `AGENT_COLLAB_FALLBACK=off`.
+harness when the chosen worker hits a **transient** failure. Default policy:
+`rate-limit` + `timeout` (another worker can do it now); **`auth` is surfaced**, not
+routed around (it's a config fix); `other` never triggers it. Tune with
+`AGENT_COLLAB_FALLBACK`: `off` (none), `on` (rate-limit+auth+timeout), or a
+comma-list of kinds; `--no-fallback` forces a single worker. The result carries
+`note`, `fellBackFrom[]` (`{worker, failureKind, resetAt}`), and — if every worker
+failed eligibly — `allWorkersLimited: true`. Fallback only ever moves to another
+**worker** harness; it never silently makes the driver do the task.
 
 ## Sync vs background
 
@@ -139,7 +141,7 @@ read `tasks/<jobId>/reports/<worker>.md` before concluding nothing came back.
 - `AGENT_COLLAB_DATA` — out-of-repo state root (default: tmp/plugin-data).
 - `AGENT_COLLAB_DRIVER` — default driver harness.
 - `AGENT_COLLAB_SANDBOX=on` — opt-in OS sandbox (off by default).
-- `AGENT_COLLAB_FALLBACK=off` — disable auto-fallback on a limit/timeout (on by default).
+- `AGENT_COLLAB_FALLBACK` — fallback policy: `off` | `on` (rate-limit+auth+timeout) | comma-list. Default: `rate-limit,timeout` (auth surfaces).
 - `AGENT_COLLAB_TIMEOUT=<s>` — per-attempt worker timeout in seconds (default 1200 = 20 min).
 - `AGENT_COLLAB_CODEX_RESUME=off` — repair with a fresh re-send instead of resuming the codex thread (resume is on by default).
 - `AGENT_COLLAB_ALLOW_INPLACE=on` — allow an UNISOLATED in-place run when a worktree can't be created (off by default → such a job is `blocked`, never run in the real cwd).

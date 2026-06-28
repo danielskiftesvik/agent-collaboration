@@ -4,12 +4,13 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-import { makeRepo, isolateStateRoot, stubBin, real } from "./helpers.mjs";
+import { makeRepo, isolateStateRoot, stubBin, real, git } from "./helpers.mjs";
 import {
   decideRoute,
   runSetup,
   runWorkerSync,
   runWithFallback,
+  resolveFallbackKinds,
   launchBackground,
   waitForJob,
   defaultTimeoutMs,
@@ -400,6 +401,64 @@ test("defaultTimeoutMs honors AGENT_COLLAB_TIMEOUT and defaults generously", () 
   delete process.env.AGENT_COLLAB_TIMEOUT;
 });
 
+// ---- review input: stage the diff into the worktree (post-change, not stale HEAD) ----
+
+// A reviewer stub that records what it sees on disk + whether the prompt says "staged".
+const STAGE_PROBE_STUB = `
+  import fs from 'node:fs';
+  if (process.argv.includes('models')) { process.exit(0); }
+  const prompt = process.argv[process.argv.length - 1];
+  const app = fs.existsSync('app.js') ? fs.readFileSync('app.js', 'utf8') : '';
+  fs.writeFileSync(process.env.AC_SEEN, JSON.stringify({
+    appOnDisk: app.trim(),
+    promptSaysApplied: /has been APPLIED to your working tree/.test(prompt),
+    promptSaysBaseline: /repository's HEAD baseline/i.test(prompt)
+  }));
+  process.stdout.write('\`\`\`json\\n' + JSON.stringify({verdict:'approve',summary:'ok',findings:[]}) + '\\n\`\`\`');
+`;
+
+test("a review STAGES a real diff into the worktree (reviewer sees post-change files)", () => {
+  isolateStateRoot();
+  const repo = makeRepo();
+  fs.writeFileSync(path.join(repo, "app.js"), "const x = 1;\n");
+  git(["add", "-A"], repo);
+  git(["commit", "-q", "-m", "add app"], repo);
+  // produce a real unified diff (x=1 -> x=2), then revert so HEAD baseline is x=1
+  fs.writeFileSync(path.join(repo, "app.js"), "const x = 2;\n");
+  const diff = git(["diff"], repo);
+  git(["checkout", "--", "app.js"], repo);
+
+  const seen = path.join(real(fs.mkdtempSync(path.join(os.tmpdir(), "ac-seen-"))), "seen.json");
+  process.env.AC_SEEN = seen;
+  process.env.AGENT_COLLAB_AGY_BIN = stubBin(STAGE_PROBE_STUB);
+
+  runWorkerSync(repo, { driver: "claude", worker: "agy", role: "reviewer", kind: "review", brief: diff });
+
+  const got = JSON.parse(fs.readFileSync(seen, "utf8"));
+  assert.equal(got.appOnDisk, "const x = 2;", "the worktree shows the POST-change file, not stale HEAD");
+  assert.equal(got.promptSaysApplied, true, "the prompt tells the reviewer the change is applied");
+
+  delete process.env.AGENT_COLLAB_AGY_BIN;
+  delete process.env.AC_SEEN;
+});
+
+test("a review with non-diff input falls back to the pasted-text baseline path", () => {
+  isolateStateRoot();
+  const repo = makeRepo();
+  const seen = path.join(real(fs.mkdtempSync(path.join(os.tmpdir(), "ac-seen-"))), "seen.json");
+  process.env.AC_SEEN = seen;
+  process.env.AGENT_COLLAB_AGY_BIN = stubBin(STAGE_PROBE_STUB);
+
+  runWorkerSync(repo, { driver: "claude", worker: "agy", role: "reviewer", kind: "review", brief: "Please review the auth flow for race conditions." });
+
+  const got = JSON.parse(fs.readFileSync(seen, "utf8"));
+  assert.equal(got.promptSaysApplied, false);
+  assert.equal(got.promptSaysBaseline, true, "non-diff input keeps the HEAD-baseline framing");
+
+  delete process.env.AGENT_COLLAB_AGY_BIN;
+  delete process.env.AC_SEEN;
+});
+
 // ---- async background execution ----
 
 test("launchBackground runs a worker detached; waitForJob blocks until completed", () => {
@@ -647,6 +706,66 @@ test("runWithFallback surfaces a clear note when ALL workers are limited", () =>
   assert.equal(res.allWorkersLimited, true);
   assert.equal(res.fellBackFrom.length, 2);
   assert.match(res.note, /limit/i);
+
+  delete process.env.AGENT_COLLAB_AGY_BIN;
+  delete process.env.AGENT_COLLAB_CLAUDE_BIN;
+});
+
+test("resolveFallbackKinds: default is transient-only; off/on/list configurable", () => {
+  const base = { ...process.env };
+  delete process.env.AGENT_COLLAB_FALLBACK;
+  let k = resolveFallbackKinds(process.env);
+  assert.ok(k.has("rate-limit") && k.has("timeout"));
+  assert.equal(k.has("auth"), false, "auth is NOT in the default policy (it surfaces)");
+
+  assert.equal(resolveFallbackKinds({ AGENT_COLLAB_FALLBACK: "off" }).size, 0);
+  assert.equal(resolveFallbackKinds({ AGENT_COLLAB_FALLBACK: "on" }).has("auth"), true);
+  const only = resolveFallbackKinds({ AGENT_COLLAB_FALLBACK: "rate-limit" });
+  assert.ok(only.has("rate-limit") && !only.has("timeout"));
+
+  process.env = base;
+});
+
+test("auth does NOT auto-fall-back by default (it surfaces the chosen worker's auth failure)", () => {
+  isolateStateRoot();
+  const repo = makeRepo();
+  process.env.AGENT_COLLAB_AGY_BIN = stubBin(`
+    if (process.argv.includes('models')) { process.exit(0); }
+    process.stderr.write('401 Unauthorized: invalid api key\\n'); process.exit(1);
+  `);
+  process.env.AGENT_COLLAB_CLAUDE_BIN = stubBin(CLAUDE_SUCCESS_STUB);
+
+  const res = runWithFallback(repo, {
+    driver: "codex", worker: "agy", role: "worker", brief: "x",
+    available: ["agy", "claude"], maxAttempts: 1
+  });
+
+  assert.equal(res.status, "failed");
+  assert.equal(res.failureKind, "auth");
+  assert.equal(res.worker, "agy", "stayed on the chosen worker; auth is surfaced, not routed around");
+  assert.ok(!res.fellBackFrom);
+
+  delete process.env.AGENT_COLLAB_AGY_BIN;
+  delete process.env.AGENT_COLLAB_CLAUDE_BIN;
+});
+
+test("auth DOES fall back when the policy opts in (fallbackKinds includes auth)", () => {
+  isolateStateRoot();
+  const repo = makeRepo();
+  process.env.AGENT_COLLAB_AGY_BIN = stubBin(`
+    if (process.argv.includes('models')) { process.exit(0); }
+    process.stderr.write('401 Unauthorized\\n'); process.exit(1);
+  `);
+  process.env.AGENT_COLLAB_CLAUDE_BIN = stubBin(CLAUDE_SUCCESS_STUB);
+
+  const res = runWithFallback(repo, {
+    driver: "codex", worker: "agy", role: "worker", brief: "x",
+    available: ["agy", "claude"], maxAttempts: 1,
+    fallbackKinds: new Set(["rate-limit", "auth", "timeout"])
+  });
+
+  assert.equal(res.status, "completed");
+  assert.equal(res.worker, "claude");
 
   delete process.env.AGENT_COLLAB_AGY_BIN;
   delete process.env.AGENT_COLLAB_CLAUDE_BIN;
