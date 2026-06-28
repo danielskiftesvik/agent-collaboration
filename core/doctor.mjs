@@ -91,8 +91,8 @@ function liveIsolationCheck(worker) {
       detail: breached
         ? `BREACH — wrote outside its worktree: ${(res.escapedPaths || []).join(", ")}`
         : confinedButEmpty
-          ? "confined but produced NO captured patch — safe, but not usable as a write-worker here"
-          : `confined (status=${res.status})`
+          ? `confined but produced NO captured patch — safe, but not usable as a write-worker here (sandboxed=${res.sandboxed === true})`
+          : `confined (status=${res.status}, sandboxed=${res.sandboxed === true})`
     };
   } catch (e) {
     return { name: `isolation:${worker}`, ok: false, detail: e.message };

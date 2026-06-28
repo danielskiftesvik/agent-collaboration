@@ -11,6 +11,8 @@ import {
   runWorkerSync,
   runWithFallback,
   resolveFallbackKinds,
+  resolveSandbox,
+  isSandboxStartupFailure,
   launchBackground,
   waitForJob,
   defaultTimeoutMs,
@@ -518,6 +520,36 @@ test("waitForJob marks a job stalled when its process is gone without finishing"
 
   assert.equal(job.status, "failed");
   assert.equal(job.failureKind, "stalled");
+});
+
+// ---- preventive OS-sandbox policy ----
+
+test("resolveSandbox: default-on for agy write-workers, never codex, opt-in otherwise", () => {
+  // codex self-sandboxes → never wrap it (nesting crashes)
+  assert.equal(resolveSandbox({ worker: "codex", role: "worker", env: {} }).sandbox, false);
+  assert.equal(resolveSandbox({ worker: "codex", role: "worker", env: { AGENT_COLLAB_SANDBOX: "on" } }).sandbox, false);
+
+  // agy write-worker → default-on
+  assert.equal(resolveSandbox({ worker: "agy", role: "worker", env: {} }).sandbox, true);
+  // agy reviewer → opt-in (don't risk the working review path)
+  assert.equal(resolveSandbox({ worker: "agy", role: "reviewer", env: {} }).sandbox, false);
+  // claude worker → opt-in
+  assert.equal(resolveSandbox({ worker: "claude", role: "worker", env: {} }).sandbox, false);
+
+  // explicit toggles win
+  assert.equal(resolveSandbox({ worker: "agy", role: "worker", env: { AGENT_COLLAB_SANDBOX: "off" } }).sandbox, false);
+  assert.equal(resolveSandbox({ worker: "claude", role: "worker", env: { AGENT_COLLAB_SANDBOX: "on" } }).sandbox, true);
+  assert.equal(resolveSandbox({ worker: "agy", role: "reviewer", config: { sandbox: true }, env: {} }).sandbox, true);
+});
+
+test("isSandboxStartupFailure detects an apply error but NOT a timeout or normal failure", () => {
+  assert.equal(isSandboxStartupFailure({ status: 1, stderr: "sandbox-exec: sandbox_apply: Operation not permitted" }), true);
+  assert.equal(isSandboxStartupFailure({ status: 1, stderr: "bwrap: No permissions to create new namespace" }), true);
+  // a timeout (error message mentions the sandbox-exec COMMAND) must NOT count
+  assert.equal(isSandboxStartupFailure({ status: -1, error: { code: "ETIMEDOUT", message: "spawnSync /usr/bin/sandbox-exec ETIMEDOUT" } }), false);
+  // an ordinary task failure
+  assert.equal(isSandboxStartupFailure({ status: 1, stderr: "TypeError: undefined" }), false);
+  assert.equal(isSandboxStartupFailure({ status: 0 }), false);
 });
 
 // ---- isolation fail-closed (no implicit unisolated in-place runs) ----

@@ -32,6 +32,44 @@ export function defaultTimeoutMs() {
 }
 
 /**
+ * Decide whether to wrap a worker run in the OS sandbox (preventive write
+ * confinement — a belt to breach-detection's suspenders). Policy:
+ *   - NEVER sandbox codex: it self-sandboxes (codex-companion's seatbelt), and
+ *     nesting sandbox-exec fails ("Operation not permitted").
+ *   - `AGENT_COLLAB_SANDBOX=off` (or config.sandbox===false) → never.
+ *   - `AGENT_COLLAB_SANDBOX=on` (or config.sandbox===true) → on (non-codex).
+ *   - Otherwise DEFAULT-ON for agy WRITE-workers: agy runs unattended
+ *     (--dangerously-skip-permissions) and doesn't self-sandbox, so confine its
+ *     writes. Reviewers and other harnesses stay opt-in (don't risk the working
+ *     review path; breach detection still covers escapes).
+ * If the sandbox can't actually be applied at runtime, the caller degrades to an
+ * unsandboxed run (breach detection remains active).
+ */
+export function resolveSandbox({ worker, role = "worker", config = {}, env = process.env } = {}) {
+  if (worker === "codex") return { sandbox: false, reason: "codex self-sandboxes (no nesting)" };
+  if (config.sandbox === false || env.AGENT_COLLAB_SANDBOX === "off") {
+    return { sandbox: false, reason: "disabled" };
+  }
+  if (config.sandbox === true || env.AGENT_COLLAB_SANDBOX === "on") {
+    return { sandbox: true, reason: "enabled" };
+  }
+  if (worker === "agy" && role === "worker") {
+    return { sandbox: true, reason: "default-on confinement for agy write-worker" };
+  }
+  return { sandbox: false, reason: "opt-in" };
+}
+
+/** Did a run fail because the OS sandbox couldn't be applied (vs. a real task error)? */
+export function isSandboxStartupFailure(proc) {
+  if (!proc || proc.status === 0) return false;
+  if (proc.error && proc.error.code === "ETIMEDOUT") return false; // a timeout is not a sandbox failure
+  // Match the actual seatbelt/bwrap apply error — NOT the bare command name, which
+  // appears in every spawnSync error message when the command IS sandbox-exec.
+  const t = `${proc.stdout ?? ""}\n${proc.stderr ?? ""}`;
+  return /sandbox_apply|sandbox profile|operation not permitted|bwrap:/i.test(t);
+}
+
+/**
  * Recommend a worker for a task by matching the task type to the strongest
  * available harness (excluding the driver, so it stays cross-harness). The driver
  * (an LLM) classifies the task type; this mapping is deterministic so routing is
@@ -305,20 +343,32 @@ export function runWorkerSync(cwd, opts) {
       })
     : `${brief ?? ""}${contract}`;
 
-  // Sandbox is OPT-IN: it is not yet proven safe for every harness (a deny-default
-  // profile crashed agy), so it stays off unless explicitly enabled.
+  // Preventive OS-sandbox confinement (default-on for agy write-workers; never
+  // codex; opt-in otherwise — see resolveSandbox). If it can't actually be applied
+  // we degrade to an unsandboxed run (breach detection stays active).
   const state = loadState(cwd);
-  const useSandbox = state.config.sandbox === true || process.env.AGENT_COLLAB_SANDBOX === "on";
+  const wantSandbox = resolveSandbox({ worker, role, config: state.config, env: process.env }).sandbox;
+  let sandboxDegraded = false;
 
-  const exec = (cmd) =>
+  const exec = (cmd, sandbox) =>
     run(cmd.command, cmd.args, {
       cwd: workspace,
       timeout: timeoutMs,
       env: { ...process.env, ...(cmd.env ?? {}) },
-      sandbox: useSandbox,
+      sandbox,
       sandboxWorkspace: workspace,
       sandboxArtifactDir: artifactDir
     });
+  // Run with the sandbox; on a sandbox-startup failure, retry the SAME command
+  // unsandboxed and remember we degraded.
+  const execGuarded = (cmd) => {
+    let p = exec(cmd, wantSandbox);
+    if (wantSandbox && isSandboxStartupFailure(p)) {
+      sandboxDegraded = true;
+      p = exec(cmd, false);
+    }
+    return p;
+  };
 
   // Repair prompts: a full fresh re-send vs. a short ask used when CONTINUING the
   // worker's existing thread (resume) — there the context is already loaded.
@@ -334,7 +384,7 @@ export function runWorkerSync(cwd, opts) {
     attempts += 1;
     let proc;
     if (attempts === 1) {
-      proc = exec(adapter.buildCommand({ role, brief: basePrompt, workspace, timeoutMs }));
+      proc = execGuarded(adapter.buildCommand({ role, brief: basePrompt, workspace, timeoutMs }));
     } else {
       // Repair attempt: prefer RESUMING the worker's thread (cheap continuation,
       // faithful to the reference) when the adapter supports it; if the thread
@@ -343,12 +393,12 @@ export function runWorkerSync(cwd, opts) {
         ? adapter.buildRetryCommand({ role, repairBrief: resumeRepair, workspace, timeoutMs })
         : null;
       if (retryCmd) {
-        proc = exec(retryCmd);
+        proc = execGuarded(retryCmd);
         if (adapter.isResumeMiss && adapter.isResumeMiss(proc)) {
-          proc = exec(adapter.buildCommand({ role, brief: freshRepair, workspace, timeoutMs }));
+          proc = execGuarded(adapter.buildCommand({ role, brief: freshRepair, workspace, timeoutMs }));
         }
       } else {
-        proc = exec(adapter.buildCommand({ role, brief: freshRepair, workspace, timeoutMs }));
+        proc = execGuarded(adapter.buildCommand({ role, brief: freshRepair, workspace, timeoutMs }));
       }
     }
     exitCode = proc.status;
@@ -460,6 +510,11 @@ export function runWorkerSync(cwd, opts) {
       "it likely wrote OUTSIDE the worktree (agy writes to ~/.gemini/antigravity-cli/scratch/). " +
       "Treated as no-changes; this worker can't deliver a patch through the runtime here.";
   }
+  if (sandboxDegraded) {
+    note = (note ? note + " " : "") +
+      "OS sandbox could not be applied in this environment; ran unsandboxed — breach detection still active.";
+  }
+  const sandboxed = wantSandbox && !sandboxDegraded;
 
   const breach = escapedPaths.length > 0;
   updateJob(cwd, jobId, {
@@ -474,6 +529,7 @@ export function runWorkerSync(cwd, opts) {
     resetAt,
     breach,
     escapedPaths: breach ? escapedPaths : undefined,
+    sandboxed,
     note,
     errors
   });
@@ -494,6 +550,7 @@ export function runWorkerSync(cwd, opts) {
     resetAt,
     breach,
     escapedPaths: breach ? escapedPaths : undefined,
+    sandboxed,
     note,
     errors
   };

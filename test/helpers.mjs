@@ -34,10 +34,13 @@ export function addWorktree(repo, name) {
   return real(wt);
 }
 
-/** Point state at a fresh temp dir so tests never touch real state. */
+/** Point state at a fresh temp dir so tests never touch real state. Also pins the
+ *  OS sandbox OFF so worker tests are deterministic across environments (the sandbox
+ *  policy + degradation are unit-tested separately; live confinement via doctor). */
 export function isolateStateRoot() {
   const dir = real(fs.mkdtempSync(path.join(os.tmpdir(), "ac-data-")));
   process.env.AGENT_COLLAB_DATA = dir;
+  process.env.AGENT_COLLAB_SANDBOX = "off";
   return dir;
 }
 

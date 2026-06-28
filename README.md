@@ -103,12 +103,14 @@ driver, `AGENTS.md` for Codex/agy drivers).
 
 - **Authority model:** workers only produce artifacts (a report, a result JSON, a patch);
   **only the driver applies** changes, via `git apply --3way` against a recorded `baseRef`.
-- **Isolation + breach detection:** cross-harness workers AND reviewers run in an ephemeral git
-  worktree; a worker's changes are captured as a patch, a reviewer's are discarded. The runtime
-  also snapshots the driver's real tree before/after each run — if a worker *escapes* its
-  worktree and writes into the live checkout (observed with `agy` under
-  `--dangerously-skip-permissions`), the job is marked **`breach`** with `escapedPaths`, never
-  `completed`. A valid self-report that captured **no** patch is `no-changes`, not `completed`.
+- **Isolation, sandbox & breach detection:** cross-harness workers AND reviewers run in an
+  ephemeral git worktree; a worker's changes are captured as a patch, a reviewer's are discarded.
+  Two safety layers guard against an unattended worker escaping: (1) **preventive** — agy
+  write-workers run under an OS sandbox that denies writes outside the worktree/artifacts (proven
+  to block a `$HOME` write with `EPERM`); never applied to codex (it self-sandboxes), degrades
+  gracefully if unavailable. (2) **reactive** — the runtime snapshots the real tree before/after
+  each run; an escaping write is marked **`breach`** with `escapedPaths`, never `completed`. A
+  valid self-report that captured **no** patch is `no-changes`, not `completed`.
 - **Prompts:** review-grade work uses code-loaded templates (`prompts/adversarial-review.md`,
   `prompts/review.md`) with a `{{OUTPUT_CONTRACT}}` filled per harness; free-form tasks are
   composed by the driver using the `harness-prompting` skill. When the review input is a real
@@ -164,7 +166,7 @@ node /path/to/agent-collaboration/scripts/agent-companion.mjs \
 |---|---|
 | `AGENT_COLLAB_DATA` | Out-of-repo state root (default: a per-plugin / tmp dir) |
 | `AGENT_COLLAB_DRIVER` | Override which harness is driving (`codex`/`agy`/`claude`). Normally auto-detected (Codex `CODEX_THREAD_ID`, agy `ANTIGRAVITY_*`, Claude Code `CLAUDECODE`); set only if detection misses |
-| `AGENT_COLLAB_SANDBOX=on` | Opt-in macOS/Linux OS sandbox for workers (off by default) |
+| `AGENT_COLLAB_SANDBOX` | OS sandbox: `on` (all non-codex) \| `off`. Default: **on for agy write-workers** (preventive confinement), opt-in for others, **never codex** (it self-sandboxes). Degrades to unsandboxed if it can't be applied |
 | `AGENT_COLLAB_FALLBACK` | Auto-fallback policy: `off` \| `on` (rate-limit+auth+timeout) \| comma-list of kinds. Default `rate-limit,timeout` (transient; **auth is surfaced**, not routed around) |
 | `AGENT_COLLAB_TIMEOUT` | Per-attempt worker timeout in **seconds** (default 1200 = 20 min). Deep reasoners on big diffs need a generous budget — too short SIGTERMs the run mid-flight and yields empty "no JSON" output |
 | `AGENT_COLLAB_CODEX_RESUME=off` | Repair a bad codex reply with a fresh re-send instead of resuming its thread (`task --resume-last`); resume is on by default |

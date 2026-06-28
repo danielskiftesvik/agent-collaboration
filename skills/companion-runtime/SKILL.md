@@ -140,7 +140,10 @@ read `tasks/<jobId>/reports/<worker>.md` before concluding nothing came back.
 
 - `AGENT_COLLAB_DATA` — out-of-repo state root (default: tmp/plugin-data).
 - `AGENT_COLLAB_DRIVER` — default driver harness.
-- `AGENT_COLLAB_SANDBOX=on` — opt-in OS sandbox (off by default).
+- `AGENT_COLLAB_SANDBOX` — OS-sandbox: `on` (all non-codex) | `off`. Default: **on for agy
+  write-workers** (preventive write confinement), opt-in otherwise; **never codex** (it
+  self-sandboxes). If it can't be applied, the run degrades to unsandboxed (`sandboxed:false` +
+  a note) — breach detection still active.
 - `AGENT_COLLAB_FALLBACK` — fallback policy: `off` | `on` (rate-limit+auth+timeout) | comma-list. Default: `rate-limit,timeout` (auth surfaces).
 - `AGENT_COLLAB_TIMEOUT=<s>` — per-attempt worker timeout in seconds (default 1200 = 20 min).
 - `AGENT_COLLAB_CODEX_RESUME=off` — repair with a fresh re-send instead of resuming the codex thread (resume is on by default).
