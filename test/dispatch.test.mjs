@@ -1,6 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 
 import { makeRepo, isolateStateRoot, stubBin } from "./helpers.mjs";
@@ -394,6 +395,104 @@ test("defaultTimeoutMs honors AGENT_COLLAB_TIMEOUT and defaults generously", () 
   process.env.AGENT_COLLAB_TIMEOUT = "60";
   assert.equal(defaultTimeoutMs(), 60000);
   delete process.env.AGENT_COLLAB_TIMEOUT;
+});
+
+// ---- codex resume-on-failure (continue the thread instead of re-running cold) ----
+// The codex adapter runs `node <companion> task --json ...`; AGENT_COLLAB_CODEX_COMPANION
+// lets us point it at a stub that mimics codex-companion's envelope + --resume-last.
+function codexCompanionStub(body) {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "ac-codexstub-"));
+  const p = path.join(dir, "companion.mjs");
+  fs.writeFileSync(p, body);
+  return p;
+}
+
+test("a codex repair attempt RESUMES the thread (task --resume-last) and succeeds", () => {
+  isolateStateRoot();
+  const repo = makeRepo();
+  const marker = path.join(isolateStateRoot(), "resume.marker");
+  process.env.AC_MARKER = marker;
+  process.env.AGENT_COLLAB_CODEX_COMPANION = codexCompanionStub(`
+    import fs from 'node:fs';
+    if (process.argv.includes('--resume-last')) {
+      fs.writeFileSync(process.env.AC_MARKER, 'resumed');
+      const review = JSON.stringify({verdict:'approve',summary:'ok',findings:[]});
+      process.stdout.write(JSON.stringify({ status: 0, rawOutput: '\`\`\`json\\n' + review + '\\n\`\`\`' }));
+    } else {
+      process.stdout.write('just prose, no json'); // attempt 1: invalid -> triggers a repair
+    }
+  `);
+
+  const res = runWorkerSync(repo, { driver: "claude", worker: "codex", role: "reviewer", brief: "review", maxAttempts: 2 });
+
+  assert.equal(res.status, "completed");
+  assert.equal(res.artifact.verdict, "approve");
+  assert.equal(fs.readFileSync(marker, "utf8"), "resumed", "the repair used --resume-last");
+
+  delete process.env.AGENT_COLLAB_CODEX_COMPANION;
+  delete process.env.AC_MARKER;
+});
+
+test("a codex repair falls back to a FRESH re-send when the thread can't be resumed", () => {
+  isolateStateRoot();
+  const repo = makeRepo();
+  const countFile = path.join(isolateStateRoot(), "n.txt");
+  process.env.AC_COUNT_FILE = countFile;
+  process.env.AGENT_COLLAB_CODEX_COMPANION = codexCompanionStub(`
+    import fs from 'node:fs';
+    const f = process.env.AC_COUNT_FILE;
+    const n = (fs.existsSync(f) ? Number(fs.readFileSync(f,'utf8')) : 0) + 1;
+    fs.writeFileSync(f, String(n));
+    if (process.argv.includes('--resume-last')) {
+      process.stderr.write('No previous Codex task thread was found for this repository.');
+      process.exit(1);
+    } else if (n === 1) {
+      process.stdout.write('prose, invalid'); // attempt 1 fresh: invalid
+    } else {
+      const review = JSON.stringify({verdict:'approve',summary:'ok',findings:[]});
+      process.stdout.write(JSON.stringify({ status: 0, rawOutput: '\`\`\`json\\n' + review + '\\n\`\`\`' }));
+    }
+  `);
+
+  const res = runWorkerSync(repo, { driver: "claude", worker: "codex", role: "reviewer", brief: "review", maxAttempts: 2 });
+
+  assert.equal(res.status, "completed", "resume missed -> fell back to a fresh re-send");
+
+  delete process.env.AGENT_COLLAB_CODEX_COMPANION;
+  delete process.env.AC_COUNT_FILE;
+});
+
+test("AGENT_COLLAB_CODEX_RESUME=off repairs with a fresh re-send, never --resume-last", () => {
+  isolateStateRoot();
+  const repo = makeRepo();
+  const marker = path.join(isolateStateRoot(), "rl.marker");
+  const countFile = path.join(isolateStateRoot(), "n.txt");
+  process.env.AC_MARKER = marker;
+  process.env.AC_COUNT_FILE = countFile;
+  process.env.AGENT_COLLAB_CODEX_RESUME = "off";
+  process.env.AGENT_COLLAB_CODEX_COMPANION = codexCompanionStub(`
+    import fs from 'node:fs';
+    if (process.argv.includes('--resume-last')) fs.writeFileSync(process.env.AC_MARKER, 'x');
+    const f = process.env.AC_COUNT_FILE;
+    const n = (fs.existsSync(f) ? Number(fs.readFileSync(f,'utf8')) : 0) + 1;
+    fs.writeFileSync(f, String(n));
+    if (n === 1) {
+      process.stdout.write('prose');
+    } else {
+      const review = JSON.stringify({verdict:'approve',summary:'ok',findings:[]});
+      process.stdout.write(JSON.stringify({ status: 0, rawOutput: '\`\`\`json\\n' + review + '\\n\`\`\`' }));
+    }
+  `);
+
+  const res = runWorkerSync(repo, { driver: "claude", worker: "codex", role: "reviewer", brief: "review", maxAttempts: 2 });
+
+  assert.equal(res.status, "completed");
+  assert.equal(fs.existsSync(marker), false, "resume disabled -> never used --resume-last");
+
+  delete process.env.AGENT_COLLAB_CODEX_COMPANION;
+  delete process.env.AGENT_COLLAB_CODEX_RESUME;
+  delete process.env.AC_MARKER;
+  delete process.env.AC_COUNT_FILE;
 });
 
 test("runWithFallback surfaces a clear note when ALL workers are limited", () => {

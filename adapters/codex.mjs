@@ -35,6 +35,25 @@ export default defineAdapter({
     args.push(brief);
     return { command: process.execPath, args };
   },
+  // Repair by RESUMING the worker's existing thread (`task --resume-last`) instead
+  // of re-running the whole task cold — the reference's reliability trait. The
+  // thread already holds the diff/context, so we send only a short "emit clean
+  // JSON" ask. Disable with AGENT_COLLAB_CODEX_RESUME=off (-> fresh re-send).
+  buildRetryCommand({ role, repairBrief }) {
+    if (process.env.AGENT_COLLAB_CODEX_RESUME === "off") return null;
+    const companion = resolveCompanion();
+    if (!companion) return null;
+    const args = [companion, "task", "--json", "--resume-last"];
+    if (role !== "reviewer") args.push("--write");
+    args.push(repairBrief);
+    return { command: process.execPath, args };
+  },
+  // codex-companion errors clearly when there's no thread to resume; detect that so
+  // dispatch can fall back to a fresh re-send rather than fail the repair.
+  isResumeMiss({ stdout, stderr }) {
+    const t = `${stdout ?? ""}\n${stderr ?? ""}`;
+    return /no previous[\s\S]*thread|no resumable task|thread was found/i.test(t);
+  },
   // Codex/GPT-5.x respond best to XML-tagged, block-structured contracts
   // (see codex-plugin-cc's gpt-5-4-prompting skill).
   outputContract(role) {

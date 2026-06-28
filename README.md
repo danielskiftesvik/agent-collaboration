@@ -121,6 +121,9 @@ driver, `AGENTS.md` for Codex/agy drivers).
 - **Review-output normalization:** reviewer JSON is normalized before validation (severity
   lowercased/trimmed, synonyms mapped, `next_steps` optional) so a complete report isn't
   false-failed over cosmetics like codex emitting `"High"`.
+- **Repair by resume:** a non-timeout repair attempt *continues* the worker's existing thread
+  (codex `task --resume-last`) with a short "emit clean JSON" ask instead of re-running cold,
+  falling back to a fresh re-send if the thread can't be resumed.
 - **State** lives **outside** the repo (keyed by a hash of the workspace root), so it survives
   worktrees and is never committed.
 
@@ -155,6 +158,7 @@ node /path/to/agent-collaboration/scripts/agent-companion.mjs \
 | `AGENT_COLLAB_SANDBOX=on` | Opt-in macOS/Linux OS sandbox for workers (off by default) |
 | `AGENT_COLLAB_FALLBACK=off` | Disable auto-fallback to another worker on a rate/subscription limit or timeout (on by default) |
 | `AGENT_COLLAB_TIMEOUT` | Per-attempt worker timeout in **seconds** (default 1200 = 20 min). Deep reasoners on big diffs need a generous budget — too short SIGTERMs the run mid-flight and yields empty "no JSON" output |
+| `AGENT_COLLAB_CODEX_RESUME=off` | Repair a bad codex reply with a fresh re-send instead of resuming its thread (`task --resume-last`); resume is on by default |
 | `AGENT_COLLAB_AGY_CLASS` | agy model class to pin (`Flash` default, `Pro`, …) |
 | `AGENT_COLLAB_AGY_MODEL` | Pin an exact agy model label (overrides the class) |
 | `AGENT_COLLAB_<AGY\|CLAUDE\|CODEX>_BIN` | Override a harness binary path |

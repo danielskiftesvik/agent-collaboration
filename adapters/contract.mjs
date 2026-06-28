@@ -13,6 +13,13 @@
 //   unattendedProbe() -> { ok: boolean, detail?: string }   (used by `setup`)
 //   supportsStructuredOutput: boolean   (default false)
 //   background: boolean                 (default true; can it be detached?)
+//   buildRetryCommand({ role, repairBrief, workspace, timeoutMs }) -> { command, args, env? } | null
+//       A repair attempt that CONTINUES/RESUMES the worker's existing thread with
+//       a short ask (cheaper + higher-quality than re-running cold). Return null to
+//       fall back to a fresh buildCommand re-send. (codex: `task --resume-last`.)
+//   isResumeMiss({ stdout, stderr, status }) -> boolean
+//       True when a resume attempt failed because there was no thread to resume;
+//       dispatch then redoes the attempt fresh so resume can never regress.
 
 const REQUIRED = ["name", "buildCommand", "parseOutput", "probe"];
 

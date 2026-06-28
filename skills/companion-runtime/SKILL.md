@@ -100,6 +100,15 @@ timeout is **not** retried in place (re-sending the same slow prompt just times
 out again) — it surfaces as `failureKind: "timeout"` and auto-falls-back to a
 faster worker.
 
+## Repair by resume (codex)
+
+When a worker's first reply isn't valid (non-timeout), the repair attempt
+**continues the worker's existing thread** rather than re-running the task cold —
+for codex that's `task --resume-last` with a short "emit clean JSON" ask, so the
+loaded diff/context isn't paid for twice. If the thread can't be resumed it
+automatically falls back to a fresh full re-send (so resume can never regress).
+Disable with `AGENT_COLLAB_CODEX_RESUME=off`.
+
 ## Review-output normalization
 
 Reviewer JSON is normalized before validation so a complete report isn't
@@ -115,6 +124,7 @@ read `tasks/<jobId>/reports/<worker>.md` before concluding nothing came back.
 - `AGENT_COLLAB_SANDBOX=on` — opt-in OS sandbox (off by default).
 - `AGENT_COLLAB_FALLBACK=off` — disable auto-fallback on a limit/timeout (on by default).
 - `AGENT_COLLAB_TIMEOUT=<s>` — per-attempt worker timeout in seconds (default 1200 = 20 min).
+- `AGENT_COLLAB_CODEX_RESUME=off` — repair with a fresh re-send instead of resuming the codex thread (resume is on by default).
 - `AGENT_COLLAB_<AGY|CLAUDE|CODEX>_BIN` — override a harness binary.
 - `AGENT_COLLAB_AGY_MODEL[_PRO|_FLASH]` — explicit agy model id (default: unset).
 

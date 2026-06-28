@@ -236,18 +236,13 @@ export function runWorkerSync(cwd, opts) {
       })
     : `${brief ?? ""}${contract}`;
 
-  let attempts = 0;
-  let promptBrief = basePrompt;
-
   // Sandbox is OPT-IN: it is not yet proven safe for every harness (a deny-default
   // profile crashed agy), so it stays off unless explicitly enabled.
   const state = loadState(cwd);
   const useSandbox = state.config.sandbox === true || process.env.AGENT_COLLAB_SANDBOX === "on";
 
-  while (attempts < maxAttempts) {
-    attempts += 1;
-    const cmd = adapter.buildCommand({ role, brief: promptBrief, workspace, timeoutMs });
-    const proc = run(cmd.command, cmd.args, {
+  const exec = (cmd) =>
+    run(cmd.command, cmd.args, {
       cwd: workspace,
       timeout: timeoutMs,
       env: { ...process.env, ...(cmd.env ?? {}) },
@@ -255,6 +250,38 @@ export function runWorkerSync(cwd, opts) {
       sandboxWorkspace: workspace,
       sandboxArtifactDir: artifactDir
     });
+
+  // Repair prompts: a full fresh re-send vs. a short ask used when CONTINUING the
+  // worker's existing thread (resume) — there the context is already loaded.
+  const freshRepair =
+    `${basePrompt}\n\nIMPORTANT: your previous reply was not valid. ` +
+    `Respond with ONLY a single JSON object matching the schema above — no prose.`;
+  const resumeRepair =
+    "Your previous reply was not valid for the required schema. Re-send ONLY a " +
+    "single JSON object matching that schema — no prose, nothing else.";
+
+  let attempts = 0;
+  while (attempts < maxAttempts) {
+    attempts += 1;
+    let proc;
+    if (attempts === 1) {
+      proc = exec(adapter.buildCommand({ role, brief: basePrompt, workspace, timeoutMs }));
+    } else {
+      // Repair attempt: prefer RESUMING the worker's thread (cheap continuation,
+      // faithful to the reference) when the adapter supports it; if the thread
+      // can't be resumed, fall back to a fresh full re-send so resume never regresses.
+      const retryCmd = adapter.buildRetryCommand
+        ? adapter.buildRetryCommand({ role, repairBrief: resumeRepair, workspace, timeoutMs })
+        : null;
+      if (retryCmd) {
+        proc = exec(retryCmd);
+        if (adapter.isResumeMiss && adapter.isResumeMiss(proc)) {
+          proc = exec(adapter.buildCommand({ role, brief: freshRepair, workspace, timeoutMs }));
+        }
+      } else {
+        proc = exec(adapter.buildCommand({ role, brief: freshRepair, workspace, timeoutMs }));
+      }
+    }
     exitCode = proc.status;
     lastStdout = proc.stdout ?? "";
     lastStderr = proc.stderr ?? "";
@@ -273,9 +300,6 @@ export function runWorkerSync(cwd, opts) {
     coerce = coerceArtifact(schema, candidate, normalize);
     if (coerce.ok) break;
     if (timedOut) break; // re-sending the same too-slow prompt just times out again — let the caller fall back
-    promptBrief =
-      `${basePrompt}\n\nIMPORTANT: your previous reply was not valid. ` +
-      `Respond with ONLY a single JSON object matching the schema above — no prose.`;
   }
 
   // Capture the worker's patch, then tear down the worktree (the diff is the artifact).
