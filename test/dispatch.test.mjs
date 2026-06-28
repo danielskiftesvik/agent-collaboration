@@ -18,7 +18,7 @@ import {
   defaultTimeoutMs,
   applyResult
 } from "../core/dispatch.mjs";
-import { appendJob } from "../core/state.mjs";
+import { appendJob, updateJob, getJob } from "../core/state.mjs";
 
 // ---- routing ----
 
@@ -501,6 +501,64 @@ test("launchBackground runs a worker detached; waitForJob blocks until completed
   assert.equal(fs.existsSync(path.join(repo, "worker-was-here.txt")), false);
 
   delete process.env.AGENT_COLLAB_AGY_BIN;
+});
+
+test("updateJob is terminal-safe: a later update can't regress/overwrite a terminal status", () => {
+  isolateStateRoot();
+  const repo = makeRepo();
+  appendJob(repo, { id: "t1", worker: "codex", role: "worker", status: "completed" });
+
+  // a racing background launcher trying to set running back
+  updateJob(repo, "t1", { status: "running", pid: 999 });
+  assert.equal(getJob(repo, "t1").status, "completed", "must not regress completed -> running");
+  assert.equal(getJob(repo, "t1").pid, 999, "non-status fields still update");
+
+  // a late cancel must not overwrite the completed result either
+  updateJob(repo, "t1", { status: "cancelled" });
+  assert.equal(getJob(repo, "t1").status, "completed", "terminal is final");
+});
+
+test("AGENT_COLLAB_ALLOW_INPLACE does NOT downgrade a real git repo to an in-place run", () => {
+  isolateStateRoot();
+  const repo = makeRepo();
+  process.env.AGENT_COLLAB_ALLOW_INPLACE = "on";
+  process.env.AGENT_COLLAB_AGY_BIN = stubBin(WRITE_STUB);
+
+  const res = runWorkerSync(repo, { driver: "claude", worker: "agy", role: "worker", brief: "x", maxAttempts: 1 });
+
+  assert.notEqual(res.status, "blocked");
+  // still isolated: the worker's write stayed in the worktree, not the real repo
+  assert.equal(fs.existsSync(path.join(repo, "worker-was-here.txt")), false);
+
+  delete process.env.AGENT_COLLAB_ALLOW_INPLACE;
+  delete process.env.AGENT_COLLAB_AGY_BIN;
+});
+
+test("noResume disables codex --resume-last on the repair attempt (fresh re-send instead)", () => {
+  isolateStateRoot();
+  const repo = makeRepo();
+  const marker = path.join(isolateStateRoot(), "rl.marker");
+  const countFile = path.join(isolateStateRoot(), "n.txt");
+  process.env.AC_MARKER = marker;
+  process.env.AC_COUNT_FILE = countFile;
+  process.env.AGENT_COLLAB_CODEX_COMPANION = codexCompanionStub(`
+    import fs from 'node:fs';
+    if (process.argv.includes('--resume-last')) fs.writeFileSync(process.env.AC_MARKER, 'x');
+    const f = process.env.AC_COUNT_FILE;
+    const n = (fs.existsSync(f) ? Number(fs.readFileSync(f,'utf8')) : 0) + 1;
+    fs.writeFileSync(f, String(n));
+    if (n === 1) { process.stdout.write('prose'); }
+    else { const review = JSON.stringify({verdict:'approve',summary:'ok',findings:[]}); process.stdout.write(JSON.stringify({status:0, rawOutput:'\`\`\`json\\n'+review+'\\n\`\`\`'})); }
+  `);
+
+  const res = runWorkerSync(repo, { driver: "claude", worker: "codex", role: "reviewer", brief: "review", maxAttempts: 2, noResume: true });
+
+  assert.equal(res.status, "completed");
+  assert.equal(fs.existsSync(marker), false, "noResume -> never used --resume-last");
+
+  delete process.env.AGENT_COLLAB_CODEX_COMPANION;
+  delete process.env.AC_MARKER;
+  delete process.env.AC_COUNT_FILE;
 });
 
 test("waitForJob marks a job stalled when its process is gone without finishing", () => {

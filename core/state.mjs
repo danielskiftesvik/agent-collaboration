@@ -14,6 +14,71 @@ const FALLBACK_ROOT = path.join(os.homedir() || os.tmpdir(), ".agent-collaborati
 const STATE_VERSION = 1;
 export const MAX_JOBS = 50;
 
+// A terminal status is final — once reached, a later (possibly racing) update must
+// not regress or overwrite it (e.g. a background launcher's post-spawn "running",
+// or a `cancel` arriving after the worker already completed).
+export const TERMINAL_STATUSES = new Set([
+  "completed",
+  "no-changes",
+  "conflicted",
+  "breach",
+  "blocked",
+  "failed",
+  "cancelled"
+]);
+
+export function isTerminalStatus(status) {
+  return TERMINAL_STATUSES.has(status);
+}
+
+function sleepSync(ms) {
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, Math.max(0, ms));
+}
+
+/**
+ * Serialize state read-modify-write across processes via an exclusive lockfile, so
+ * two concurrent background workers can't lose each other's updates. Best-effort:
+ * steals a stale lock (>10s) and, after a deadline, proceeds anyway rather than
+ * deadlock (atomic temp+rename keeps each write self-consistent).
+ */
+function withLock(cwd, fn) {
+  const dir = resolveStateDir(cwd);
+  fs.mkdirSync(dir, { recursive: true });
+  const lock = path.join(dir, ".lock");
+  const deadline = Date.now() + 5000;
+  let fd;
+  for (;;) {
+    try {
+      fd = fs.openSync(lock, "wx");
+      break;
+    } catch (e) {
+      if (e.code !== "EEXIST") throw e;
+      try {
+        if (Date.now() - fs.statSync(lock).mtimeMs > 10000) {
+          fs.unlinkSync(lock);
+          continue;
+        }
+      } catch {
+        /* lock vanished — retry */
+      }
+      if (Date.now() > deadline) break; // proceed without the lock rather than deadlock
+      sleepSync(15);
+    }
+  }
+  try {
+    return fn();
+  } finally {
+    if (fd !== undefined) {
+      try {
+        fs.closeSync(fd);
+        fs.unlinkSync(lock);
+      } catch {
+        /* ignore */
+      }
+    }
+  }
+}
+
 function stateBaseDir() {
   const explicit = process.env.AGENT_COLLAB_DATA;
   if (explicit) return explicit;
@@ -94,21 +159,31 @@ export function getJob(cwd, id) {
 }
 
 export function appendJob(cwd, job) {
-  const state = loadState(cwd);
-  const stamped = { createdAt: nowIso(), updatedAt: nowIso(), ...job };
-  state.jobs.push(stamped);
-  if (state.jobs.length > MAX_JOBS) {
-    state.jobs = state.jobs.slice(state.jobs.length - MAX_JOBS);
-  }
-  saveState(cwd, state);
-  return stamped;
+  return withLock(cwd, () => {
+    const state = loadState(cwd);
+    const stamped = { createdAt: nowIso(), updatedAt: nowIso(), ...job };
+    state.jobs.push(stamped);
+    if (state.jobs.length > MAX_JOBS) {
+      state.jobs = state.jobs.slice(state.jobs.length - MAX_JOBS);
+    }
+    saveState(cwd, state);
+    return stamped;
+  });
 }
 
 export function updateJob(cwd, id, patch) {
-  const state = loadState(cwd);
-  const job = state.jobs.find((j) => j.id === id);
-  if (!job) return undefined;
-  Object.assign(job, patch, { updatedAt: nowIso() });
-  saveState(cwd, state);
-  return job;
+  return withLock(cwd, () => {
+    const state = loadState(cwd);
+    const job = state.jobs.find((j) => j.id === id);
+    if (!job) return undefined;
+    const next = { ...patch };
+    // Terminal is final: don't let a racing/late update regress or overwrite a
+    // job that already reached a terminal status.
+    if (isTerminalStatus(job.status) && "status" in next && next.status !== job.status) {
+      delete next.status;
+    }
+    Object.assign(job, next, { updatedAt: nowIso() });
+    saveState(cwd, state);
+    return job;
+  });
 }

@@ -8,7 +8,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { getAdapter, listAdapters } from "../adapters/index.mjs";
-import { resolveStateDir, appendJob, updateJob, getJob, loadState } from "./state.mjs";
+import { resolveStateDir, appendJob, updateJob, getJob, loadState, isTerminalStatus } from "./state.mjs";
 import { createWorktree, removeWorktree } from "./workspace.mjs";
 import { headRef, captureWorkingDiff, applyPatch, checkPatchApplies, workingTreeStatus, newStatusPaths, stageDiffIntoWorktree } from "./git.mjs";
 import { run } from "./process.mjs";
@@ -223,7 +223,7 @@ function ensureDirs(base, role) {
  * here (only the driver applies). Returns a summary including the artifact.
  */
 export function runWorkerSync(cwd, opts) {
-  const { driver, worker, role = "worker", brief, kind, focus, targetLabel, timeoutMs = defaultTimeoutMs(), maxAttempts = 2 } = opts;
+  const { driver, worker, role = "worker", brief, kind, focus, targetLabel, timeoutMs = defaultTimeoutMs(), maxAttempts = 2, noResume = false } = opts;
   const adapter = getAdapter(worker);
   const schema = role === "reviewer" ? reviewSchema : resultSchema;
 
@@ -245,36 +245,51 @@ export function runWorkerSync(cwd, opts) {
   // harness (e.g. `agy --dangerously-skip-permissions`) can never write to the
   // live tree. Only a worker's changes are captured as a patch; a reviewer's are
   // discarded with the worktree.
+  const blocked = (reason) => {
+    const errors = [reason];
+    writeInitial({
+      id: jobId, driver, worker, role, status: "blocked", pid: process.pid,
+      baseRef: null, workspace: cwd, artifactDir, heartbeatAt: new Date().toISOString()
+    });
+    updateJob(cwd, jobId, { errors, failureKind: "isolation" });
+    return {
+      jobId, worker, status: "blocked", resultValid: false, valid: false,
+      changed: false, patchApplies: null, artifact: null, artifactDir,
+      patchPath: null, isolated: false, errors
+    };
+  };
+
   let baseRef = null;
   let workspace = cwd;
   let worktree = null;
+  let isGitRepo = false;
   try {
     baseRef = headRef(cwd);
-    worktree = createWorktree(cwd, jobId, baseRef);
-    workspace = worktree;
+    isGitRepo = true;
   } catch {
-    // Could not isolate (not a git repo, or worktree creation failed). FAIL CLOSED:
-    // running the worker in the real cwd would violate the driver-only authority
-    // model — it's neither the reference's deliberate in-place path nor our isolated
-    // path. Require an explicit opt-in for an unisolated in-place run.
-    if (process.env.AGENT_COLLAB_ALLOW_INPLACE !== "on") {
-      const errors = [
-        "cannot isolate the worker — no git worktree could be created (is the cwd a git repository?). " +
-          "Workers run in an isolated worktree so they can never touch your real tree. cd into a git repo, " +
-          "or set AGENT_COLLAB_ALLOW_INPLACE=on to run UNISOLATED in the cwd (unsafe)."
-      ];
-      writeInitial({
-        id: jobId, driver, worker, role, status: "blocked", pid: process.pid,
-        baseRef: null, workspace: cwd, artifactDir, heartbeatAt: new Date().toISOString()
-      });
-      updateJob(cwd, jobId, { errors, failureKind: "isolation" });
-      return {
-        jobId, worker, status: "blocked", resultValid: false, valid: false,
-        changed: false, patchApplies: null, artifact: null, artifactDir,
-        patchPath: null, isolated: false, errors
-      };
+    isGitRepo = false;
+  }
+  if (isGitRepo) {
+    // A real repo MUST be isolated. If the worktree can't be created, FAIL CLOSED —
+    // never fall back to the real checkout (AGENT_COLLAB_ALLOW_INPLACE does NOT apply
+    // inside a repo, so a transient worktree error can't silently uncontain writes).
+    try {
+      worktree = createWorktree(cwd, jobId, baseRef);
+      workspace = worktree;
+    } catch (e) {
+      return blocked(
+        "cannot isolate the worker — git worktree creation failed inside this repository " +
+          `(${e?.message || e}). Failing closed so the worker never writes to your real checkout. ` +
+          "Retry, or clean up stale worktrees (git worktree prune)."
+      );
     }
-    workspace = cwd; // explicit opt-in: unsafe, unisolated in-place run
+  } else if (process.env.AGENT_COLLAB_ALLOW_INPLACE === "on") {
+    workspace = cwd; // genuinely not a git repo + explicit opt-in: unsafe in-place run
+  } else {
+    return blocked(
+      "cannot isolate the worker — the cwd is not a git repository, so no worktree can be " +
+        "created. cd into a git repo, or set AGENT_COLLAB_ALLOW_INPLACE=on to run UNISOLATED (unsafe)."
+    );
   }
 
   // Breach detection: snapshot the driver's REAL tree so we can tell if an
@@ -397,7 +412,10 @@ export function runWorkerSync(cwd, opts) {
       // Repair attempt: prefer RESUMING the worker's thread (cheap continuation,
       // faithful to the reference) when the adapter supports it; if the thread
       // can't be resumed, fall back to a fresh full re-send so resume never regresses.
-      const retryCmd = adapter.buildRetryCommand
+      // Skip thread-resume when noResume (background runs): `--resume-last` resolves
+      // the latest thread for the repo, which under concurrency could be a DIFFERENT
+      // job's thread. Fall back to a fresh re-send instead.
+      const retryCmd = (!noResume && adapter.buildRetryCommand)
         ? adapter.buildRetryCommand({ role, repairBrief: resumeRepair, workspace, timeoutMs })
         : null;
       if (retryCmd) {
@@ -649,13 +667,7 @@ export function runWithFallback(cwd, opts) {
 
 // ---- async background execution (brokerless convergence to the reference's model) ----
 
-const TERMINAL_STATUSES = new Set([
-  "completed", "no-changes", "conflicted", "breach", "blocked", "failed", "cancelled"
-]);
-
-export function isTerminalStatus(status) {
-  return TERMINAL_STATUSES.has(status);
-}
+export { isTerminalStatus } from "./state.mjs";
 
 /** Block synchronously for ms without busy-waiting (the CLI is synchronous). */
 function sleepSync(ms) {
@@ -709,7 +721,9 @@ export function launchBackground(cwd, opts) {
 export function runJob(cwd, jobId) {
   const job = getJob(cwd, jobId);
   if (!job || !job.request) throw new Error(`run-job: no stored request for ${jobId}`);
-  return runWorkerSync(cwd, { ...job.request, jobId });
+  // Background runs are concurrency-prone → disable codex thread-resume (would risk
+  // resuming another job's --resume-last thread).
+  return runWorkerSync(cwd, { ...job.request, jobId, noResume: true });
 }
 
 /**
