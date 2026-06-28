@@ -67,10 +67,31 @@ export function stageDiffIntoWorktree(worktree, diff) {
   // lack one, so normalize.
   const patch = diff.endsWith("\n") ? diff : diff + "\n";
   const r = run("git", ["apply", "--3way", "--whitespace=nowarn"], { cwd: worktree, input: patch });
-  if (r.status !== 0) return { staged: false, reason: r.stderr || "patch did not apply to HEAD" };
+  if (r.status !== 0) {
+    // A partial/3-way apply can leave conflict markers + an unmerged index. Reset
+    // the worktree to a clean HEAD baseline so the reviewer doesn't read a fake,
+    // half-applied state (the caller falls back to the pasted-diff path).
+    run("git", ["reset", "-q", "--hard"], { cwd: worktree });
+    run("git", ["clean", "-fdq"], { cwd: worktree });
+    return { staged: false, reason: r.stderr || "patch did not apply to HEAD" };
+  }
   run("git", ["add", "-A"], { cwd: worktree });
   const s = run("git", ["diff", "--cached", "--stat"], { cwd: worktree });
   return { staged: true, stat: s.status === 0 ? s.stdout.trim() : "" };
+}
+
+/** Paths a unified diff touches (a/ and b/ sides, minus /dev/null), for targeted unstaging. */
+export function diffPaths(diff) {
+  const paths = new Set();
+  const s = String(diff ?? "");
+  for (const m of s.matchAll(/^\+\+\+ b\/(.+)$/gm)) paths.add(m[1].trim());
+  for (const m of s.matchAll(/^--- a\/(.+)$/gm)) paths.add(m[1].trim());
+  for (const m of s.matchAll(/^diff --git a\/(.+?) b\/(.+)$/gm)) {
+    paths.add(m[1].trim());
+    paths.add(m[2].trim());
+  }
+  paths.delete("/dev/null");
+  return [...paths];
 }
 
 /** Dry-run: would this diff apply (3-way) to `cwd`? Empty diffs trivially apply. */
@@ -85,30 +106,34 @@ export function checkPatchApplies(cwd, diff) {
 
 /**
  * Apply a unified diff to `cwd` using a 3-way merge so it still lands when the
- * base has moved underneath it. Returns { applied, conflicted, staged, stderr }.
+ * base has moved underneath it. Returns { applied, conflicted, stderr }.
  *
- * `--3way` implies `--index`, so a successful apply STAGES the change — which
- * surprises drivers and causes index conflicts on a later apply. So when the index
- * was clean we unstage afterward, landing the change in the WORKING TREE only
- * (matching the reference's in-place model). If the user already had staged work we
- * leave it staged (`staged:true`) rather than clobber their index.
+ * Safety:
+ *  - DRY-RUN FIRST (`--check`): a patch that won't apply cleanly is rejected
+ *    WITHOUT touching the tree (no half-applied conflict markers on an
+ *    `applied:false` result).
+ *  - `--3way` implies `--index`, so the apply stages the change; we then unstage
+ *    ONLY the patch's own paths, landing it in the WORKING TREE while preserving
+ *    any pre-existing staged work (so it never commingles with the user's index).
  */
 export function applyPatch(cwd, diff) {
   if (!diff || !diff.trim()) {
     return { applied: true, conflicted: false, staged: false, stderr: "", empty: true };
   }
-  const hadStaged = run("git", ["diff", "--cached", "--quiet"], { cwd }).status !== 0;
-  const r = run("git", ["apply", "--3way", "--whitespace=nowarn"], { cwd, input: diff });
-  const applied = r.status === 0;
-  let staged = false;
-  if (applied) {
-    if (hadStaged) staged = true; // pre-existing staged work — don't touch the index
-    else run("git", ["reset", "-q"], { cwd }); // leave a clean index + working-tree changes
+  if (!checkPatchApplies(cwd, diff)) {
+    return {
+      applied: false,
+      conflicted: true,
+      staged: false,
+      stderr: "patch does not apply cleanly (3-way); tree left untouched"
+    };
   }
-  return {
-    applied,
-    conflicted: !applied && /conflict/i.test(r.stderr),
-    staged,
-    stderr: r.stderr
-  };
+  const r = run("git", ["apply", "--3way", "--whitespace=nowarn"], { cwd, input: diff });
+  if (r.status !== 0) {
+    return { applied: false, conflicted: /conflict/i.test(r.stderr), staged: false, stderr: r.stderr };
+  }
+  // Unstage exactly the patch's paths (preserve any pre-existing staged work).
+  const paths = diffPaths(diff);
+  if (paths.length) run("git", ["reset", "-q", "--", ...paths], { cwd });
+  return { applied: true, conflicted: false, staged: false, stderr: r.stderr };
 }

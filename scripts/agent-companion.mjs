@@ -196,7 +196,7 @@ switch (subcommand) {
     if (!id) fail("apply: a job id is required");
     const result = applyResult(cwd, id);
     let human = result.applied
-      ? `patch applied${result.staged ? " (left STAGED — you had pre-existing staged work; `git diff --cached` to inspect)" : " to the working tree (unstaged; `git diff` to inspect, then commit)"}`
+      ? "patch applied to the working tree (unstaged; `git diff` to inspect, then commit). Pre-existing staged work is left untouched."
       : `not applied: ${result.error ?? result.stderr}`;
     if (!result.applied) {
       const s = `${result.stderr ?? ""} ${result.error ?? ""}`;

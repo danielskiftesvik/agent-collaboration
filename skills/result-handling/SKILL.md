@@ -42,10 +42,11 @@ from a review is forbidden, even when the fix looks obvious.
 - **Always show / inspect the patch before applying.** Apply only with the
   user's go-ahead, via `/agent-collab:apply <jobId>`. Never auto-apply, and never
   apply a `conflicted` patch without resolving it.
-- **After `apply`:** the change lands in the **working tree, unstaged** (when your
-  index was clean) — inspect with `git diff`, then commit yourself. If you already
-  had staged work, the patch is left **staged** (`staged:true`) to avoid clobbering
-  your index; the apply output says which.
+- **After `apply`:** the change lands in the **working tree, unstaged** — inspect
+  with `git diff`, then commit yourself. Any pre-existing staged work is left
+  untouched (only the patch's own paths are unstaged). A patch that won't apply
+  cleanly is **rejected without dirtying the tree** (`applied:false`, no half-applied
+  conflict markers).
 - If the worker `changed` nothing, say so; don't invent a result.
 
 ## Failures and edge cases
