@@ -162,6 +162,21 @@ network-enabled permissions** (Codex will offer to escalate; or pre-approve
 unattended (e.g. `agy --dangerously-skip-permissions`) don't need this. This is
 expected: a sandbox *should* gate "spawn a process that calls the internet."
 
+### Codex driver: third-party data-egress can be refused
+Separately from the shell sandbox, Codex has a **data-egress / approval** policy that can
+refuse to send your **private repo content to a third-party model** — observed: `codex` →
+`agy` (Google/Gemini) blocked as an exfiltration risk **even after interactive approval** in
+a non-interactive (`-p`) spawn, while `codex` → `claude` runs fine. This is a Codex-side
+control; the runtime can't (and shouldn't) override it. Legitimate options:
+1. Authorize it in **Codex's own config** (allowlist `node …/agent-companion.mjs`, or enable
+   egress for trusted commands) — survives non-interactive spawns.
+2. Run the companion **yourself in the shell** (you authorize the export) with
+   `AGENT_COLLAB_DRIVER=codex`.
+3. Practical default: from a codex driver, use **claude** as the worker/reviewer (it runs);
+   reserve agy for when you've authorized Gemini egress — or keep codex as the *worker*
+   (driven by claude/agy), its strongest role.
+Do **not** obfuscate the payload to slip past the check — it exists to gate third-party export.
+
 ## status vs result vs apply
 
 - `status <jobId>` → the **runtime's job metadata** (status, breach, escapedPaths,

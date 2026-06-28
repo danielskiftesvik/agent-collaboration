@@ -7,6 +7,11 @@
 
   NOTE: when driving from a sandboxed harness (Codex), run the companion with escalated /
   network-enabled permissions — it spawns a worker that calls an external API.
+
+  NOTE (Codex driver): Codex's data-egress policy may refuse to send private repo content to a
+  THIRD-PARTY model — observed: codex->agy (Gemini) blocked even after approval; codex->claude
+  runs fine. Authorize it in Codex's config, run the companion yourself, or just use claude as
+  the worker from a codex driver. See the companion-runtime skill's troubleshooting note.
 -->
 
 ## Cross-harness collaboration (autonomous)
