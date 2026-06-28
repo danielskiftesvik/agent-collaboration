@@ -32,6 +32,18 @@ export function defaultTimeoutMs() {
 }
 
 /**
+ * Inactivity (idle) budget: if a worker produces NO output for this long it's
+ * treated as FROZEN and killed fast — well before the hard timeout. Generous by
+ * default so a healthy-but-quiet worker isn't false-killed (codex streams progress;
+ * agy is fast). `AGENT_COLLAB_IDLE_TIMEOUT` seconds; 0 disables.
+ */
+export function defaultIdleMs() {
+  const s = Number(process.env.AGENT_COLLAB_IDLE_TIMEOUT);
+  if (Number.isFinite(s)) return Math.max(0, Math.round(s * 1000)); // explicit (incl. 0 = off)
+  return 180000; // 3 min
+}
+
+/**
  * Decide whether to wrap a worker run in the OS sandbox (preventive write
  * confinement — a belt to breach-detection's suspenders). Policy:
  *   - NEVER sandbox codex: it self-sandboxes (codex-companion's seatbelt), and
@@ -223,7 +235,7 @@ function ensureDirs(base, role) {
  * here (only the driver applies). Returns a summary including the artifact.
  */
 export function runWorkerSync(cwd, opts) {
-  const { driver, worker, role = "worker", brief, kind, focus, targetLabel, timeoutMs = defaultTimeoutMs(), maxAttempts = 2, noResume = false } = opts;
+  const { driver, worker, role = "worker", brief, kind, focus, targetLabel, timeoutMs = defaultTimeoutMs(), idleMs = defaultIdleMs(), maxAttempts = 2, noResume = false } = opts;
   const adapter = getAdapter(worker);
   const schema = role === "reviewer" ? reviewSchema : resultSchema;
 
@@ -318,6 +330,7 @@ export function runWorkerSync(cwd, opts) {
   let lastStdout = "";
   let lastStderr = "";
   let timedOut = false;
+  let frozen = false;
   // Reviewers' output is normalized (severity case, etc.) before validation so a
   // complete report isn't false-failed over cosmetics; workers are not.
   const normalize = role === "reviewer" ? normalizeReviewArtifact : undefined;
@@ -371,6 +384,7 @@ export function runWorkerSync(cwd, opts) {
     run(cmd.command, cmd.args, {
       cwd: workspace,
       timeout: timeoutMs,
+      idleMs,
       env: { ...process.env, ...(cmd.env ?? {}) },
       sandbox,
       sandboxStrict: wantStrict,
@@ -430,10 +444,14 @@ export function runWorkerSync(cwd, opts) {
     exitCode = proc.status;
     lastStdout = proc.stdout ?? "";
     lastStderr = proc.stderr ?? "";
-    // spawnSync sets `error` (code ETIMEDOUT) + a SIGTERM signal when it kills a
-    // run that overran `timeout`. That's the dominant no-output mode for slow
-    // reasoners on big inputs — detect it so we don't pointlessly re-send.
-    timedOut = !!(proc.error && (proc.error.code === "ETIMEDOUT" || /tim(?:ed)?\s*out/i.test(proc.error.message || "")));
+    // The idle-guard kills a FROZEN run (no output for the idle window) or one that
+    // overran the hard timeout, exiting 124 with a marker on stderr. (ETIMEDOUT is a
+    // backstop if the guard itself wedged.) Either way: don't pointlessly re-send.
+    frozen = /\[idle-guard\] no output for/.test(lastStderr);
+    timedOut =
+      !frozen &&
+      (/\[idle-guard\] hard timeout/.test(lastStderr) ||
+        !!(proc.error && (proc.error.code === "ETIMEDOUT" || /tim(?:ed)?\s*out/i.test(proc.error.message || ""))));
     const parsed = adapter.parseOutput({
       stdout: proc.stdout,
       stderr: proc.stderr,
@@ -444,7 +462,7 @@ export function runWorkerSync(cwd, opts) {
     const candidate = parsed.structured ? JSON.stringify(parsed.structured) : answerText;
     coerce = coerceArtifact(schema, candidate, normalize);
     if (coerce.ok) break;
-    if (timedOut) break; // re-sending the same too-slow prompt just times out again — let the caller fall back
+    if (timedOut || frozen) break; // re-sending a frozen/too-slow prompt just hangs again — let the caller fall back
   }
 
   // Capture the worker's patch, then tear down the worktree (the diff is the artifact).
@@ -505,10 +523,17 @@ export function runWorkerSync(cwd, opts) {
   let resetAt = null;
   let errors = coerce.ok ? undefined : coerce.errors;
   if (status === "failed") {
-    if (timedOut) {
+    if (frozen) {
+      failureKind = "frozen";
+      errors = [
+        `worker produced NO output for ${Math.round(idleMs / 1000)}s — treated as frozen and killed ` +
+          `(well before the ${Math.round(timeoutMs / 1000)}s hard timeout). Tune with AGENT_COLLAB_IDLE_TIMEOUT ` +
+          `(0 disables), or let it auto-fall-back to another worker.`
+      ];
+    } else if (timedOut) {
       failureKind = "timeout";
       errors = [
-        `worker produced no output within ${Math.round(timeoutMs / 1000)}s — it was killed mid-run. ` +
+        `worker exceeded the ${Math.round(timeoutMs / 1000)}s hard timeout and was killed mid-run. ` +
           `Raise the budget with --timeout / AGENT_COLLAB_TIMEOUT, or let it auto-fall-back to a faster worker.`
       ];
     } else {
@@ -605,9 +630,9 @@ export function runWorkerSync(cwd, opts) {
 export function resolveFallbackKinds(env = process.env) {
   const v = env.AGENT_COLLAB_FALLBACK;
   if (v === "off") return new Set();
-  if (v === "on") return new Set(["rate-limit", "auth", "timeout"]);
+  if (v === "on") return new Set(["rate-limit", "auth", "timeout", "frozen"]);
   if (v) return new Set(v.split(",").map((s) => s.trim().toLowerCase()).filter(Boolean));
-  return new Set(["rate-limit", "timeout"]);
+  return new Set(["rate-limit", "timeout", "frozen"]);
 }
 
 export function runWithFallback(cwd, opts) {

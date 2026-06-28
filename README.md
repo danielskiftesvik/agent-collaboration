@@ -121,8 +121,12 @@ driver, `AGENTS.md` for Codex/agy drivers).
   is missing (the patch is the deliverable).
 - **Stall detection:** jobs carry a heartbeat; a job whose heartbeat is stale **and** whose
   process is gone is treated as stalled.
+- **Freeze detection:** every worker runs under an inactivity watchdog (`idle-guard`) — if it
+  produces no output for `AGENT_COLLAB_IDLE_TIMEOUT` (default 3 min) it's killed fast as
+  `failureKind: "frozen"` and falls back, so a hung worker surfaces in minutes instead of at
+  the 20-min hard ceiling.
 - **Limit & timeout handling:** a failed run is classified (`failureKind` = `rate-limit` |
-  `auth` | `timeout` | `other` + a best-effort `resetAt`). On a **transient** failure
+  `auth` | `timeout` | `frozen` | `other` + a best-effort `resetAt`). On a **transient** failure
   (`rate-limit`/`timeout` by default) the runtime **auto-falls-back to the next worker-ready
   harness** (never the driver), tagging the result with a `note` + `fellBackFrom[]`; **`auth`
   is surfaced** (a config fix), not routed around. Tune via `AGENT_COLLAB_FALLBACK`
@@ -169,7 +173,8 @@ node /path/to/agent-collaboration/scripts/agent-companion.mjs \
 | `AGENT_COLLAB_SANDBOX` | OS sandbox: `on` (all non-codex) \| `off`. Default: **on for agy write-workers** (preventive confinement), opt-in for others, **never codex** (it self-sandboxes). Degrades to unsandboxed if it can't be applied |
 | `AGENT_COLLAB_SANDBOX_STRICT=on` | Tighten the macOS profile to deny file-write by default (confine writes to work area + temp + harness state; blocks /tmp & other volumes). Default profile only blocks `$HOME`; Linux bwrap is already strict |
 | `AGENT_COLLAB_FALLBACK` | Auto-fallback policy: `off` \| `on` (rate-limit+auth+timeout) \| comma-list of kinds. Default `rate-limit,timeout` (transient; **auth is surfaced**, not routed around) |
-| `AGENT_COLLAB_TIMEOUT` | Per-attempt worker timeout in **seconds** (default 1200 = 20 min). Deep reasoners on big diffs need a generous budget — too short SIGTERMs the run mid-flight and yields empty "no JSON" output |
+| `AGENT_COLLAB_TIMEOUT` | Per-attempt worker **hard** timeout in **seconds** (default 1200 = 20 min). Deep reasoners on big diffs need a generous budget — too short kills the run mid-flight |
+| `AGENT_COLLAB_IDLE_TIMEOUT` | **Inactivity** timeout in **seconds** (default 180 = 3 min; `0` disables). If a worker produces no output for this long it's killed fast as `frozen` — so a hung worker is caught in minutes, not at the hard ceiling |
 | `AGENT_COLLAB_CODEX_RESUME=off` | Repair a bad codex reply with a fresh re-send instead of resuming its thread (`task --resume-last`); resume is on by default |
 | `AGENT_COLLAB_ALLOW_INPLACE=on` | Permit an **unisolated** in-place run when a git worktree can't be created. Off by default — without it such a job is `blocked` rather than run in your real tree |
 | `AGENT_COLLAB_AGY_CLASS` | agy model class to pin (`Flash` default, `Pro`, …) |

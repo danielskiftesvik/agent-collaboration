@@ -3,6 +3,9 @@ import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
+import { fileURLToPath } from "node:url";
+
+const IDLE_GUARD = fileURLToPath(new URL("../scripts/idle-guard.mjs", import.meta.url));
 
 /**
  * Generate a macOS sandbox-exec profile.
@@ -131,6 +134,20 @@ export function run(command, args = [], opts = {}) {
   delete spawnOpts.sandboxWorkspace;
   delete spawnOpts.sandboxArtifactDir;
   delete spawnOpts.sandboxStrict;
+  delete spawnOpts.idleMs;
+
+  // Inactivity watchdog: wrap the (possibly sandboxed) command in idle-guard so a
+  // FROZEN run is killed after `idleMs` of no output instead of blocking to the
+  // hard ceiling. The guard also enforces the hard timeout (killing the whole
+  // group, not just the direct child); spawnSync's own timeout becomes a +30s
+  // backstop in case the guard itself wedges.
+  const idleMs = Number(opts.idleMs) || 0;
+  if (idleMs > 0) {
+    const hardMs = Number(opts.timeout) || 0;
+    finalArgs = [IDLE_GUARD, "--idle", String(idleMs), "--timeout", String(hardMs), "--", finalCommand, ...finalArgs];
+    finalCommand = process.execPath;
+    spawnOpts.timeout = hardMs ? hardMs + 30000 : undefined;
+  }
 
   try {
     const result = spawnSync(finalCommand, finalArgs, {

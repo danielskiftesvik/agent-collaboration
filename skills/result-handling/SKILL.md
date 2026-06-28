@@ -64,10 +64,12 @@ from a review is forbidden, even when the fix looks obvious.
 
 A failed result is **classified** so you don't have to guess. Read these fields:
 
-- `failureKind: "timeout"` — the worker was killed mid-run after the time budget
-  (deep reasoners like codex on big diffs are the usual case; they print JSON only
-  at the end, so a kill = empty output). It auto-falls-back to a faster worker;
-  to keep the same worker, retry with a bigger `--timeout` / `AGENT_COLLAB_TIMEOUT`.
+- `failureKind: "frozen"` — the worker produced **no output** for the idle window
+  (`AGENT_COLLAB_IDLE_TIMEOUT`, default 3 min) and was killed fast (well before the
+  hard timeout). Auto-falls-back. A genuinely-stuck worker; tell the user it hung.
+- `failureKind: "timeout"` — the worker was killed at the **hard** time budget
+  (deep reasoners like codex on big diffs are the usual case). Auto-falls-back; to
+  keep the same worker, retry with a bigger `--timeout` / `AGENT_COLLAB_TIMEOUT`.
 - `failureKind: "rate-limit"` — the worker hit a subscription/usage/quota/rate
   limit (or transient `overloaded`). `resetAt` carries a best-effort reset hint
   (e.g. `"10pm"`, `"60"` seconds) when the harness reported one.

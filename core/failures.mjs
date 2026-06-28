@@ -67,11 +67,11 @@ export function classifyFailure({ stdout = "", stderr = "", exitCode, worker } =
 }
 
 // Kinds that mean "this worker is unusable right now" → worth auto-falling-back
-// to another worker-ready harness. "timeout" is included because a worker that
-// blows the time budget (e.g. a slow reasoner on a big diff) is best handed to a
-// faster worker rather than retried in place. "other" is a genuine task failure:
-// don't mask it by silently retrying elsewhere.
-const FALLBACK_KINDS = new Set(["rate-limit", "auth", "timeout"]);
+// to another worker-ready harness. "timeout"/"frozen" are included because a worker
+// that blows the time budget or stops producing output is best handed to another
+// worker rather than retried in place. "other" is a genuine task failure: don't mask
+// it by silently retrying elsewhere.
+const FALLBACK_KINDS = new Set(["rate-limit", "auth", "timeout", "frozen"]);
 
 export function isFallbackKind(kind) {
   return FALLBACK_KINDS.has(kind);

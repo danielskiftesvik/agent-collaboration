@@ -16,6 +16,7 @@ import {
   launchBackground,
   waitForJob,
   defaultTimeoutMs,
+  defaultIdleMs,
   applyResult
 } from "../core/dispatch.mjs";
 import { appendJob, updateJob, getJob } from "../core/state.mjs";
@@ -578,6 +579,75 @@ test("waitForJob marks a job stalled when its process is gone without finishing"
 
   assert.equal(job.status, "failed");
   assert.equal(job.failureKind, "stalled");
+});
+
+// ---- inactivity (freeze) watchdog ----
+
+test("defaultIdleMs honors AGENT_COLLAB_IDLE_TIMEOUT (incl. 0=off) and defaults to 3 min", () => {
+  delete process.env.AGENT_COLLAB_IDLE_TIMEOUT;
+  assert.equal(defaultIdleMs(), 180000);
+  process.env.AGENT_COLLAB_IDLE_TIMEOUT = "60";
+  assert.equal(defaultIdleMs(), 60000);
+  process.env.AGENT_COLLAB_IDLE_TIMEOUT = "0";
+  assert.equal(defaultIdleMs(), 0);
+  delete process.env.AGENT_COLLAB_IDLE_TIMEOUT;
+});
+
+test("a worker that goes silent past the idle window is killed FAST as 'frozen'", () => {
+  isolateStateRoot();
+  const repo = makeRepo();
+  process.env.AGENT_COLLAB_AGY_BIN = stubBin(`
+    if (process.argv.includes('models')) { process.exit(0); }
+    await new Promise((r) => setTimeout(r, 4000)); // produce NO output for 4s
+    process.stdout.write('too late');
+  `);
+
+  const t0 = Date.now();
+  const res = runWorkerSync(repo, { driver: "claude", worker: "agy", role: "worker", brief: "x", idleMs: 800, timeoutMs: 60000, maxAttempts: 2 });
+  const elapsed = Date.now() - t0;
+
+  assert.equal(res.status, "failed");
+  assert.equal(res.failureKind, "frozen");
+  assert.match(res.errors.join(" "), /frozen|no output/i);
+  assert.ok(elapsed < 12000, `killed via idle (~1s), not the 60s hard timeout (took ${elapsed}ms)`);
+
+  delete process.env.AGENT_COLLAB_AGY_BIN;
+});
+
+test("a worker that keeps producing output is NOT tripped by the idle watchdog", () => {
+  isolateStateRoot();
+  const repo = makeRepo();
+  process.env.AGENT_COLLAB_AGY_BIN = stubBin(`
+    if (process.argv.includes('models')) { process.exit(0); }
+    process.stdout.write('working...\\n');
+    process.stdout.write('\`\`\`json\\n{"status":"completed","summary":"ok","changed":false}\\n\`\`\`');
+  `);
+
+  const res = runWorkerSync(repo, { driver: "claude", worker: "agy", role: "worker", brief: "x", idleMs: 800, timeoutMs: 60000, maxAttempts: 1 });
+
+  assert.notEqual(res.failureKind, "frozen");
+  assert.equal(res.status, "no-changes"); // valid JSON, no patch — not frozen
+
+  delete process.env.AGENT_COLLAB_AGY_BIN;
+});
+
+test("runWithFallback falls back when the first worker FREEZES", () => {
+  isolateStateRoot();
+  const repo = makeRepo();
+  process.env.AGENT_COLLAB_AGY_BIN = stubBin(`if (process.argv.includes('models')) process.exit(0); await new Promise(r=>setTimeout(r,4000)); process.stdout.write('late');`);
+  process.env.AGENT_COLLAB_CLAUDE_BIN = stubBin(CLAUDE_SUCCESS_STUB);
+
+  const res = runWithFallback(repo, {
+    driver: "codex", worker: "agy", role: "worker", brief: "x",
+    available: ["agy", "claude"], idleMs: 800, timeoutMs: 60000, maxAttempts: 1
+  });
+
+  assert.equal(res.status, "completed");
+  assert.equal(res.worker, "claude");
+  assert.equal(res.fellBackFrom[0].failureKind, "frozen");
+
+  delete process.env.AGENT_COLLAB_AGY_BIN;
+  delete process.env.AGENT_COLLAB_CLAUDE_BIN;
 });
 
 // ---- preventive OS-sandbox policy ----
