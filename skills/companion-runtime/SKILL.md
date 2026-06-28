@@ -77,25 +77,44 @@ inspection. `worker` is the harness that actually ran (may differ from the one y
 asked for — see auto-fallback).
 
 On a **failed** run, two more fields explain why: `failureKind`
-(`rate-limit` | `auth` | `other`) and `resetAt` (best-effort reset hint for a
-limit). See the `result-handling` skill for how to present these.
+(`rate-limit` | `auth` | `timeout` | `other`) and `resetAt` (best-effort reset
+hint for a limit). See the `result-handling` skill for how to present these.
 
-## Auto-fallback on limits
+## Auto-fallback on limits & timeouts
 
 `delegate`/`review`/`adversarial-review` auto-fall-back to the next worker-ready
-harness when the chosen worker hits a **subscription/rate limit or auth** failure
-(an `other` failure never triggers it). The result then carries `note` (a
-human sentence), `fellBackFrom[]` (`{worker, failureKind, resetAt}`), and — if
-every worker was limited — `allWorkersLimited: true`. Fallback only ever moves to
-another **worker** harness; it never silently makes the driver do the task.
-Disable with `--no-fallback` or `AGENT_COLLAB_FALLBACK=off`.
+harness when the chosen worker hits a **subscription/rate limit, auth, or
+timeout** failure (an `other` failure never triggers it). The result then carries
+`note` (a human sentence), `fellBackFrom[]` (`{worker, failureKind, resetAt}`),
+and — if every worker failed that way — `allWorkersLimited: true`. Fallback only
+ever moves to another **worker** harness; it never silently makes the driver do
+the task. Disable with `--no-fallback` or `AGENT_COLLAB_FALLBACK=off`.
+
+## Timeouts (avoid the "no JSON found" no-output)
+
+A deep reasoner (codex) on a large diff can run 10+ minutes and prints its JSON
+only at the END — so a short timeout SIGTERMs it mid-run and you get an empty,
+unparseable result. The default per-attempt budget is therefore **generous (20
+min)**; raise/lower it with `--timeout <s>` or `AGENT_COLLAB_TIMEOUT=<s>`. A
+timeout is **not** retried in place (re-sending the same slow prompt just times
+out again) — it surfaces as `failureKind: "timeout"` and auto-falls-back to a
+faster worker.
+
+## Review-output normalization
+
+Reviewer JSON is normalized before validation so a complete report isn't
+false-failed over cosmetics: `severity`/`verdict` are lowercased/trimmed (codex
+often emits `"High"`), common severity synonyms are mapped, and `next_steps` is
+optional. The deliverable is still the report — if a job ever shows `failed`,
+read `tasks/<jobId>/reports/<worker>.md` before concluding nothing came back.
 
 ## Env
 
 - `AGENT_COLLAB_DATA` — out-of-repo state root (default: tmp/plugin-data).
 - `AGENT_COLLAB_DRIVER` — default driver harness.
 - `AGENT_COLLAB_SANDBOX=on` — opt-in OS sandbox (off by default).
-- `AGENT_COLLAB_FALLBACK=off` — disable auto-fallback on a limit (on by default).
+- `AGENT_COLLAB_FALLBACK=off` — disable auto-fallback on a limit/timeout (on by default).
+- `AGENT_COLLAB_TIMEOUT=<s>` — per-attempt worker timeout in seconds (default 1200 = 20 min).
 - `AGENT_COLLAB_<AGY|CLAUDE|CODEX>_BIN` — override a harness binary.
 - `AGENT_COLLAB_AGY_MODEL[_PRO|_FLASH]` — explicit agy model id (default: unset).
 

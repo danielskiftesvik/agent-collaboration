@@ -58,6 +58,24 @@ worker (excluding the driver) + the model's profile + a reason. The mapping:
 
 `recommend --profiles` prints the full matrix.
 
+## Operational reliability (observed in-project, mid-2026)
+
+Benchmarks rank *capability*; delivery reliability through the companion is its own
+axis, observed across real review sessions:
+
+- **agy (Gemini)** — the dependable **workhorse**: fast (~1 min), usually first-try,
+  clean structured output, good correctness/robustness coverage. Carries large-diff
+  reviews that codex couldn't.
+- **codex (GPT-5.x)** — the **specialist ceiling**: catches the deepest architectural
+  issues nobody else does, but is **slower** (10+ min on big diffs) and likelier to
+  need a retry. Two failure modes the companion now mitigates: (1) *no-output* when a
+  long run is killed by too-short a timeout — fixed by the generous default budget +
+  timeout→fallback; (2) *severity-case false-failure* (emits `"High"`) — fixed by
+  review-output normalization.
+- **Practical routing:** for high-stakes review, run **both** — agy as the floor,
+  codex as the (sometimes-absent) ceiling — rather than relying on codex alone for a
+  large diff.
+
 ## What stayed unverified (don't route on these)
 Adversarial verification **killed** these popular claims — so we do *not* base routing on them:
 - Gemini's 1M-token context advantage over Claude/Codex (0-3).

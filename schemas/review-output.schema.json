@@ -5,8 +5,7 @@
   "required": [
     "verdict",
     "summary",
-    "findings",
-    "next_steps"
+    "findings"
   ],
   "properties": {
     "verdict": {

@@ -52,6 +52,10 @@ from a review is forbidden, even when the fix looks obvious.
 
 A failed result is **classified** so you don't have to guess. Read these fields:
 
+- `failureKind: "timeout"` — the worker was killed mid-run after the time budget
+  (deep reasoners like codex on big diffs are the usual case; they print JSON only
+  at the end, so a kill = empty output). It auto-falls-back to a faster worker;
+  to keep the same worker, retry with a bigger `--timeout` / `AGENT_COLLAB_TIMEOUT`.
 - `failureKind: "rate-limit"` — the worker hit a subscription/usage/quota/rate
   limit (or transient `overloaded`). `resetAt` carries a best-effort reset hint
   (e.g. `"10pm"`, `"60"` seconds) when the harness reported one.
@@ -90,6 +94,14 @@ failure for you to relay.
   other harness. For a *worker*, the **patch is the deliverable** (a `completed`
   worker may have `resultValid: false` — that just means it replied in prose; show
   the patch).
+
+Observed reliability (mid-2026, from real sessions): **agy is the dependable
+workhorse** (fast, usually first-try, good correctness coverage) and **codex is
+the specialist** for the hardest reasoning — high signal but slower and likelier
+to need a retry, especially on large diffs. For high-stakes review, running both
+(agy as the floor, codex as the ceiling) gives the best coverage. Severity case
+and missing `next_steps` are normalized automatically, so don't reject a codex
+report for those.
 
 ## Why this matters
 

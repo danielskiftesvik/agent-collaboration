@@ -111,11 +111,16 @@ driver, `AGENTS.md` for Codex/agy drivers).
   is missing (the patch is the deliverable).
 - **Stall detection:** jobs carry a heartbeat; a job whose heartbeat is stale **and** whose
   process is gone is treated as stalled.
-- **Limit handling:** a failed run is classified (`failureKind` = `rate-limit` | `auth` |
-  `other` + a best-effort `resetAt`). On a subscription/rate or auth limit the runtime
-  **auto-falls-back to the next worker-ready harness** (never the driver), tagging the result
-  with a `note` + `fellBackFrom[]`; if every worker is limited it returns `allWorkersLimited`
-  for the driver to surface. Disable with `--no-fallback` / `AGENT_COLLAB_FALLBACK=off`.
+- **Limit & timeout handling:** a failed run is classified (`failureKind` = `rate-limit` |
+  `auth` | `timeout` | `other` + a best-effort `resetAt`). On a rate/auth limit **or a
+  timeout** the runtime **auto-falls-back to the next worker-ready harness** (never the
+  driver), tagging the result with a `note` + `fellBackFrom[]`; if every worker fails that way
+  it returns `allWorkersLimited` for the driver to surface. Disable with `--no-fallback` /
+  `AGENT_COLLAB_FALLBACK=off`. The default per-attempt budget is 20 min so deep reviews aren't
+  killed mid-run (the empty "no JSON found" failure); tune with `AGENT_COLLAB_TIMEOUT`.
+- **Review-output normalization:** reviewer JSON is normalized before validation (severity
+  lowercased/trimmed, synonyms mapped, `next_steps` optional) so a complete report isn't
+  false-failed over cosmetics like codex emitting `"High"`.
 - **State** lives **outside** the repo (keyed by a hash of the workspace root), so it survives
   worktrees and is never committed.
 
@@ -123,7 +128,7 @@ driver, `AGENTS.md` for Codex/agy drivers).
 
 | Harness | Reviewer | Worker | Notes |
 |---|---|---|---|
-| **codex** (GPT-5.x) | ✓ | ✓ | Reliable structured JSON; prefers XML-block prompts |
+| **codex** (GPT-5.x) | ✓ | ✓ | Deepest reasoning; prefers XML-block prompts. Slower — give it a generous timeout; severity case is normalized for you |
 | **claude** | ✓ | ✓ | Use the native `Agent` tool when Claude Code is also the driver |
 | **agy** (Gemini) | ✓ | ✓ | Pinned to the latest **Flash** for speed (`AGENT_COLLAB_AGY_CLASS=Pro` for stronger reasoning); needs label-format `--model` with flags before the prompt — the adapter handles this |
 
@@ -148,7 +153,8 @@ node /path/to/agent-collaboration/scripts/agent-companion.mjs \
 | `AGENT_COLLAB_DATA` | Out-of-repo state root (default: a per-plugin / tmp dir) |
 | `AGENT_COLLAB_DRIVER` | Which harness is driving (`codex`/`agy`/`claude`). Set this when driving from Codex/agy over the shell, else the driver defaults to `claude` and a `--worker claude` delegation is mistaken for a native no-op |
 | `AGENT_COLLAB_SANDBOX=on` | Opt-in macOS/Linux OS sandbox for workers (off by default) |
-| `AGENT_COLLAB_FALLBACK=off` | Disable auto-fallback to another worker on a rate/subscription limit (on by default) |
+| `AGENT_COLLAB_FALLBACK=off` | Disable auto-fallback to another worker on a rate/subscription limit or timeout (on by default) |
+| `AGENT_COLLAB_TIMEOUT` | Per-attempt worker timeout in **seconds** (default 1200 = 20 min). Deep reasoners on big diffs need a generous budget — too short SIGTERMs the run mid-flight and yields empty "no JSON" output |
 | `AGENT_COLLAB_AGY_CLASS` | agy model class to pin (`Flash` default, `Pro`, …) |
 | `AGENT_COLLAB_AGY_MODEL` | Pin an exact agy model label (overrides the class) |
 | `AGENT_COLLAB_<AGY\|CLAUDE\|CODEX>_BIN` | Override a harness binary path |

@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import { fileURLToPath } from "node:url";
 
-import { validate, extractJson } from "../core/schema.mjs";
+import { validate, extractJson, normalizeReviewArtifact, coerceArtifact } from "../core/schema.mjs";
 
 const reviewSchema = JSON.parse(
   fs.readFileSync(fileURLToPath(new URL("../schemas/review-output.schema.json", import.meta.url)))
@@ -74,6 +74,57 @@ test("review validation tolerates qualitative confidence and missing line number
   };
   const r = validate(reviewSchema, v);
   assert.equal(r.valid, true, JSON.stringify(r.errors));
+});
+
+test("normalizeReviewArtifact lowercases/trims severity + verdict (codex emits 'High')", () => {
+  const v = {
+    verdict: " Needs-Attention ",
+    summary: "s",
+    findings: [
+      { severity: "High", title: "t", body: "b" },
+      { severity: "CRITICAL", title: "t2", body: "b2" }
+    ]
+    // note: no next_steps
+  };
+  const n = normalizeReviewArtifact(v);
+  assert.equal(n.verdict, "needs-attention");
+  assert.equal(n.findings[0].severity, "high");
+  assert.equal(n.findings[1].severity, "critical");
+  assert.ok(Array.isArray(n.next_steps), "missing next_steps becomes []");
+});
+
+test("normalizeReviewArtifact maps common severity synonyms", () => {
+  const n = normalizeReviewArtifact({
+    verdict: "approve",
+    summary: "s",
+    findings: [
+      { severity: "Blocker", title: "t", body: "b" },
+      { severity: "warning", title: "t", body: "b" },
+      { severity: "nit", title: "t", body: "b" }
+    ]
+  });
+  assert.equal(n.findings[0].severity, "critical");
+  assert.equal(n.findings[1].severity, "medium");
+  assert.equal(n.findings[2].severity, "low");
+});
+
+test("coerceArtifact with the review normalizer accepts a capitalized-severity report", () => {
+  const raw = JSON.stringify({
+    verdict: "Approve",
+    summary: "looks fine",
+    findings: [{ severity: "High", title: "t", body: "b" }]
+    // no next_steps
+  });
+  const r = coerceArtifact(reviewSchema, raw, normalizeReviewArtifact);
+  assert.equal(r.ok, true, JSON.stringify(r.errors));
+  assert.equal(r.value.verdict, "approve");
+  assert.equal(r.value.findings[0].severity, "high");
+});
+
+test("a review without next_steps is valid (next_steps no longer required)", () => {
+  const v = validReview();
+  delete v.next_steps;
+  assert.equal(validate(reviewSchema, v).valid, true, "next_steps is optional");
 });
 
 test("extractJson pulls an object out of a fenced code block", () => {

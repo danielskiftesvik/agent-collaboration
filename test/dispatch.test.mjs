@@ -9,6 +9,7 @@ import {
   runSetup,
   runWorkerSync,
   runWithFallback,
+  defaultTimeoutMs,
   applyResult
 } from "../core/dispatch.mjs";
 
@@ -305,6 +306,94 @@ test("runWithFallback always tries the explicit worker, even if it equals the dr
   assert.equal(res.worker, "claude");
 
   delete process.env.AGENT_COLLAB_CLAUDE_BIN;
+});
+
+// A reviewer that returns a complete report but with capitalized severity +
+// no next_steps (exactly what codex did) must be normalized & completed, not
+// false-failed.
+const HIGH_SEV_REVIEW_STUB = `
+  if (process.argv.includes('models')) { process.exit(0); }
+  process.stdout.write('\`\`\`json\\n' + JSON.stringify({verdict:'Approve',summary:'ok',findings:[{severity:'High',title:'t',body:'b'}]}) + '\\n\`\`\`');
+`;
+
+test("a reviewer with capitalized severity is normalized and completed (not false-failed)", () => {
+  isolateStateRoot();
+  const repo = makeRepo();
+  process.env.AGENT_COLLAB_AGY_BIN = stubBin(HIGH_SEV_REVIEW_STUB);
+
+  const res = runWorkerSync(repo, { driver: "claude", worker: "agy", role: "reviewer", brief: "review" });
+
+  assert.equal(res.status, "completed");
+  assert.equal(res.valid, true);
+  assert.equal(res.artifact.verdict, "approve");
+  assert.equal(res.artifact.findings[0].severity, "high");
+
+  delete process.env.AGENT_COLLAB_AGY_BIN;
+});
+
+// A worker that runs longer than the timeout: spawnSync SIGTERMs it before it can
+// print, so stdout is empty — the dominant codex no-output failure.
+const SLOW_STUB = `
+  if (process.argv.includes('models')) { process.exit(0); }
+  await new Promise((r) => setTimeout(r, 5000));
+  process.stdout.write('too late');
+`;
+
+test("a worker killed by timeout is classified failureKind=timeout and does not retry", () => {
+  isolateStateRoot();
+  const repo = makeRepo();
+  const countFile = path.join(isolateStateRoot(), "count.txt");
+  process.env.AC_COUNT_FILE = countFile;
+  process.env.AGENT_COLLAB_AGY_BIN = stubBin(`
+    import fs from 'node:fs';
+    if (process.argv.includes('models')) { process.exit(0); }
+    const f = process.env.AC_COUNT_FILE;
+    fs.writeFileSync(f, String((fs.existsSync(f) ? Number(fs.readFileSync(f,'utf8')) : 0) + 1));
+    await new Promise((r) => setTimeout(r, 5000));
+    process.stdout.write('too late');
+  `);
+
+  const res = runWorkerSync(repo, { driver: "claude", worker: "agy", role: "worker", brief: "x", timeoutMs: 600, maxAttempts: 2 });
+
+  assert.equal(res.status, "failed");
+  assert.equal(res.failureKind, "timeout");
+  assert.match(res.errors.join(" "), /timeout|AGENT_COLLAB_TIMEOUT/i);
+  assert.equal(Number(fs.readFileSync(countFile, "utf8")), 1, "must not re-send the same slow prompt");
+
+  delete process.env.AGENT_COLLAB_AGY_BIN;
+  delete process.env.AC_COUNT_FILE;
+});
+
+test("runWithFallback falls back when the first worker times out", () => {
+  isolateStateRoot();
+  const repo = makeRepo();
+  process.env.AGENT_COLLAB_AGY_BIN = stubBin(SLOW_STUB);
+  process.env.AGENT_COLLAB_CLAUDE_BIN = stubBin(CLAUDE_SUCCESS_STUB);
+
+  const res = runWithFallback(repo, {
+    driver: "codex",
+    worker: "agy",
+    role: "worker",
+    brief: "x",
+    available: ["agy", "claude"],
+    timeoutMs: 600,
+    maxAttempts: 1
+  });
+
+  assert.equal(res.status, "completed");
+  assert.equal(res.worker, "claude");
+  assert.equal(res.fellBackFrom[0].failureKind, "timeout");
+
+  delete process.env.AGENT_COLLAB_AGY_BIN;
+  delete process.env.AGENT_COLLAB_CLAUDE_BIN;
+});
+
+test("defaultTimeoutMs honors AGENT_COLLAB_TIMEOUT and defaults generously", () => {
+  delete process.env.AGENT_COLLAB_TIMEOUT;
+  assert.ok(defaultTimeoutMs() >= 900000, "default is generous (>= 15 min) so deep reviews aren't killed");
+  process.env.AGENT_COLLAB_TIMEOUT = "60";
+  assert.equal(defaultTimeoutMs(), 60000);
+  delete process.env.AGENT_COLLAB_TIMEOUT;
 });
 
 test("runWithFallback surfaces a clear note when ALL workers are limited", () => {

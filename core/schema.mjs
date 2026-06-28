@@ -88,13 +88,69 @@ export function extractJson(text) {
   return null;
 }
 
+const SEVERITIES = new Set(["critical", "high", "medium", "low"]);
+const SEVERITY_SYNONYMS = {
+  blocker: "critical",
+  crit: "critical",
+  fatal: "critical",
+  major: "high",
+  error: "high",
+  warning: "medium",
+  warn: "medium",
+  moderate: "medium",
+  minor: "low",
+  info: "low",
+  informational: "low",
+  note: "low",
+  nit: "low",
+  suggestion: "low",
+  style: "low"
+};
+
+function normalizeSeverity(s) {
+  if (typeof s !== "string") return s;
+  const k = s.trim().toLowerCase();
+  if (SEVERITIES.has(k)) return k;
+  return SEVERITY_SYNONYMS[k] ?? k; // leave a truly unknown word lowercased; validation will flag it
+}
+
+/**
+ * Normalize a review artifact to what our schema expects, so a *complete, usable*
+ * report from a model isn't false-failed over cosmetics. Mirrors the reference's
+ * "normalize, don't reject" renderer:
+ *   - lowercase/trim `verdict` and each finding's `severity` (codex emits "High")
+ *   - map common severity synonyms (blocker→critical, warning→medium, nit→low)
+ *   - coerce `next_steps`/`findings` to arrays (default [])
+ * Because we reuse codex's generic `task` path (no `outputSchema` enforcement,
+ * unlike the reference's native review subcommand), this client-side normalization
+ * is our equivalent guardrail.
+ */
+export function normalizeReviewArtifact(value) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return value;
+  const out = { ...value };
+  if (typeof out.verdict === "string") out.verdict = out.verdict.trim().toLowerCase();
+  if (Array.isArray(out.findings)) {
+    out.findings = out.findings.map((f) =>
+      f && typeof f === "object" && !Array.isArray(f)
+        ? { ...f, severity: normalizeSeverity(f.severity) }
+        : f
+    );
+  }
+  if (out.next_steps === undefined) out.next_steps = [];
+  else if (!Array.isArray(out.next_steps)) out.next_steps = [out.next_steps].filter(Boolean);
+  return out;
+}
+
 /** Extract a JSON object from raw worker output and validate it against a
- *  schema. The basis of the dispatch layer's validate-then-repair retry loop. */
-export function coerceArtifact(schema, rawText) {
-  const value = extractJson(rawText);
+ *  schema. Optionally pass a `normalize` fn to repair cosmetic mismatches (e.g.
+ *  severity case) before validation. The basis of the dispatch layer's
+ *  validate-then-repair retry loop. */
+export function coerceArtifact(schema, rawText, normalize) {
+  let value = extractJson(rawText);
   if (value == null) {
     return { ok: false, value: null, errors: ["no JSON object found in output"] };
   }
+  if (typeof normalize === "function") value = normalize(value);
   const { valid, errors } = validate(schema, value);
   return { ok: valid, value, errors };
 }

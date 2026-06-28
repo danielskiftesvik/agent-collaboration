@@ -11,12 +11,23 @@ import { resolveStateDir, appendJob, updateJob, getJob, loadState } from "./stat
 import { createWorktree, removeWorktree } from "./workspace.mjs";
 import { headRef, captureWorkingDiff, applyPatch, checkPatchApplies } from "./git.mjs";
 import { run } from "./process.mjs";
-import { coerceArtifact } from "./schema.mjs";
+import { coerceArtifact, normalizeReviewArtifact } from "./schema.mjs";
 import { buildFromTemplate } from "./prompts.mjs";
 import { classifyFailure, isFallbackKind } from "./failures.mjs";
 import { MODEL_PROFILES, TASK_ROUTING, DEFAULT_ROUTING } from "./model-profiles.mjs";
 
 const TEMPLATE_KINDS = new Set(["review", "adversarial-review"]);
+
+/**
+ * Default per-attempt worker timeout. Generous on purpose: a deep reasoner (codex)
+ * on a large diff can run 10+ minutes, and the worker prints its JSON only at the
+ * END, so a too-short timeout SIGTERMs it mid-run and yields the dreaded
+ * "no JSON found" no-output. Configurable via AGENT_COLLAB_TIMEOUT (seconds).
+ */
+export function defaultTimeoutMs() {
+  const s = Number(process.env.AGENT_COLLAB_TIMEOUT);
+  return Number.isFinite(s) && s > 0 ? Math.round(s * 1000) : 1200000; // 20 min
+}
 
 /**
  * Recommend a worker for a task by matching the task type to the strongest
@@ -163,7 +174,7 @@ function ensureDirs(base, role) {
  * here (only the driver applies). Returns a summary including the artifact.
  */
 export function runWorkerSync(cwd, opts) {
-  const { driver, worker, role = "worker", brief, kind, focus, targetLabel, timeoutMs = 300000, maxAttempts = 2 } = opts;
+  const { driver, worker, role = "worker", brief, kind, focus, targetLabel, timeoutMs = defaultTimeoutMs(), maxAttempts = 2 } = opts;
   const adapter = getAdapter(worker);
   const schema = role === "reviewer" ? reviewSchema : resultSchema;
 
@@ -205,6 +216,10 @@ export function runWorkerSync(cwd, opts) {
   let exitCode = null;
   let lastStdout = "";
   let lastStderr = "";
+  let timedOut = false;
+  // Reviewers' output is normalized (severity case, etc.) before validation so a
+  // complete report isn't false-failed over cosmetics; workers are not.
+  const normalize = role === "reviewer" ? normalizeReviewArtifact : undefined;
   // Harness-aware output contract: each adapter may tune how it asks for the
   // structured shape (agy gets emphatic JSON-only; codex gets XML blocks);
   // otherwise fall back to the generic instruction.
@@ -243,6 +258,10 @@ export function runWorkerSync(cwd, opts) {
     exitCode = proc.status;
     lastStdout = proc.stdout ?? "";
     lastStderr = proc.stderr ?? "";
+    // spawnSync sets `error` (code ETIMEDOUT) + a SIGTERM signal when it kills a
+    // run that overran `timeout`. That's the dominant no-output mode for slow
+    // reasoners on big inputs — detect it so we don't pointlessly re-send.
+    timedOut = !!(proc.error && (proc.error.code === "ETIMEDOUT" || /tim(?:ed)?\s*out/i.test(proc.error.message || "")));
     const parsed = adapter.parseOutput({
       stdout: proc.stdout,
       stderr: proc.stderr,
@@ -251,8 +270,9 @@ export function runWorkerSync(cwd, opts) {
     });
     answerText = parsed.answerText ?? "";
     const candidate = parsed.structured ? JSON.stringify(parsed.structured) : answerText;
-    coerce = coerceArtifact(schema, candidate);
+    coerce = coerceArtifact(schema, candidate, normalize);
     if (coerce.ok) break;
+    if (timedOut) break; // re-sending the same too-slow prompt just times out again — let the caller fall back
     promptBrief =
       `${basePrompt}\n\nIMPORTANT: your previous reply was not valid. ` +
       `Respond with ONLY a single JSON object matching the schema above — no prose.`;
@@ -294,15 +314,25 @@ export function runWorkerSync(cwd, opts) {
     status = coerce.ok ? coerce.value.status ?? "completed" : "failed";
   }
 
-  // On a failed run, classify WHY from the worker's last output: a subscription/
-  // rate limit or an auth problem makes the worker unusable right now and is what
-  // the driver acts on (auto-fallback). A genuine task failure stays `other`.
+  // On a failed run, classify WHY from the worker's last output: a timeout, a
+  // subscription/rate limit, or an auth problem each makes the worker unusable
+  // right now and is what the driver acts on (auto-fallback). A genuine task
+  // failure stays `other`.
   let failureKind;
   let resetAt = null;
+  let errors = coerce.ok ? undefined : coerce.errors;
   if (status === "failed") {
-    const cls = classifyFailure({ stdout: lastStdout, stderr: lastStderr, exitCode, worker });
-    failureKind = cls.kind;
-    resetAt = cls.resetAt;
+    if (timedOut) {
+      failureKind = "timeout";
+      errors = [
+        `worker produced no output within ${Math.round(timeoutMs / 1000)}s — it was killed mid-run. ` +
+          `Raise the budget with --timeout / AGENT_COLLAB_TIMEOUT, or let it auto-fall-back to a faster worker.`
+      ];
+    } else {
+      const cls = classifyFailure({ stdout: lastStdout, stderr: lastStderr, exitCode, worker });
+      failureKind = cls.kind;
+      resetAt = cls.resetAt;
+    }
   }
 
   updateJob(cwd, jobId, {
@@ -315,7 +345,7 @@ export function runWorkerSync(cwd, opts) {
     patchPath,
     failureKind,
     resetAt,
-    errors: coerce.ok ? undefined : coerce.errors
+    errors
   });
 
   return {
@@ -331,7 +361,7 @@ export function runWorkerSync(cwd, opts) {
     patchPath,
     failureKind,
     resetAt,
-    errors: coerce.ok ? undefined : coerce.errors
+    errors
   };
 }
 
