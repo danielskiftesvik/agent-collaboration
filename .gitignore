@@ -6,3 +6,5 @@ node_modules/
 .agents/
 temp_test_repo/
 temp_*/
+# Scratch cross-harness review reports (written by codex/agy review prompts).
+reviews/
