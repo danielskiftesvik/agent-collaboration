@@ -67,6 +67,7 @@ Two delegation paths, chosen automatically:
 | Command | Purpose |
 |---|---|
 | `/agent-collab:setup [--gate on\|off] [--sandbox on\|off]` | Detect worker-ready harnesses; toggle the stop-time review gate and the OS sandbox |
+| `/agent-collab:doctor [--live] [--workers a,b]` | Self-check: config + readiness, and (with `--live`) a review-cycle + worktree-isolation smoke per worker against a throwaway repo |
 | `/agent-collab:recommend --task <type> --driver <self>` (or `--profiles`) | Pick the strongest available worker for a task by underlying-model strength |
 | `/agent-collab:delegate --worker <agy\|codex\|claude> [--apply] <brief>` | Run a cross-harness **worker** task (produces a patch) |
 | `/agent-collab:review --worker <name> [--focus <text>] <diff>` | Read-only cross-harness **review** |

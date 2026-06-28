@@ -15,6 +15,7 @@ generalization of codex-plugin-cc's `codex-cli-runtime` skill.
 
 ```
 setup [--json] [--gate on|off] [--sandbox on|off]
+doctor [--live] [--workers a,b] [--json]
 delegate --worker <agy|codex|claude> [--driver <name>] [--role worker|reviewer] [--apply] [--timeout <s>] [--no-fallback] <brief>
 review  --worker <name> [--focus <text>] [--no-fallback] [--json] <diff/context>
 adversarial-review --worker <name> [--focus <text>] [--no-fallback] [--json] <diff/context>

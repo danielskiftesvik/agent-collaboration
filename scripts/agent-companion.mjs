@@ -6,13 +6,14 @@ import fs from "node:fs";
 import path from "node:path";
 
 import { decideRoute, resolveDriver, isAuthoritativeDriver, runSetup, runWorkerSync, runWithFallback, applyResult, recommendWorker } from "../core/dispatch.mjs";
+import { runDoctor } from "../core/doctor.mjs";
 import { listJobs, getJob, updateJob, sortJobsNewestFirst, loadState, saveState } from "../core/state.mjs";
 import { isPidAlive } from "../core/heartbeat.mjs";
 import { renderSetup, renderJob, renderJobList, renderRecommendation, renderProfiles } from "../core/render.mjs";
 import { MODEL_PROFILES } from "../core/model-profiles.mjs";
 
-const VALUE_FLAGS = new Set(["worker", "role", "driver", "base", "timeout", "gate", "sandbox", "focus", "task"]);
-const BOOL_FLAGS = new Set(["json", "apply", "wait", "background", "profiles", "no-fallback"]);
+const VALUE_FLAGS = new Set(["worker", "workers", "role", "driver", "base", "timeout", "gate", "sandbox", "focus", "task"]);
+const BOOL_FLAGS = new Set(["json", "apply", "wait", "background", "profiles", "no-fallback", "live"]);
 
 function parseArgs(tokens) {
   const options = {};
@@ -108,6 +109,24 @@ switch (subcommand) {
     break;
   }
 
+  case "doctor": {
+    const live = !!options.live;
+    const workers = options.workers
+      ? options.workers.split(",").map((s) => s.trim()).filter(Boolean)
+      : undefined;
+    const report = runDoctor(cwd, { live, workers });
+    const human = [
+      `doctor: ${report.ok ? "PASS" : "FAIL"}${live ? " (live)" : ""}`,
+      ...report.checks.map((c) => `  ${c.ok ? "✓" : "✗"} ${c.name} — ${c.detail}`),
+      live ? "" : "Run with --live to exercise each worker against a throwaway repo (spends model usage)."
+    ]
+      .filter(Boolean)
+      .join("\n");
+    out(report, options, human);
+    if (!report.ok) process.exitCode = 2;
+    break;
+  }
+
   case "recommend": {
     if (options.profiles) {
       out(MODEL_PROFILES, options, renderProfiles(MODEL_PROFILES));
@@ -191,6 +210,7 @@ switch (subcommand) {
       [
         "usage: agent-companion <command>",
         "  setup [--json] [--gate on|off] [--sandbox on|off]",
+        "  doctor [--live] [--workers a,b] [--json]   self-check (config + readiness; --live runs review+isolation smoke)",
         "  recommend --task <type> [--driver <name>] [--json]   |   recommend --profiles",
         "  delegate --worker <name> [--driver <name>] [--role worker|reviewer] [--apply] [--timeout s] <brief>",
         "  review  --worker <name> [--driver <name>] [--focus <text>] <diff/context>",

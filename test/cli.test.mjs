@@ -43,6 +43,16 @@ test("recommend --task --json returns a worker (or native) with a reason", () =>
   assert.ok(typeof rec.reason === "string");
 });
 
+test("doctor --json reports checks and an overall ok", () => {
+  const dataDir = isolateStateRoot();
+  const r = cli(["doctor", "--json"], { env: { AGENT_COLLAB_DATA: dataDir } });
+  const report = JSON.parse(r.stdout);
+  assert.ok(Array.isArray(report.checks));
+  assert.ok(report.checks.find((c) => c.name === "node>=20"));
+  assert.equal(typeof report.ok, "boolean");
+  assert.equal(report.live, false);
+});
+
 test("delegate to the same harness returns the native-path instruction", () => {
   const r = cli(["delegate", "--driver", "claude", "--worker", "claude", "do a thing"]);
   assert.equal(r.status, 0, r.stderr);
