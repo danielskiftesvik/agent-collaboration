@@ -27,8 +27,15 @@ from a review is forbidden, even when the fix looks obvious.
 
 ## Presenting a worker result
 
-- Report the `status` (`completed` / `conflicted` / `failed`), whether it
-  `changed` files, and whether the patch `patchApplies` cleanly.
+- Report the `status` (`completed` / `no-changes` / `conflicted` / `breach` /
+  `failed`), whether it `changed` files, and whether the patch `patchApplies`
+  cleanly.
+- **`breach` — STOP and surface loudly.** The worker wrote *outside* its worktree,
+  into the driver's real checkout (`escapedPaths` lists what). The driver did **not**
+  apply these; tell the user to inspect/revert them, and do not trust that worker as
+  an implementer here. (Seen with agy as a write-worker.)
+- **`no-changes`** — the worker reported done but captured **no patch**. Don't read
+  that as success; say it produced nothing and ask how to proceed.
 - The worker's deliverable is the **patch**, not the metadata JSON. A
   `completed` worker with `resultValid: false` just means the harness replied in
   prose — the patch is still the artifact.
@@ -90,10 +97,13 @@ failure for you to relay.
 
 - **codex / claude** — emit structured findings/result JSON: present findings by
   severity, preserve evidence boundaries.
-- **agy** — reviews work (on its default Gemini 3.1 Pro): present findings like any
-  other harness. For a *worker*, the **patch is the deliverable** (a `completed`
-  worker may have `resultValid: false` — that just means it replied in prose; show
-  the patch).
+- **agy** — reviews work well (on its default **Gemini Flash**; force the Pro class
+  with `AGENT_COLLAB_AGY_CLASS=Pro`): present findings like any other harness. For a
+  *worker*, the **patch is the deliverable** (a `completed` worker may have
+  `resultValid: false` — that just means it replied in prose; show the patch). **Do
+  not use agy as a write-worker on a real repo** until containment is enforced — it
+  has been observed escaping its worktree (the runtime now flags this as a
+  `breach`; see below). agy as a *reviewer* is safe and strong.
 
 Observed reliability (mid-2026, from real sessions): **agy is the dependable
 workhorse** (fast, usually first-try, good correctness coverage) and **codex is

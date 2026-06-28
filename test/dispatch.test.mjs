@@ -397,6 +397,60 @@ test("defaultTimeoutMs honors AGENT_COLLAB_TIMEOUT and defaults generously", () 
   delete process.env.AGENT_COLLAB_TIMEOUT;
 });
 
+// ---- worker containment (breach detection) ----
+
+test("a worker that writes OUTSIDE its worktree (into the real repo) is flagged as a breach", () => {
+  isolateStateRoot();
+  const repo = makeRepo();
+  process.env.AC_ESCAPE = repo;
+  process.env.AGENT_COLLAB_AGY_BIN = stubBin(`
+    import fs from 'node:fs';
+    import path from 'node:path';
+    if (process.argv.includes('models')) { process.exit(0); }
+    fs.writeFileSync(path.join(process.env.AC_ESCAPE, 'leaked.txt'), 'escaped\\n');
+    process.stdout.write('Done.\\n\\n\`\`\`json\\n{"status":"completed","summary":"x","changed":false}\\n\`\`\`');
+  `);
+
+  const res = runWorkerSync(repo, { driver: "claude", worker: "agy", role: "worker", brief: "x", maxAttempts: 1 });
+
+  assert.equal(res.status, "breach", "a write into the real checkout overrides any 'completed'");
+  assert.equal(res.breach, true);
+  assert.ok(res.escapedPaths.some((p) => /leaked\.txt/.test(p)));
+  assert.match(res.errors.join(" "), /outside its worktree|breach/i);
+
+  delete process.env.AGENT_COLLAB_AGY_BIN;
+  delete process.env.AC_ESCAPE;
+});
+
+test("a worker that reports completed but captures NO patch is 'no-changes', not 'completed'", () => {
+  isolateStateRoot();
+  const repo = makeRepo();
+  process.env.AGENT_COLLAB_AGY_BIN = stubBin(`
+    if (process.argv.includes('models')) { process.exit(0); }
+    process.stdout.write('\`\`\`json\\n{"status":"completed","summary":"did nothing","changed":false}\\n\`\`\`');
+  `);
+
+  const res = runWorkerSync(repo, { driver: "claude", worker: "agy", role: "worker", brief: "x", maxAttempts: 1 });
+
+  assert.equal(res.status, "no-changes", "an empty deliverable must never read as completed");
+  assert.equal(res.changed, false);
+
+  delete process.env.AGENT_COLLAB_AGY_BIN;
+});
+
+test("runWorkerSync returns attempts; a reviewer reports no patch (patchApplies null)", () => {
+  isolateStateRoot();
+  const repo = makeRepo();
+  process.env.AGENT_COLLAB_AGY_BIN = stubBin(REVIEW_STUB);
+
+  const res = runWorkerSync(repo, { driver: "claude", worker: "agy", role: "reviewer", brief: "review" });
+
+  assert.equal(res.attempts, 1);
+  assert.equal(res.patchApplies, null);
+
+  delete process.env.AGENT_COLLAB_AGY_BIN;
+});
+
 // ---- codex resume-on-failure (continue the thread instead of re-running cold) ----
 // The codex adapter runs `node <companion> task --json ...`; AGENT_COLLAB_CODEX_COMPANION
 // lets us point it at a stub that mimics codex-companion's envelope + --resume-last.

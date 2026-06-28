@@ -63,8 +63,10 @@ export default defineAdapter({
     // downgrades the model to Flash. Verified empirically.
     const args = ["--dangerously-skip-permissions"];
 
-    // Pin the latest Pro label (before -p). Robust against the shared default
-    // being changed externally; override with AGENT_COLLAB_AGY_MODEL.
+    // Pin the latest label in the configured class — Flash by default (see
+    // resolveModel), before -p. Robust against the shared default being changed
+    // externally; force a class with AGENT_COLLAB_AGY_CLASS=Pro or pin an exact
+    // label with AGENT_COLLAB_AGY_MODEL.
     const model = resolveModel();
     if (model) args.push("--model", model);
 

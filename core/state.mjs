@@ -8,16 +8,22 @@ import path from "node:path";
 
 import { resolveWorkspaceRoot } from "./workspace.mjs";
 
-const FALLBACK_ROOT = path.join(os.tmpdir(), "agent-collaboration");
+// Stable, tool-owned fallback (persists across reboots, unlike tmp) used when no
+// explicit data dir and no OWN plugin dir is available.
+const FALLBACK_ROOT = path.join(os.homedir() || os.tmpdir(), ".agent-collaboration");
 const STATE_VERSION = 1;
 export const MAX_JOBS = 50;
 
 function stateBaseDir() {
   const explicit = process.env.AGENT_COLLAB_DATA;
   if (explicit) return explicit;
-  // When running as a Claude Code plugin, reuse its per-plugin data dir.
+  // Reuse CLAUDE_PLUGIN_DATA ONLY when it is OUR plugin's dir. In a multi-plugin
+  // session it can point at a SIBLING plugin's dir (observed: codex's), and
+  // nesting our state there silently cross-namespaces it — a job created in one
+  // context becomes invisible to status/result/apply in another. Otherwise fall
+  // back to a stable, agent-collaboration-owned directory.
   const pluginData = process.env.CLAUDE_PLUGIN_DATA;
-  if (pluginData) return path.join(pluginData, "state");
+  if (pluginData && /agent-collaboration/i.test(pluginData)) return path.join(pluginData, "state");
   return FALLBACK_ROOT;
 }
 

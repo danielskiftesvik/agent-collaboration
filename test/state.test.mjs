@@ -11,12 +11,39 @@ import {
   getJob,
   updateJob,
   listJobs,
+  resolveStateDir,
   MAX_JOBS
 } from "../core/state.mjs";
 
 function tmpCwd() {
   return real(fs.mkdtempSync(path.join(os.tmpdir(), "ac-cwd-")));
 }
+
+test("state dir ignores a SIBLING plugin's CLAUDE_PLUGIN_DATA", () => {
+  // In a multi-plugin session CLAUDE_PLUGIN_DATA may point at another plugin's
+  // dir (observed: codex's). Nesting our state there cross-namespaces it and makes
+  // jobs invisible across contexts. We must not reuse a sibling's dir.
+  const savedData = process.env.AGENT_COLLAB_DATA;
+  const savedPlugin = process.env.CLAUDE_PLUGIN_DATA;
+  delete process.env.AGENT_COLLAB_DATA;
+
+  process.env.CLAUDE_PLUGIN_DATA = "/x/plugins/data/codex-openai-codex";
+  assert.ok(
+    !resolveStateDir("/tmp/whatever").includes("codex-openai-codex"),
+    "must not nest under a sibling plugin's data dir"
+  );
+
+  process.env.CLAUDE_PLUGIN_DATA = "/x/plugins/data/agent-collaboration";
+  assert.ok(
+    resolveStateDir("/tmp/whatever").includes("agent-collaboration"),
+    "our OWN plugin data dir is fine to reuse"
+  );
+
+  if (savedData === undefined) delete process.env.AGENT_COLLAB_DATA;
+  else process.env.AGENT_COLLAB_DATA = savedData;
+  if (savedPlugin === undefined) delete process.env.CLAUDE_PLUGIN_DATA;
+  else process.env.CLAUDE_PLUGIN_DATA = savedPlugin;
+});
 
 test("loadState returns defaults when nothing is saved", () => {
   isolateStateRoot();

@@ -153,7 +153,18 @@ switch (subcommand) {
     const id = positionals[0];
     if (!id) fail("apply: a job id is required");
     const result = applyResult(cwd, id);
-    out(result, options, result.applied ? "patch applied" : `not applied: ${result.error ?? result.stderr}`);
+    let human = result.applied ? "patch applied" : `not applied: ${result.error ?? result.stderr}`;
+    if (!result.applied) {
+      const s = `${result.stderr ?? ""} ${result.error ?? ""}`;
+      if (/does not match index|already exists in (the )?index|cannot read the current contents/i.test(s)) {
+        human += "\nTip: a staged/partially-applied change for these files is in your git index. " +
+          "Try `git reset` (and restore the files) to clean the index, then re-run apply.";
+      } else if (/patch does not apply|conflict/i.test(s)) {
+        human += "\nTip: the base moved under this patch. Inspect the patch and the target files; " +
+          "resolve conflicts manually, or re-delegate against the current HEAD.";
+      }
+    }
+    out(result, options, human);
     if (!result.applied) process.exitCode = 2;
     break;
   }

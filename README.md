@@ -100,9 +100,12 @@ driver, `AGENTS.md` for Codex/agy drivers).
 
 - **Authority model:** workers only produce artifacts (a report, a result JSON, a patch);
   **only the driver applies** changes, via `git apply --3way` against a recorded `baseRef`.
-- **Isolation:** cross-harness workers AND reviewers run in an ephemeral git worktree, so an
-  unattended harness can never write to the live tree. A worker's changes are captured as a
-  patch; a reviewer's are discarded.
+- **Isolation + breach detection:** cross-harness workers AND reviewers run in an ephemeral git
+  worktree; a worker's changes are captured as a patch, a reviewer's are discarded. The runtime
+  also snapshots the driver's real tree before/after each run — if a worker *escapes* its
+  worktree and writes into the live checkout (observed with `agy` under
+  `--dangerously-skip-permissions`), the job is marked **`breach`** with `escapedPaths`, never
+  `completed`. A valid self-report that captured **no** patch is `no-changes`, not `completed`.
 - **Prompts:** review-grade work uses code-loaded templates (`prompts/adversarial-review.md`,
   `prompts/review.md`) with a `{{OUTPUT_CONTRACT}}` filled per harness; free-form tasks are
   composed by the driver using the `harness-prompting` skill.
@@ -133,7 +136,7 @@ driver, `AGENTS.md` for Codex/agy drivers).
 |---|---|---|---|
 | **codex** (GPT-5.x) | ✓ | ✓ | Deepest reasoning; prefers XML-block prompts. Slower — give it a generous timeout; severity case is normalized for you |
 | **claude** | ✓ | ✓ | Use the native `Agent` tool when Claude Code is also the driver |
-| **agy** (Gemini) | ✓ | ✓ | Pinned to the latest **Flash** for speed (`AGENT_COLLAB_AGY_CLASS=Pro` for stronger reasoning); needs label-format `--model` with flags before the prompt — the adapter handles this |
+| **agy** (Gemini) | ✓ | ⚠ | Excellent **reviewer**; pinned to the latest **Flash** for speed (`AGENT_COLLAB_AGY_CLASS=Pro` for stronger reasoning). As a **worker** it has been observed escaping its worktree on a real repo — the runtime flags this as a `breach`; prefer codex/claude as implementers until OS-sandbox confinement is on. Needs label-format `--model` with flags before the prompt — the adapter handles this |
 
 ## Driving from any harness
 
@@ -154,7 +157,7 @@ node /path/to/agent-collaboration/scripts/agent-companion.mjs \
 | Env var | Effect |
 |---|---|
 | `AGENT_COLLAB_DATA` | Out-of-repo state root (default: a per-plugin / tmp dir) |
-| `AGENT_COLLAB_DRIVER` | Which harness is driving (`codex`/`agy`/`claude`). Set this when driving from Codex/agy over the shell, else the driver defaults to `claude` and a `--worker claude` delegation is mistaken for a native no-op |
+| `AGENT_COLLAB_DRIVER` | Override which harness is driving (`codex`/`agy`/`claude`). Normally auto-detected (Codex `CODEX_THREAD_ID`, agy `ANTIGRAVITY_*`, Claude Code `CLAUDECODE`); set only if detection misses |
 | `AGENT_COLLAB_SANDBOX=on` | Opt-in macOS/Linux OS sandbox for workers (off by default) |
 | `AGENT_COLLAB_FALLBACK=off` | Disable auto-fallback to another worker on a rate/subscription limit or timeout (on by default) |
 | `AGENT_COLLAB_TIMEOUT` | Per-attempt worker timeout in **seconds** (default 1200 = 20 min). Deep reasoners on big diffs need a generous budget — too short SIGTERMs the run mid-flight and yields empty "no JSON" output |

@@ -48,17 +48,13 @@ would otherwise default to `claude`, so `--worker claude` would look like
 `driver === worker` and return a "use your own subagent" no-op **instead of
 actually delegating**. So a guessed driver always takes the cross-harness path.
 
-Auto-detection status (mid-2026, verified from live sessions):
-- **Codex** — auto-detected via `CODEX_THREAD_ID` (every session) / `CODEX_MANAGED_*`.
-  No setup needed.
-- **Claude Code** — detected via `CLAUDECODE`/`CLAUDE_PLUGIN_ROOT`; and its slash
-  commands pass `--driver claude` anyway.
-- **agy** — **NOT auto-detectable** (a live agy session sets no
-  agy/antigravity/gemini env var). agy drivers **must** set
-  `AGENT_COLLAB_DRIVER=agy` for correct labeling (the example `AGENTS.md` does).
-  The footgun still can't bite — a non-authoritative driver never goes native —
-  but without it agy is mislabeled `claude`, which skews fallback-candidate
-  exclusion and `recommend`.
+Auto-detection status (mid-2026, verified from live sessions) — all three now
+auto-detect, so `--driver`/`AGENT_COLLAB_DRIVER` is only an override:
+- **Codex** — `CODEX_THREAD_ID` (every session) / `CODEX_MANAGED_*`.
+- **agy** — `ANTIGRAVITY_AGENT` / `ANTIGRAVITY_CONVERSATION_ID` / `ANTIGRAVITY_PROJECT_ID`.
+- **Claude Code** — `CLAUDECODE` / `CLAUDE_PLUGIN_ROOT` (its slash commands also pass
+  `--driver claude`). Checked last, so an actively-running Codex/agy beats an
+  inherited Claude env.
 
 ## Roles & kinds
 
@@ -69,10 +65,14 @@ Auto-detection status (mid-2026, verified from live sessions):
 
 ## --json result fields
 
-`{ jobId, worker, status (completed|conflicted|failed|blocked), resultValid,
-changed, patchApplies, artifact, artifactDir, patchPath, errors }`. A worker is
+`{ jobId, worker, status, resultValid, changed, patchApplies, attempts, artifact,
+artifactDir, patchPath, breach, escapedPaths, errors }`. `status` is one of
+`completed | no-changes | conflicted | breach | blocked | failed`. A worker is
 `completed` on a clean non-empty patch even if `resultValid` is false (the patch
-is the deliverable). Apply a worker patch only via `apply` / `--apply`, after
+is the deliverable); a valid self-report with **no** patch is `no-changes`, never
+`completed`. `breach: true` (+ `escapedPaths`) means the worker wrote into the
+driver's real checkout — surface it, don't apply. `patchApplies` is null for
+reviewers (no patch). Apply a worker patch only via `apply` / `--apply`, after
 inspection. `worker` is the harness that actually ran (may differ from the one you
 asked for — see auto-fallback).
 

@@ -44,10 +44,11 @@ test("detectDriver recognizes Codex's own env (real signals)", () => {
   assert.equal(detectDriver({ CODEX_MANAGED_BY_NPM: "1" }), "codex");
 });
 
-test("an actively-running Codex beats an inherited Claude env", () => {
-  // Codex launched from a Claude Code shell may INHERIT CLAUDECODE; Codex's own
-  // signal must win over the inherited one.
+test("an actively-running harness beats an inherited Claude env", () => {
+  // Codex/agy launched from a Claude Code shell may INHERIT CLAUDECODE; the
+  // active harness's own signal must win over the inherited one.
   assert.equal(detectDriver({ CLAUDECODE: "1", CODEX_THREAD_ID: "x" }), "codex");
+  assert.equal(detectDriver({ CLAUDECODE: "1", ANTIGRAVITY_AGENT: "1" }), "agy");
 });
 
 test("detectDriver recognizes Claude Code's own env", () => {
@@ -55,21 +56,19 @@ test("detectDriver recognizes Claude Code's own env", () => {
   assert.equal(detectDriver({ CLAUDE_PLUGIN_ROOT: "/x" }), "claude");
 });
 
-test("agy exposes NO detectable env signature (confirmed) — must set AGENT_COLLAB_DRIVER", () => {
-  // A real agy session sets no agy/antigravity/gemini env var, so it can't be
-  // auto-detected. resolveDriver falls back (non-authoritative); agy drivers set
-  // AGENT_COLLAB_DRIVER=agy for correct labeling. (The native no-op footgun is
-  // still impossible because a fallback driver never triggers the native path.)
-  assert.equal(detectDriver({ PATH: "/usr/bin", HOME: "/Users/x" }), null);
-  const r = resolveDriver({}, { PATH: "/usr/bin" });
-  assert.equal(r.driver, "claude");
-  assert.equal(r.source, "fallback");
-
-  const set = resolveDriver({}, { AGENT_COLLAB_DRIVER: "agy" });
-  assert.equal(set.driver, "agy");
-  assert.equal(set.source, "env");
+test("detectDriver recognizes agy via Antigravity's env (confirmed from a live session)", () => {
+  // Earlier thought to be undetectable; a live agy session in fact exposes these.
+  assert.equal(detectDriver({ ANTIGRAVITY_AGENT: "1" }), "agy");
+  assert.equal(detectDriver({ ANTIGRAVITY_CONVERSATION_ID: "abc" }), "agy");
+  assert.equal(detectDriver({ ANTIGRAVITY_PROJECT_ID: "p" }), "agy");
+  // detection is a label only (not authoritative) — it must not trigger native.
+  const r = resolveDriver({}, { ANTIGRAVITY_AGENT: "1" });
+  assert.equal(r.driver, "agy");
+  assert.equal(r.source, "detected");
+  assert.equal(isAuthoritativeDriver(r.source), false);
 });
 
 test("detectDriver returns null when no harness signal is present", () => {
+  assert.equal(detectDriver({ PATH: "/usr/bin" }), null);
   assert.equal(detectDriver({}), null);
 });

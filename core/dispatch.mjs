@@ -9,7 +9,7 @@ import { fileURLToPath } from "node:url";
 import { getAdapter, listAdapters } from "../adapters/index.mjs";
 import { resolveStateDir, appendJob, updateJob, getJob, loadState } from "./state.mjs";
 import { createWorktree, removeWorktree } from "./workspace.mjs";
-import { headRef, captureWorkingDiff, applyPatch, checkPatchApplies } from "./git.mjs";
+import { headRef, captureWorkingDiff, applyPatch, checkPatchApplies, workingTreeStatus, newStatusPaths } from "./git.mjs";
 import { run } from "./process.mjs";
 import { coerceArtifact, normalizeReviewArtifact } from "./schema.mjs";
 import { buildFromTemplate } from "./prompts.mjs";
@@ -69,18 +69,21 @@ export function recommendWorker({ task, driver, available = [] }) {
  * Code shell can INHERIT Claude's env vars, so the running harness's own signal
  * must win over an inherited one. Returns null when nothing matches.
  *
- * Codex signals are CONFIRMED from a live session (CODEX_THREAD_ID is set every
- * session; CODEX_MANAGED_* for npm installs; CODEX_SANDBOX inside its sandbox).
- * agy is NOT detectable: a live agy session sets no agy/antigravity/gemini env
- * var, so agy drivers must set `AGENT_COLLAB_DRIVER=agy` (the deterministic
- * override). Claude Code is detected only as a tiebreaker — its slash commands
- * already pass `--driver claude` explicitly.
+ * All three are CONFIRMED from live sessions:
+ *   - Codex: CODEX_THREAD_ID (every session) / CODEX_MANAGED_* (npm) / CODEX_SANDBOX.
+ *   - agy:   ANTIGRAVITY_AGENT / ANTIGRAVITY_CONVERSATION_ID / ANTIGRAVITY_PROJECT_ID.
+ *   - Claude Code: CLAUDECODE / CLAUDE_PLUGIN_ROOT (tiebreaker; its slash commands
+ *     already pass --driver claude explicitly).
+ * Claude is checked LAST so an actively-running Codex/agy beats an inherited
+ * Claude env. `AGENT_COLLAB_DRIVER` remains the deterministic override.
  */
 export function detectDriver(env = process.env) {
   if (env.CODEX_THREAD_ID || env.CODEX_MANAGED_BY_NPM || env.CODEX_MANAGED_PACKAGE_ROOT || env.CODEX_SANDBOX)
     return "codex";
+  if (env.ANTIGRAVITY_AGENT || env.ANTIGRAVITY_CONVERSATION_ID || env.ANTIGRAVITY_PROJECT_ID)
+    return "agy";
   if (env.CLAUDECODE || env.CLAUDE_CODE || env.CLAUDE_PLUGIN_ROOT) return "claude";
-  return null; // agy has no identifiable signal — relies on AGENT_COLLAB_DRIVER
+  return null;
 }
 
 /**
@@ -198,6 +201,13 @@ export function runWorkerSync(cwd, opts) {
     workspace = cwd; // not a git repo: cannot isolate, run in place
   }
 
+  // Breach detection: snapshot the driver's REAL tree so we can tell if an
+  // unattended worker escapes its worktree and writes into the live checkout
+  // (observed with agy resolving the canonical $HOME repo under
+  // --dangerously-skip-permissions). Only meaningful when we actually isolated;
+  // in the run-in-place fallback the worker is supposed to write to cwd.
+  const breachBefore = worktree ? workingTreeStatus(cwd) : null;
+
   appendJob(cwd, {
     id: jobId,
     driver,
@@ -305,7 +315,7 @@ export function runWorkerSync(cwd, opts) {
   // Capture the worker's patch, then tear down the worktree (the diff is the artifact).
   let patchPath = null;
   let changed = false;
-  let patchApplies = true;
+  let patchApplies = role === "worker" ? true : null; // reviewers have no patch
   if (role === "worker") {
     let diff = "";
     try {
@@ -319,6 +329,9 @@ export function runWorkerSync(cwd, opts) {
     fs.writeFileSync(patchPath, diff);
   }
   if (worktree) removeWorktree(cwd, worktree);
+
+  // Did the worker write OUTSIDE its worktree, into the driver's real tree?
+  const escapedPaths = worktree ? newStatusPaths(breachBefore, workingTreeStatus(cwd)) : [];
 
   fs.writeFileSync(path.join(artifactDir, "reports", `${worker}.md`), answerText);
   fs.writeFileSync(
@@ -334,9 +347,20 @@ export function runWorkerSync(cwd, opts) {
     status = coerce.ok ? "completed" : "failed";
   } else if (changed) {
     status = patchApplies ? "completed" : "conflicted";
+  } else if (!coerce.ok) {
+    status = "failed";
   } else {
-    status = coerce.ok ? coerce.value.status ?? "completed" : "failed";
+    // Valid self-report but NO captured patch. A worker's deliverable IS the
+    // patch, so never upgrade an empty result to "completed" (that masked both
+    // hallucinated success AND the agy worktree-escape). Surface it honestly.
+    const self = coerce.value.status;
+    status = self === "blocked" || self === "failed" ? self : "no-changes";
   }
+
+  // A write that landed OUTSIDE the worktree (in the driver's real checkout) is a
+  // containment breach — the gate's core safety contract. It overrides every other
+  // status, even a clean patch, so a non-compliant worker can never look "completed".
+  if (escapedPaths.length) status = "breach";
 
   // On a failed run, classify WHY from the worker's last output: a timeout, a
   // subscription/rate limit, or an auth problem each makes the worker unusable
@@ -358,7 +382,15 @@ export function runWorkerSync(cwd, opts) {
       resetAt = cls.resetAt;
     }
   }
+  if (status === "breach") {
+    errors = [
+      `containment breach: the worker wrote OUTSIDE its worktree, into the driver's real checkout ` +
+        `(${escapedPaths.join(", ")}). The driver did NOT apply these — inspect and revert them, and ` +
+        `do not treat this worker as a safe implementer here.`
+    ];
+  }
 
+  const breach = escapedPaths.length > 0;
   updateJob(cwd, jobId, {
     status,
     exitCode,
@@ -369,6 +401,8 @@ export function runWorkerSync(cwd, opts) {
     patchPath,
     failureKind,
     resetAt,
+    breach,
+    escapedPaths: breach ? escapedPaths : undefined,
     errors
   });
 
@@ -380,11 +414,14 @@ export function runWorkerSync(cwd, opts) {
     valid: coerce.ok, // back-compat alias for resultValid
     changed,
     patchApplies,
+    attempts,
     artifact: coerce.value,
     artifactDir,
     patchPath,
     failureKind,
     resetAt,
+    breach,
+    escapedPaths: breach ? escapedPaths : undefined,
     errors
   };
 }

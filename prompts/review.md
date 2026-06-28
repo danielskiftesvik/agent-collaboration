@@ -23,6 +23,12 @@ wrong, why that code path is vulnerable, the likely impact, and a concrete fix.
 Ground every finding in the provided context. Do not invent files, lines, or behavior you
 cannot support. Label any inference as such and keep confidence honest.
 If the code looks correct, say so plainly and return no findings.
+
+IMPORTANT — baseline vs. change: the working tree you can read is checked out at the
+repository's HEAD baseline. The change under review is the diff in <repository_context>,
+which is AUTHORITATIVE. If a file you read on disk contradicts the diff, the diff wins
+(the disk shows the pre-change baseline). Do not "correct" the author based on baseline
+code that the diff already changes.
 </grounding_rules>
 
 {{OUTPUT_CONTRACT}}
