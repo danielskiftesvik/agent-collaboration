@@ -91,8 +91,15 @@ export default defineAdapter({
       );
     }
     return (
-      "\n\n---\nWhen finished, return ONLY a JSON object and NOTHING else — no prose " +
-      "before or after it. Match this exact shape:\n" +
+      // agy has a built-in rule to AVOID writing project files to tmp/scratch
+      // unless explicitly told — so tell it explicitly to write into the worktree
+      // it was handed, else it falls back to ~/.gemini/.../scratch and the runtime
+      // captures an empty patch (no-changes). (Self-reported by agy in review.)
+      "\n\n---\nWrite ALL files you create or edit INTO your current working directory " +
+      "(the workspace you were given via --add-dir). Do NOT write to /tmp, ~/.gemini, a " +
+      "scratch directory, or anywhere outside that workspace — files written elsewhere are lost.\n" +
+      "When finished, return ONLY a JSON object and NOTHING else — no prose before or after it. " +
+      "Match this exact shape:\n" +
       '{"status":"completed" | "failed" | "blocked","summary":"<one line>","changed":true | false}'
     );
   },

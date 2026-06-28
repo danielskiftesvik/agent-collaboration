@@ -4,7 +4,25 @@ import fs from "node:fs";
 import path from "node:path";
 
 import { makeRepo, git } from "./helpers.mjs";
-import { headRef, captureWorkingDiff, applyPatch, diffPaths, stageDiffIntoWorktree } from "../core/git.mjs";
+import { headRef, captureWorkingDiff, applyPatch, diffPaths, stageDiffIntoWorktree, workingTreeStatus, newStatusPaths } from "../core/git.mjs";
+
+test("breach snapshot detects a CONTENT change to an ALREADY-dirty file (codex #4)", () => {
+  const repo = makeRepo();
+  fs.writeFileSync(path.join(repo, "README.md"), "seed\ndirty\n"); // pre-existing dirt
+  const before = workingTreeStatus(repo);
+  // an escaped worker modifies the SAME already-dirty file (status line unchanged)
+  fs.writeFileSync(path.join(repo, "README.md"), "seed\ndirty\nESCAPED\n");
+  const after = workingTreeStatus(repo);
+  assert.deepEqual(newStatusPaths(before, after), ["README.md"], "content hash change is caught");
+});
+
+test("breach snapshot reports nothing when the real tree is unchanged across a run", () => {
+  const repo = makeRepo();
+  fs.writeFileSync(path.join(repo, "README.md"), "seed\ndirty\n");
+  const before = workingTreeStatus(repo);
+  const after = workingTreeStatus(repo);
+  assert.deepEqual(newStatusPaths(before, after), []);
+});
 
 test("headRef returns the current commit sha", () => {
   const repo = makeRepo();

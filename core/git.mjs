@@ -1,31 +1,52 @@
 // Derived from codex-plugin-cc (Apache-2.0, Copyright 2026 OpenAI).
+import { createHash } from "node:crypto";
+import fs from "node:fs";
+import path from "node:path";
 import { run, runOk } from "./process.mjs";
 
 export function headRef(cwd) {
   return runOk("git", ["rev-parse", "HEAD"], { cwd }).trim();
 }
 
+function porcelainPath(line) {
+  // strip the 2-char status + space; for renames take the post-`-> ` path
+  const p = line.replace(/^.{1,3}/, "").trim();
+  const arrow = p.lastIndexOf(" -> ");
+  return arrow === -1 ? p : p.slice(arrow + 4).trim();
+}
+
 /**
- * Snapshot the working-tree state of `cwd` as a set of `git status --porcelain`
- * lines (tracked changes + untracked files). Used to detect whether a worker
- * escaped its worktree and wrote into the driver's real checkout. Returns null
- * when `cwd` isn't a git repo (nothing to compare). Worktree add/remove does NOT
- * change these lines, so a difference across a run means a real-tree write.
+ * Snapshot the working-tree state of `cwd` for breach detection: each dirty/untracked
+ * path's `git status --porcelain` line PAIRED WITH a content hash. Hashing (not just
+ * the status line) is what catches a worker escaping and MODIFYING an already-dirty
+ * file — the status line is unchanged, but the content hash isn't. Returns null when
+ * `cwd` isn't a git repo. (Ignored files are still invisible to porcelain — strict
+ * sandbox confinement is the layer for those.)
  */
 export function workingTreeStatus(cwd) {
   const r = run("git", ["status", "--porcelain"], { cwd });
   if (r.status !== 0) return null;
-  return new Set(r.stdout.split(/\r?\n/).filter((l) => l.trim()));
+  const entries = new Set();
+  for (const line of r.stdout.split(/\r?\n/).filter((l) => l.trim())) {
+    let hash = "";
+    try {
+      hash = createHash("sha1").update(fs.readFileSync(path.join(cwd, porcelainPath(line)))).digest("hex");
+    } catch {
+      hash = ""; // deleted / unreadable / rename — status-line change alone still counts
+    }
+    entries.add(`${line}\t${hash}`);
+  }
+  return entries;
 }
 
-/** Paths that newly appeared in `after` vs `before` (porcelain line -> path). */
+/** Paths whose status OR content newly appeared/changed in `after` vs `before`. */
 export function newStatusPaths(before, after) {
   if (!before || !after) return [];
-  const added = [];
-  for (const line of after) {
-    if (!before.has(line)) added.push(line.replace(/^.{1,3}/, "").trim());
+  const added = new Set();
+  for (const entry of after) {
+    if (!before.has(entry)) added.add(porcelainPath(entry.split("\t")[0]));
   }
-  return added;
+  return [...added];
 }
 
 /**
