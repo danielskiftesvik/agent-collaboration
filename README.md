@@ -185,9 +185,15 @@ Check which build a harness is actually running:
 ```
 node <plugin-dir>/scripts/agent-companion.mjs version   # -> agent-collaboration v0.2.0
 ```
-The version also heads `setup` output and shows as a `doctor` check. **Bump it after
-changes** so harness `update` actually pulls them (a plugin manager that sees the same
-version treats you as up-to-date):
+The version also heads `setup` output and shows as a `doctor` check.
+
+**Bump the version on every push** — a harness `update` gates on the version field, so an
+unchanged version reports "already latest" and your edits never install. Size the bump to
+the amount of change (semver):
+
+- **patch** (`0.0.x`) — a bug fix, docs, or a small tweak.
+- **minor** (`0.x.0`) — new feature(s), a notable behavior change, or a batch of fixes.
+- **major** (`x.0.0`) — a breaking change to the CLI/contract/behavior.
 
 ```
 npm run bump 0.2.1     # rewrites the version in package.json + all 3 manifests
