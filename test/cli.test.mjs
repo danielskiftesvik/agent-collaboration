@@ -122,6 +122,30 @@ test("delegate auto-falls-back to another worker when the first is rate-limited"
   assert.equal(res.fellBackFrom[0].failureKind, "rate-limit");
 });
 
+test("delegate --background returns immediately; status --wait blocks to completion", () => {
+  const dataDir = isolateStateRoot();
+  const repo = makeRepo();
+  const bin = stubBin(`
+    import fs from 'node:fs';
+    if (process.argv.includes('models')) { process.exit(0); }
+    fs.writeFileSync('bg-was-here.txt', 'hi\\n');
+    process.stdout.write('Done.\\n\\n\`\`\`json\\n{"status":"completed","summary":"made","changed":true}\\n\`\`\`');
+  `);
+  const env = { AGENT_COLLAB_DATA: dataDir, AGENT_COLLAB_AGY_BIN: bin };
+
+  const launch = cli(["delegate", "--driver", "claude", "--worker", "agy", "--background", "--json", "make a file"], { cwd: repo, env });
+  assert.equal(launch.status, 0, launch.stderr);
+  const l = JSON.parse(launch.stdout);
+  assert.equal(l.status, "running");
+  assert.equal(l.background, true);
+  assert.ok(l.jobId);
+
+  const waited = cli(["status", l.jobId, "--wait", "--timeout", "30", "--json"], { cwd: repo, env });
+  assert.equal(waited.status, 0, waited.stderr);
+  const j = JSON.parse(waited.stdout);
+  assert.equal(j.status, "completed");
+});
+
 test("delegate cross-harness reviewer runs and result prints the artifact", () => {
   const dataDir = isolateStateRoot();
   const repo = makeRepo();

@@ -16,14 +16,16 @@ generalization of codex-plugin-cc's `codex-cli-runtime` skill.
 ```
 setup [--json] [--gate on|off] [--sandbox on|off]
 doctor [--live] [--workers a,b] [--json]
-delegate --worker <agy|codex|claude> [--driver <name>] [--role worker|reviewer] [--apply] [--timeout <s>] [--no-fallback] <brief>
-review  --worker <name> [--focus <text>] [--no-fallback] [--json] <diff/context>
-adversarial-review --worker <name> [--focus <text>] [--no-fallback] [--json] <diff/context>
-status [jobId] [--json]
+delegate --worker <agy|codex|claude> [--driver <name>] [--role worker|reviewer] [--background] [--apply] [--timeout <s>] [--no-fallback] <brief>
+review  --worker <name> [--focus <text>] [--background] [--no-fallback] [--json] <diff/context>
+adversarial-review --worker <name> [--focus <text>] [--background] [--no-fallback] [--json] <diff/context>
+status [jobId] [--wait] [--timeout <s>] [--json]
 result <jobId> [--json]
 apply  <jobId>
 cancel <jobId>
 ```
+(`run-job --job <id>` exists but is INTERNAL — it's the detached worker entrypoint
+spawned by `--background`; don't call it directly.)
 
 ## Routing (decide before spawning)
 
@@ -90,6 +92,20 @@ timeout** failure (an `other` failure never triggers it). The result then carrie
 and — if every worker failed that way — `allWorkersLimited: true`. Fallback only
 ever moves to another **worker** harness; it never silently makes the driver do
 the task. Disable with `--no-fallback` or `AGENT_COLLAB_FALLBACK=off`.
+
+## Sync vs background
+
+By default `delegate`/`review`/`adversarial-review` run **synchronously** (block until
+done, with auto-fallback). With **`--background`** the runtime spawns a **detached**
+worker and returns `{jobId, status:"running", background:true}` immediately — the run
+survives a driver crash. Then:
+- `status <jobId>` — poll once; `status <jobId> --wait [--timeout <s>]` — block until
+  the job reaches a terminal status (or the process dies → `stalled`).
+- `result <jobId>` — the report + structured output once terminal.
+- `cancel <jobId>` — kills the detached worker's whole process group.
+
+Background runs a **single worker** (no auto-fallback — that's the synchronous path).
+This is the brokerless version of the reference's async model (no app-server broker).
 
 ## Timeouts (avoid the "no JSON found" no-output)
 

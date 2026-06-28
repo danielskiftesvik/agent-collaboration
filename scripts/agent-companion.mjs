@@ -5,14 +5,14 @@
 import fs from "node:fs";
 import path from "node:path";
 
-import { decideRoute, resolveDriver, isAuthoritativeDriver, runSetup, runWorkerSync, runWithFallback, applyResult, recommendWorker } from "../core/dispatch.mjs";
+import { decideRoute, resolveDriver, isAuthoritativeDriver, runSetup, runWorkerSync, runWithFallback, launchBackground, runJob, waitForJob, applyResult, recommendWorker } from "../core/dispatch.mjs";
 import { runDoctor } from "../core/doctor.mjs";
 import { listJobs, getJob, updateJob, sortJobsNewestFirst, loadState, saveState } from "../core/state.mjs";
 import { isPidAlive } from "../core/heartbeat.mjs";
 import { renderSetup, renderJob, renderJobList, renderRecommendation, renderProfiles } from "../core/render.mjs";
 import { MODEL_PROFILES } from "../core/model-profiles.mjs";
 
-const VALUE_FLAGS = new Set(["worker", "workers", "role", "driver", "base", "timeout", "gate", "sandbox", "focus", "task"]);
+const VALUE_FLAGS = new Set(["worker", "workers", "role", "driver", "base", "timeout", "gate", "sandbox", "focus", "task", "job"]);
 const BOOL_FLAGS = new Set(["json", "apply", "wait", "background", "profiles", "no-fallback", "live"]);
 
 function parseArgs(tokens) {
@@ -93,6 +93,16 @@ switch (subcommand) {
     }
 
     const timeoutMs = options.timeout ? Number(options.timeout) * 1000 : undefined;
+
+    // Async path: spawn a detached worker and return immediately. Poll with
+    // `status <jobId> --wait`, read with `result`, stop with `cancel`. Single
+    // worker (no auto-fallback — that's the synchronous path).
+    if (options.background) {
+      const res = launchBackground(cwd, { driver, worker, role, brief, kind, focus: options.focus, timeoutMs });
+      out(res, options, `${res.status} (background) — ${res.worker} — ${res.jobId}\nPoll: status ${res.jobId} --wait`);
+      break;
+    }
+
     // Auto-fallback on a subscription/rate limit (or auth) is ON by default; a
     // genuine task failure never triggers it. Disable with --no-fallback or
     // AGENT_COLLAB_FALLBACK=off (single worker, surface the limit).
@@ -141,10 +151,23 @@ switch (subcommand) {
     break;
   }
 
+  // Internal: the detached worker entrypoint launched by `--background`.
+  case "run-job": {
+    if (!options.job) fail("run-job: --job <id> is required");
+    try {
+      runJob(cwd, options.job);
+    } catch (e) {
+      fail(`run-job: ${e.message}`);
+    }
+    break;
+  }
+
   case "status": {
     const id = positionals[0];
     if (id) {
-      const job = getJob(cwd, id);
+      const job = options.wait
+        ? waitForJob(cwd, id, { timeoutMs: options.timeout ? Number(options.timeout) * 1000 : undefined })
+        : getJob(cwd, id);
       out(job ?? { error: "unknown job" }, options, renderJob(job));
     } else {
       const jobs = sortJobsNewestFirst(listJobs(cwd)).slice(0, 8);
@@ -195,9 +218,16 @@ switch (subcommand) {
     if (!job) fail("cancel: unknown job");
     if (job.pid && isPidAlive(job.pid)) {
       try {
-        process.kill(job.pid);
+        // A background job is its own process group (detached) — kill the whole
+        // group so the worker subprocess dies too, not just the launcher.
+        if (job.background) process.kill(-job.pid);
+        else process.kill(job.pid);
       } catch {
-        /* already gone */
+        try {
+          process.kill(job.pid);
+        } catch {
+          /* already gone */
+        }
       }
     }
     const updated = updateJob(cwd, id, { status: "cancelled" });
@@ -212,10 +242,10 @@ switch (subcommand) {
         "  setup [--json] [--gate on|off] [--sandbox on|off]",
         "  doctor [--live] [--workers a,b] [--json]   self-check (config + readiness; --live runs review+isolation smoke)",
         "  recommend --task <type> [--driver <name>] [--json]   |   recommend --profiles",
-        "  delegate --worker <name> [--driver <name>] [--role worker|reviewer] [--apply] [--timeout s] <brief>",
-        "  review  --worker <name> [--driver <name>] [--focus <text>] <diff/context>",
-        "  adversarial-review --worker <name> [--focus <text>] <diff/context>",
-        "  status [jobId] [--json]",
+        "  delegate --worker <name> [--driver <name>] [--role worker|reviewer] [--background] [--apply] [--timeout s] <brief>",
+        "  review  --worker <name> [--driver <name>] [--focus <text>] [--background] <diff/context>",
+        "  adversarial-review --worker <name> [--focus <text>] [--background] <diff/context>",
+        "  status [jobId] [--wait] [--timeout s] [--json]",
         "  result <jobId> [--json]",
         "  apply  <jobId>",
         "  cancel <jobId>"

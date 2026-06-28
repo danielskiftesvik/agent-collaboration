@@ -10,9 +10,12 @@ import {
   runSetup,
   runWorkerSync,
   runWithFallback,
+  launchBackground,
+  waitForJob,
   defaultTimeoutMs,
   applyResult
 } from "../core/dispatch.mjs";
+import { appendJob } from "../core/state.mjs";
 
 // ---- routing ----
 
@@ -395,6 +398,47 @@ test("defaultTimeoutMs honors AGENT_COLLAB_TIMEOUT and defaults generously", () 
   process.env.AGENT_COLLAB_TIMEOUT = "60";
   assert.equal(defaultTimeoutMs(), 60000);
   delete process.env.AGENT_COLLAB_TIMEOUT;
+});
+
+// ---- async background execution ----
+
+test("launchBackground runs a worker detached; waitForJob blocks until completed", () => {
+  isolateStateRoot();
+  const repo = makeRepo();
+  process.env.AGENT_COLLAB_AGY_BIN = stubBin(WRITE_STUB);
+
+  const launched = launchBackground(repo, { driver: "claude", worker: "agy", role: "worker", brief: "make a file", maxAttempts: 1 });
+  assert.equal(launched.status, "running");
+  assert.ok(launched.jobId);
+
+  const job = waitForJob(repo, launched.jobId, { timeoutMs: 30000, pollMs: 150 });
+  assert.equal(job.status, "completed", JSON.stringify(job));
+
+  const diff = fs.readFileSync(path.join(launched.artifactDir, "patches", "agy.diff"), "utf8");
+  assert.match(diff, /worker-was-here\.txt/);
+  // background still isolates — the real repo stays clean
+  assert.equal(fs.existsSync(path.join(repo, "worker-was-here.txt")), false);
+
+  delete process.env.AGENT_COLLAB_AGY_BIN;
+});
+
+test("waitForJob marks a job stalled when its process is gone without finishing", () => {
+  isolateStateRoot();
+  const repo = makeRepo();
+  appendJob(repo, {
+    id: "stall-1",
+    worker: "agy",
+    role: "worker",
+    status: "running",
+    pid: 2147483600, // a pid that is (almost certainly) not alive
+    artifactDir: "/tmp",
+    heartbeatAt: new Date().toISOString()
+  });
+
+  const job = waitForJob(repo, "stall-1", { timeoutMs: 2000, pollMs: 50 });
+
+  assert.equal(job.status, "failed");
+  assert.equal(job.failureKind, "stalled");
 });
 
 // ---- isolation fail-closed (no implicit unisolated in-place runs) ----

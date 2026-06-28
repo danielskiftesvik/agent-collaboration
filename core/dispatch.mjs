@@ -2,6 +2,7 @@
 // for `setup`, and run a cross-harness worker/reviewer to completion, producing
 // validated artifacts that only the driver later applies.
 import { randomUUID } from "node:crypto";
+import { spawn } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -11,6 +12,7 @@ import { resolveStateDir, appendJob, updateJob, getJob, loadState } from "./stat
 import { createWorktree, removeWorktree } from "./workspace.mjs";
 import { headRef, captureWorkingDiff, applyPatch, checkPatchApplies, workingTreeStatus, newStatusPaths } from "./git.mjs";
 import { run } from "./process.mjs";
+import { isPidAlive } from "./heartbeat.mjs";
 import { coerceArtifact, normalizeReviewArtifact } from "./schema.mjs";
 import { buildFromTemplate } from "./prompts.mjs";
 import { classifyFailure, isFallbackKind } from "./failures.mjs";
@@ -181,10 +183,19 @@ export function runWorkerSync(cwd, opts) {
   const adapter = getAdapter(worker);
   const schema = role === "reviewer" ? reviewSchema : resultSchema;
 
-  const jobId = randomUUID();
+  // A jobId may be supplied (background runs pre-create the record, then a detached
+  // child executes it with that id); otherwise mint a fresh one.
+  const jobId = opts.jobId || randomUUID();
   const artifactDir = path.join(resolveStateDir(cwd), "tasks", jobId);
   ensureDirs(artifactDir, role);
   fs.writeFileSync(path.join(artifactDir, "brief.md"), brief ?? "");
+
+  // Write the initial record idempotently: appendJob for a brand-new job, updateJob
+  // when the parent (background launch) already created it.
+  const writeInitial = (rec) => {
+    if (getJob(cwd, jobId)) updateJob(cwd, jobId, rec);
+    else appendJob(cwd, rec);
+  };
 
   // Both workers AND reviewers run in an ephemeral worktree so an unattended
   // harness (e.g. `agy --dangerously-skip-permissions`) can never write to the
@@ -208,7 +219,7 @@ export function runWorkerSync(cwd, opts) {
           "Workers run in an isolated worktree so they can never touch your real tree. cd into a git repo, " +
           "or set AGENT_COLLAB_ALLOW_INPLACE=on to run UNISOLATED in the cwd (unsafe)."
       ];
-      appendJob(cwd, {
+      writeInitial({
         id: jobId, driver, worker, role, status: "blocked", pid: process.pid,
         baseRef: null, workspace: cwd, artifactDir, heartbeatAt: new Date().toISOString()
       });
@@ -229,7 +240,7 @@ export function runWorkerSync(cwd, opts) {
   // in the run-in-place fallback the worker is supposed to write to cwd.
   const breachBefore = worktree ? workingTreeStatus(cwd) : null;
 
-  appendJob(cwd, {
+  writeInitial({
     id: jobId,
     driver,
     worker,
@@ -505,6 +516,94 @@ export function runWithFallback(cwd, opts) {
       ". Surface this to the user — do not silently complete the task single-party.";
   }
   return last;
+}
+
+// ---- async background execution (brokerless convergence to the reference's model) ----
+
+const TERMINAL_STATUSES = new Set([
+  "completed", "no-changes", "conflicted", "breach", "blocked", "failed", "cancelled"
+]);
+
+export function isTerminalStatus(status) {
+  return TERMINAL_STATUSES.has(status);
+}
+
+/** Block synchronously for ms without busy-waiting (the CLI is synchronous). */
+function sleepSync(ms) {
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, Math.max(0, ms));
+}
+
+const COMPANION = fileURLToPath(new URL("../scripts/agent-companion.mjs", import.meta.url));
+
+/**
+ * Launch a worker as a DETACHED background job — the reference's async model, minus
+ * the app-server broker. Pre-creates the job record + persists the request, spawns a
+ * detached `run-job` child that runs it to completion via runWorkerSync, and returns
+ * immediately. The run survives a driver crash; `status`/`result`/`cancel`/`--wait`
+ * poll or act on the record. Background runs a SINGLE worker (no auto-fallback — that
+ * stays a synchronous-path convenience).
+ */
+export function launchBackground(cwd, opts) {
+  const { driver, worker, role = "worker", brief, kind, focus, targetLabel, timeoutMs, maxAttempts } = opts;
+  const jobId = randomUUID();
+  const artifactDir = path.join(resolveStateDir(cwd), "tasks", jobId);
+  ensureDirs(artifactDir, role);
+  fs.writeFileSync(path.join(artifactDir, "brief.md"), brief ?? "");
+
+  appendJob(cwd, {
+    id: jobId,
+    driver,
+    worker,
+    role,
+    status: "queued",
+    background: true,
+    artifactDir,
+    request: { driver, worker, role, brief, kind, focus, targetLabel, timeoutMs, maxAttempts },
+    heartbeatAt: new Date().toISOString()
+  });
+
+  const logFd = fs.openSync(path.join(artifactDir, "run.log"), "a");
+  const child = spawn(process.execPath, [COMPANION, "run-job", "--job", jobId], {
+    cwd,
+    env: process.env,
+    detached: true, // own process group, so `cancel` can kill the worker subtree
+    stdio: ["ignore", logFd, logFd]
+  });
+  child.unref();
+  fs.closeSync(logFd);
+  updateJob(cwd, jobId, { pid: child.pid, status: "running" });
+
+  return { jobId, worker, status: "running", background: true, artifactDir };
+}
+
+/** Detached-worker entrypoint: load the persisted request and run it under jobId. */
+export function runJob(cwd, jobId) {
+  const job = getJob(cwd, jobId);
+  if (!job || !job.request) throw new Error(`run-job: no stored request for ${jobId}`);
+  return runWorkerSync(cwd, { ...job.request, jobId });
+}
+
+/**
+ * Poll a job until it reaches a terminal status, the deadline passes, or its process
+ * has died without finishing (stalled). Synchronous (blocking) — powers `status --wait`.
+ */
+export function waitForJob(cwd, jobId, { timeoutMs = 1800000, pollMs = 1000 } = {}) {
+  const deadline = Date.now() + timeoutMs;
+  let job = getJob(cwd, jobId);
+  while (job && !isTerminalStatus(job.status)) {
+    if (job.pid && !isPidAlive(job.pid)) {
+      job = updateJob(cwd, jobId, {
+        status: "failed",
+        failureKind: "stalled",
+        errors: ["the background worker process exited without writing a result"]
+      });
+      break;
+    }
+    if (Date.now() >= deadline) break;
+    sleepSync(pollMs);
+    job = getJob(cwd, jobId);
+  }
+  return job;
 }
 
 /** Driver-side: apply a completed worker's patch to the main branch (3-way). */
