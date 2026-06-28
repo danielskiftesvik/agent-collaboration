@@ -80,12 +80,19 @@ function liveIsolationCheck(worker) {
       maxAttempts: 1
     });
     const breached = res.status === "breach" || res.breach;
+    // Confined but with an EMPTY captured patch = safe, but NOT usable as a
+    // write-worker (e.g. agy wrote to its own scratch). Flag that distinctly so a
+    // green doctor isn't read as "agy implements fine".
+    const confinedButEmpty = !breached && res.status === "no-changes";
     return {
       name: `isolation:${worker}`,
       ok: !breached,
+      warn: confinedButEmpty,
       detail: breached
         ? `BREACH — wrote outside its worktree: ${(res.escapedPaths || []).join(", ")}`
-        : `confined (status=${res.status})`
+        : confinedButEmpty
+          ? "confined but produced NO captured patch — safe, but not usable as a write-worker here"
+          : `confined (status=${res.status})`
     };
   } catch (e) {
     return { name: `isolation:${worker}`, ok: false, detail: e.message };

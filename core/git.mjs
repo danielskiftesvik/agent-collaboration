@@ -85,19 +85,30 @@ export function checkPatchApplies(cwd, diff) {
 
 /**
  * Apply a unified diff to `cwd` using a 3-way merge so it still lands when the
- * base has moved underneath it. Returns { applied, conflicted, stderr }.
+ * base has moved underneath it. Returns { applied, conflicted, staged, stderr }.
+ *
+ * `--3way` implies `--index`, so a successful apply STAGES the change — which
+ * surprises drivers and causes index conflicts on a later apply. So when the index
+ * was clean we unstage afterward, landing the change in the WORKING TREE only
+ * (matching the reference's in-place model). If the user already had staged work we
+ * leave it staged (`staged:true`) rather than clobber their index.
  */
 export function applyPatch(cwd, diff) {
   if (!diff || !diff.trim()) {
-    return { applied: true, conflicted: false, stderr: "", empty: true };
+    return { applied: true, conflicted: false, staged: false, stderr: "", empty: true };
   }
-  const r = run("git", ["apply", "--3way", "--whitespace=nowarn"], {
-    cwd,
-    input: diff
-  });
+  const hadStaged = run("git", ["diff", "--cached", "--quiet"], { cwd }).status !== 0;
+  const r = run("git", ["apply", "--3way", "--whitespace=nowarn"], { cwd, input: diff });
+  const applied = r.status === 0;
+  let staged = false;
+  if (applied) {
+    if (hadStaged) staged = true; // pre-existing staged work — don't touch the index
+    else run("git", ["reset", "-q"], { cwd }); // leave a clean index + working-tree changes
+  }
   return {
-    applied: r.status === 0,
-    conflicted: r.status !== 0 && /conflict/i.test(r.stderr),
+    applied,
+    conflicted: !applied && /conflict/i.test(r.stderr),
+    staged,
     stderr: r.stderr
   };
 }

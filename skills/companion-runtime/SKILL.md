@@ -159,7 +159,21 @@ network-enabled permissions** (Codex will offer to escalate; or pre-approve
 unattended (e.g. `agy --dangerously-skip-permissions`) don't need this. This is
 expected: a sandbox *should* gate "spawn a process that calls the internet."
 
+## status vs result vs apply
+
+- `status <jobId>` → the **runtime's job metadata** (status, breach, escapedPaths,
+  attempts, failureKind, note, pid…). `--wait` blocks until terminal.
+- `result <jobId>` → the **worker's deliverable**: its report (`reports/<worker>.md`)
+  + structured self-report (`outputs/<worker>.json`). Self-report can disagree with
+  the runtime (e.g. worker claims `changed:true` but the runtime captured nothing →
+  `status` says `no-changes` with a `note`). Trust the runtime's captured state.
+- `apply <jobId>` → lands the patch in the **working tree, unstaged** (clean index)
+  so you inspect with `git diff` then commit; if you had pre-existing staged work it
+  stays **staged**. Never auto-applies.
+
 ## Rules
 
 - One job per invocation. Don't fabricate results if a run fails — surface stderr.
 - The driver holds main-branch authority; workers only produce artifacts.
+- agy is **reviewer-only** as a delegated worker (it writes to its own scratch, not
+  the worktree → `no-changes`); `recommend` keeps it off write tasks.

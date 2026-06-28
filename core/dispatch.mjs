@@ -16,7 +16,7 @@ import { isPidAlive } from "./heartbeat.mjs";
 import { coerceArtifact, normalizeReviewArtifact } from "./schema.mjs";
 import { buildFromTemplate } from "./prompts.mjs";
 import { classifyFailure } from "./failures.mjs";
-import { MODEL_PROFILES, TASK_ROUTING, DEFAULT_ROUTING } from "./model-profiles.mjs";
+import { MODEL_PROFILES, TASK_ROUTING, DEFAULT_ROUTING, WRITE_TASKS } from "./model-profiles.mjs";
 
 const TEMPLATE_KINDS = new Set(["review", "adversarial-review"]);
 
@@ -43,7 +43,12 @@ export function recommendWorker({ task, driver, available = [] }) {
   const entry = TASK_ROUTING[task] || DEFAULT_ROUTING;
   const avail = new Set(available);
 
-  const cross = entry.workers.filter((w) => avail.has(w) && w !== driver);
+  // For write/implementer tasks, exclude harnesses that can't deliver a patch
+  // through the runtime (agy writes to its own scratch, not the worktree).
+  const isWrite = WRITE_TASKS.has(task);
+  const canWork = (w) => !(isWrite && MODEL_PROFILES[w]?.canWrite === false);
+
+  const cross = entry.workers.filter((w) => avail.has(w) && w !== driver && canWork(w));
   if (cross.length) {
     const worker = cross[0];
     return { mode: "cross", task, driver, worker, reason: entry.why, profile: MODEL_PROFILES[worker], alternatives: cross.slice(1) };
@@ -58,7 +63,7 @@ export function recommendWorker({ task, driver, available = [] }) {
       profile: MODEL_PROFILES[driver]
     };
   }
-  const other = available.find((w) => w !== driver);
+  const other = available.find((w) => w !== driver && canWork(w));
   if (other) {
     return { mode: "cross", task, driver, worker: other, reason: "preferred workers unavailable; using the next worker-ready harness", profile: MODEL_PROFILES[other], alternatives: [] };
   }
@@ -444,6 +449,18 @@ export function runWorkerSync(cwd, opts) {
     ];
   }
 
+  // Diagnostic: a worker that self-reports it changed files but left an EMPTY
+  // captured diff almost certainly wrote OUTSIDE the worktree it was handed (agy
+  // 1.0.13 ignores cwd/--add-dir and writes to ~/.gemini/.../scratch). Make the
+  // silent no-changes actionable instead of a filesystem hunt.
+  let note;
+  if (status === "no-changes" && coerce.ok && coerce.value.changed === true) {
+    note =
+      "the worker reported it changed files, but nothing was captured in its isolated worktree — " +
+      "it likely wrote OUTSIDE the worktree (agy writes to ~/.gemini/antigravity-cli/scratch/). " +
+      "Treated as no-changes; this worker can't deliver a patch through the runtime here.";
+  }
+
   const breach = escapedPaths.length > 0;
   updateJob(cwd, jobId, {
     status,
@@ -457,6 +474,7 @@ export function runWorkerSync(cwd, opts) {
     resetAt,
     breach,
     escapedPaths: breach ? escapedPaths : undefined,
+    note,
     errors
   });
 
@@ -476,6 +494,7 @@ export function runWorkerSync(cwd, opts) {
     resetAt,
     breach,
     escapedPaths: breach ? escapedPaths : undefined,
+    note,
     errors
   };
 }

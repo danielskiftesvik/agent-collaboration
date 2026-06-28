@@ -60,6 +60,33 @@ const ESCAPING_AGY = `
   }
 `;
 
+// agy-like: confined (writes nothing into the worktree) but self-reports success.
+const CONFINED_EMPTY_AGY = `
+  import fs from 'node:fs';
+  if (process.argv.includes('--version')) { process.stdout.write('agy 1'); process.exit(0); }
+  if (process.argv.includes('models')) { process.exit(0); }
+  const brief = process.argv[process.argv.length - 1];
+  if (/Review this change/i.test(brief)) {
+    process.stdout.write('\`\`\`json\\n' + JSON.stringify({verdict:'approve',summary:'ok',findings:[]}) + '\\n\`\`\`');
+  } else {
+    process.stdout.write('\`\`\`json\\n{"status":"completed","summary":"done","changed":true}\\n\`\`\`'); // writes nothing
+  }
+`;
+
+test("doctor --live WARNS (not fails) when a worker is confined but produces no patch", () => {
+  isolateStateRoot();
+  process.env.AGENT_COLLAB_AGY_BIN = stubBin(CONFINED_EMPTY_AGY);
+
+  const r = runDoctor(process.cwd(), { live: true, workers: ["agy"] });
+
+  const isolation = r.checks.find((c) => c.name === "isolation:agy");
+  assert.equal(isolation.ok, true, "still safe (no escape)");
+  assert.equal(isolation.warn, true, "but flagged: not usable as a write-worker");
+  assert.match(isolation.detail, /not usable as a write-worker/i);
+
+  delete process.env.AGENT_COLLAB_AGY_BIN;
+});
+
 test("doctor --live FAILS the isolation check when the worker escapes its worktree", () => {
   isolateStateRoot();
   process.env.AGENT_COLLAB_AGY_BIN = stubBin(ESCAPING_AGY);

@@ -42,6 +42,10 @@ from a review is forbidden, even when the fix looks obvious.
 - **Always show / inspect the patch before applying.** Apply only with the
   user's go-ahead, via `/agent-collab:apply <jobId>`. Never auto-apply, and never
   apply a `conflicted` patch without resolving it.
+- **After `apply`:** the change lands in the **working tree, unstaged** (when your
+  index was clean) — inspect with `git diff`, then commit yourself. If you already
+  had staged work, the patch is left **staged** (`staged:true`) to avoid clobbering
+  your index; the apply output says which.
 - If the worker `changed` nothing, say so; don't invent a result.
 
 ## Failures and edge cases
@@ -97,13 +101,15 @@ set `AGENT_COLLAB_FALLBACK=off`); then the limit just surfaces for you to relay.
 
 - **codex / claude** — emit structured findings/result JSON: present findings by
   severity, preserve evidence boundaries.
-- **agy** — reviews work well (on its default **Gemini Flash**; force the Pro class
-  with `AGENT_COLLAB_AGY_CLASS=Pro`): present findings like any other harness. For a
-  *worker*, the **patch is the deliverable** (a `completed` worker may have
-  `resultValid: false` — that just means it replied in prose; show the patch). **Do
-  not use agy as a write-worker on a real repo** until containment is enforced — it
-  has been observed escaping its worktree (the runtime now flags this as a
-  `breach`; see below). agy as a *reviewer* is safe and strong.
+- **agy** — an excellent **reviewer** (default **Gemini Flash**; `AGENT_COLLAB_AGY_CLASS=Pro`
+  for deeper passes): present findings like any other harness. But agy is
+  **reviewer-only** — as a *write-worker* it ignores the worktree it's handed and writes to
+  its own `~/.gemini/antigravity-cli/scratch/`, so the runtime captures an empty patch and
+  returns **`no-changes`** with a diagnostic `note`. `recommend` therefore routes write tasks
+  to codex/claude. (If a future agy build escapes into the real tree instead, breach detection
+  catches it as `breach`.)
+- **codex / claude** — usable as write-workers (codex is production-ready through the runtime;
+  claude-as-worker is the native short-circuit — use the Agent tool).
 
 Observed reliability (mid-2026, from real sessions): **agy is the dependable
 workhorse** (fast, usually first-try, good correctness coverage) and **codex is

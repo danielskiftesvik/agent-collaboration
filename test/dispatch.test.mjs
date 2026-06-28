@@ -90,6 +90,26 @@ test("applyResult applies the worker's patch to the main repo", () => {
   delete process.env.AGENT_COLLAB_AGY_BIN;
 });
 
+test("applyResult lands the change in the working tree UNSTAGED, leaving a clean index", () => {
+  isolateStateRoot();
+  const repo = makeRepo();
+  process.env.AGENT_COLLAB_AGY_BIN = stubBin(WRITE_STUB);
+
+  const res = runWorkerSync(repo, { driver: "claude", worker: "agy", role: "worker", brief: "x" });
+  const applied = applyResult(repo, res.jobId);
+
+  assert.equal(applied.applied, true);
+  assert.equal(applied.staged, false);
+  assert.equal(fs.existsSync(path.join(repo, "worker-was-here.txt")), true);
+  assert.equal(
+    git(["diff", "--cached", "--name-only"], repo),
+    "",
+    "apply must leave a CLEAN index (change is unstaged in the working tree) so a later apply doesn't index-conflict"
+  );
+
+  delete process.env.AGENT_COLLAB_AGY_BIN;
+});
+
 // A worker that does real work (writes a file) but replies in prose, not JSON.
 const PROSE_WORKER_STUB = `
 import fs from 'node:fs';
@@ -572,6 +592,23 @@ test("a worker that reports completed but captures NO patch is 'no-changes', not
 
   assert.equal(res.status, "no-changes", "an empty deliverable must never read as completed");
   assert.equal(res.changed, false);
+
+  delete process.env.AGENT_COLLAB_AGY_BIN;
+});
+
+test("a worker claiming changed:true but capturing nothing gets a diagnostic note (wrote outside the worktree)", () => {
+  isolateStateRoot();
+  const repo = makeRepo();
+  // self-reports changed:true but writes NOTHING into the worktree (mimics agy's scratch write)
+  process.env.AGENT_COLLAB_AGY_BIN = stubBin(`
+    if (process.argv.includes('models')) { process.exit(0); }
+    process.stdout.write('\`\`\`json\\n{"status":"completed","summary":"made it","changed":true}\\n\`\`\`');
+  `);
+
+  const res = runWorkerSync(repo, { driver: "claude", worker: "agy", role: "worker", brief: "x", maxAttempts: 1 });
+
+  assert.equal(res.status, "no-changes");
+  assert.match(res.note, /outside the worktree|scratch/i);
 
   delete process.env.AGENT_COLLAB_AGY_BIN;
 });

@@ -142,7 +142,7 @@ driver, `AGENTS.md` for Codex/agy drivers).
 |---|---|---|---|
 | **codex** (GPT-5.x) | ✓ | ✓ | Deepest reasoning; prefers XML-block prompts. Slower — give it a generous timeout; severity case is normalized for you |
 | **claude** | ✓ | ✓ | Use the native `Agent` tool when Claude Code is also the driver |
-| **agy** (Gemini) | ✓ | ⚠ | Excellent **reviewer**; pinned to the latest **Flash** for speed (`AGENT_COLLAB_AGY_CLASS=Pro` for stronger reasoning). As a **worker** it has been observed escaping its worktree on a real repo — the runtime flags this as a `breach`; prefer codex/claude as implementers until OS-sandbox confinement is on. Needs label-format `--model` with flags before the prompt — the adapter handles this |
+| **agy** (Gemini) | ✓ | ✗ | Excellent **reviewer** (Flash by default; `AGENT_COLLAB_AGY_CLASS=Pro` for depth). **Reviewer-only**: as a write-worker agy ignores the worktree and writes to its own `~/.gemini/.../scratch/`, so the runtime returns `no-changes` and `recommend` routes writes to codex/claude. Needs label-format `--model` with flags before the prompt — the adapter handles this |
 
 ## Driving from any harness
 

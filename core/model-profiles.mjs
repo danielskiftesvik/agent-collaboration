@@ -45,18 +45,37 @@ export const MODEL_PROFILES = {
     harness: "agy",
     model: "Gemini 3.x (3.1 Pro / Flash, Google, mid-2026)",
     vendor: "Google",
+    // REVIEWER-ONLY through this runtime: agy (1.0.13) ignores the worktree it's
+    // handed (both cwd and --add-dir) and writes to its own
+    // ~/.gemini/antigravity-cli/scratch/, so a delegated WRITE worker leaves an
+    // empty captured patch (`no-changes`). It's an excellent reviewer; routing
+    // keeps it off write/implementer tasks until that's resolved.
+    canWrite: false,
     strongerAt: [
-      "speed & low cost on the Flash tier (high-throughput mechanical work)",
+      "fast, reliable structured REVIEW (verified 2/2 planted-bug recall, 0 false positives)",
       "multimodal input (images, PDFs, screens)",
-      "large context windows for whole-repo / big-doc work"
+      "speed & low cost on the Flash tier for read/scan work"
     ],
     weakerAt: [
-      "trails Claude/GPT-5.x on confirmed coding benchmarks (~7-8 pts behind on SWE-bench Verified; bottom of the standardized Pro cluster)",
-      "strict JSON adherence on the Flash tier (verified in this project)",
+      "cannot deliver a patch as a WRITE-worker through the runtime (writes to its own scratch, not the worktree) — reviewer-only for now",
+      "trails Claude/GPT-5.x on confirmed coding benchmarks (~7-8 pts behind on SWE-bench Verified)",
       "its often-cited 1M-token context *advantage* over rivals did NOT survive verification"
     ]
   }
 };
+
+// Task types that PRODUCE code (a worker writing a patch). A harness with
+// canWrite:false is excluded from these by `recommend`.
+export const WRITE_TASKS = new Set([
+  "mechanical",
+  "bulk-edit",
+  "quick-fix",
+  "refactor",
+  "general-swe",
+  "hard-bug",
+  "architecture",
+  "design-tradeoff"
+]);
 
 // task type -> preferred worker order (+ the rationale shown in a recommendation).
 export const TASK_ROUTING = {
@@ -69,9 +88,9 @@ export const TASK_ROUTING = {
   refactor: { workers: ["claude", "codex"], why: "Claude leads SWE-bench Verified + Terminal-Bench 2.0" },
   plan: { workers: ["claude", "codex"], why: "Claude's planning + scope discipline" },
   "general-swe": { workers: ["claude", "codex"], why: "Claude leads SWE-bench Verified + Terminal-Bench 2.0" },
-  mechanical: { workers: ["agy", "claude"], why: "Gemini Flash — fast/cheap (cost-based, not benchmark-confirmed)" },
-  "bulk-edit": { workers: ["agy", "claude"], why: "Gemini Flash — high-throughput (cost-based, not benchmark-confirmed)" },
-  "quick-fix": { workers: ["agy", "claude"], why: "Gemini Flash — fast turnaround (cost-based, not benchmark-confirmed)" },
+  mechanical: { workers: ["claude", "codex"], why: "fast mechanical edits — agy can't deliver patches through the runtime (reviewer-only)" },
+  "bulk-edit": { workers: ["claude", "codex"], why: "high-throughput edits — agy can't write through the runtime (reviewer-only)" },
+  "quick-fix": { workers: ["claude", "codex"], why: "quick fix — agy can't deliver patches through the runtime (reviewer-only)" },
   "large-context": { workers: ["agy", "codex"], why: "Gemini for big scans on cost; context-size advantage unconfirmed" },
   "broad-scan": { workers: ["agy", "codex"], why: "Gemini for big scans on cost; context-size advantage unconfirmed" }
 };

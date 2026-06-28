@@ -127,7 +127,7 @@ switch (subcommand) {
     const report = runDoctor(cwd, { live, workers });
     const human = [
       `doctor: ${report.ok ? "PASS" : "FAIL"}${live ? " (live)" : ""}`,
-      ...report.checks.map((c) => `  ${c.ok ? "✓" : "✗"} ${c.name} — ${c.detail}`),
+      ...report.checks.map((c) => `  ${c.warn ? "⚠" : c.ok ? "✓" : "✗"} ${c.name} — ${c.detail}`),
       live ? "" : "Run with --live to exercise each worker against a throwaway repo (spends model usage)."
     ]
       .filter(Boolean)
@@ -195,7 +195,9 @@ switch (subcommand) {
     const id = positionals[0];
     if (!id) fail("apply: a job id is required");
     const result = applyResult(cwd, id);
-    let human = result.applied ? "patch applied" : `not applied: ${result.error ?? result.stderr}`;
+    let human = result.applied
+      ? `patch applied${result.staged ? " (left STAGED — you had pre-existing staged work; `git diff --cached` to inspect)" : " to the working tree (unstaged; `git diff` to inspect, then commit)"}`
+      : `not applied: ${result.error ?? result.stderr}`;
     if (!result.applied) {
       const s = `${result.stderr ?? ""} ${result.error ?? ""}`;
       if (/does not match index|already exists in (the )?index|cannot read the current contents/i.test(s)) {
