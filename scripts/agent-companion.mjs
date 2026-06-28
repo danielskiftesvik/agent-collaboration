@@ -7,6 +7,7 @@ import path from "node:path";
 
 import { decideRoute, resolveDriver, isAuthoritativeDriver, runSetup, runWorkerSync, runWithFallback, resolveFallbackKinds, launchBackground, runJob, waitForJob, applyResult, recommendWorker } from "../core/dispatch.mjs";
 import { runDoctor } from "../core/doctor.mjs";
+import { version } from "../core/version.mjs";
 import { listJobs, getJob, updateJob, sortJobsNewestFirst, loadState, saveState } from "../core/state.mjs";
 import { isPidAlive } from "../core/heartbeat.mjs";
 import { renderSetup, renderJob, renderJobList, renderRecommendation, renderProfiles } from "../core/render.mjs";
@@ -50,6 +51,12 @@ const [subcommand, ...rest] = process.argv.slice(2);
 const { options, positionals } = parseArgs(rest);
 const cwd = process.cwd();
 
+// `version` / `--version` — confirm which build is actually running.
+if (subcommand === "version" || subcommand === "--version" || options.version) {
+  out({ name: "agent-collaboration", version: version() }, options, `agent-collaboration v${version()}`);
+  process.exit(0);
+}
+
 switch (subcommand) {
   case "setup": {
     if (options.gate || options.sandbox) {
@@ -67,7 +74,7 @@ switch (subcommand) {
       "\nTip: when driving from a sandboxed harness (e.g. Codex), run the companion " +
       "with escalated/network-enabled permissions — it spawns a worker that calls an " +
       "external API, which a default sandbox will block.";
-    out(rows, options, renderSetup(rows) + "\n" + hint);
+    out(rows, options, `agent-collaboration v${version()}\n\n` + renderSetup(rows) + "\n" + hint);
     break;
   }
 

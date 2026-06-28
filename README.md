@@ -178,6 +178,23 @@ node /path/to/agent-collaboration/scripts/agent-companion.mjs \
 
 Plus `setup --gate on|off` (opt-in stop-time review gate) and `setup --sandbox on|off`.
 
+## Versioning
+
+Check which build a harness is actually running:
+
+```
+node <plugin-dir>/scripts/agent-companion.mjs version   # -> agent-collaboration v0.2.0
+```
+The version also heads `setup` output and shows as a `doctor` check. **Bump it after
+changes** so harness `update` actually pulls them (a plugin manager that sees the same
+version treats you as up-to-date):
+
+```
+npm run bump 0.2.1     # rewrites the version in package.json + all 3 manifests
+```
+Then commit/push and re-run your harness's update/reload. (A test enforces that all
+manifests share one version.)
+
 ## Development
 
 ```

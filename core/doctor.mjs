@@ -11,6 +11,7 @@ import path from "node:path";
 import { runOk } from "./process.mjs";
 import { runSetup, runWorkerSync } from "./dispatch.mjs";
 import { resolveStateDir } from "./state.mjs";
+import { version } from "./version.mjs";
 
 function seedRepo() {
   const dir = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), "ac-doctor-")));
@@ -116,6 +117,7 @@ export function runDoctor(cwd, { live = false, workers } = {}) {
   const setup = runSetup();
   const ready = setup.filter((r) => r.validWorker).map((r) => r.name);
   const checks = [];
+  checks.push({ name: "version", ok: true, detail: version() });
 
   const major = Number(process.versions.node.split(".")[0]);
   checks.push({ name: "node>=20", ok: major >= 20, detail: `node ${process.versions.node}` });

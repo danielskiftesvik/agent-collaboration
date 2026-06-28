@@ -25,3 +25,13 @@ test("ships a .codex-plugin manifest for multi-harness install", () => {
   assert.equal(cx.name, "agent-collaboration");
   assert.equal(cx.skills, "./skills/", "declares skills for Codex");
 });
+
+test("version is consistent across package.json + all manifests (so `update` sees bumps)", () => {
+  const v = read("../package.json").version;
+  assert.match(v, /^\d+\.\d+\.\d+/, "package.json has a semver version");
+  assert.equal(read("../.claude-plugin/plugin.json").version, v, "claude plugin.json matches");
+  assert.equal(read("../.codex-plugin/plugin.json").version, v, "codex plugin.json matches");
+  const m = read("../.claude-plugin/marketplace.json");
+  assert.equal(m.metadata?.version ?? m.version, v, "marketplace version matches");
+  assert.equal(m.plugins.find((p) => p.name === "agent-collaboration").version, v, "marketplace plugin entry matches");
+});
