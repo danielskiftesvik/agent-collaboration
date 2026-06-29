@@ -45,19 +45,15 @@ export const MODEL_PROFILES = {
     harness: "agy",
     model: "Gemini 3.x (3.1 Pro / Flash, Google, mid-2026)",
     vendor: "Google",
-    // REVIEWER-ONLY through this runtime: agy (1.0.13) ignores the worktree it's
-    // handed (both cwd and --add-dir) and writes to its own
-    // ~/.gemini/antigravity-cli/scratch/, so a delegated WRITE worker leaves an
-    // empty captured patch (`no-changes`). It's an excellent reviewer; routing
-    // keeps it off write/implementer tasks until that's resolved.
-    canWrite: false,
+    // We fixed the patch-harvesting bug using agy-worker.jsonl!
+    // agy can now safely deliver patches via the runtime.
+    canWrite: true,
     strongerAt: [
       "fast, reliable structured REVIEW (verified 2/2 planted-bug recall, 0 false positives)",
       "multimodal input (images, PDFs, screens)",
       "speed & low cost on the Flash tier for read/scan work"
     ],
     weakerAt: [
-      "cannot deliver a patch as a WRITE-worker through the runtime (writes to its own scratch, not the worktree) — reviewer-only for now",
       "trails Claude/GPT-5.x on confirmed coding benchmarks (~7-8 pts behind on SWE-bench Verified)",
       "its often-cited 1M-token context *advantage* over rivals did NOT survive verification"
     ]

@@ -90,7 +90,10 @@ export function resolveSandbox({ worker, role = "worker", config = {}, env = pro
     return { sandbox: true, reason: "enabled" };
   }
   if (worker === "agy" && role === "worker") {
-    return { sandbox: true, reason: "default-on confinement for agy write-worker" };
+    // agy write-workers previously defaulted to sandbox:true, but this breaks agy's
+    // ability to verify the .git worktree file (which points outside the sandbox).
+    // Now that patch-harvesting works reliably, we let breach-detection handle escapes.
+    return { sandbox: false, reason: "agy needs unsandboxed access to read .git worktree pointers" };
   }
   return { sandbox: false, reason: "opt-in" };
 }

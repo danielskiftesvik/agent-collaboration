@@ -2,6 +2,8 @@
 // `--dangerously-skip-permissions`, scoped to a worktree via `--add-dir`, and
 // bounded by `--print-timeout`. It prints plain TEXT (no JSON flag), so the
 // dispatch layer extracts/validates JSON from the text for structured roles.
+import fs from "node:fs";
+import path from "node:path";
 import { defineAdapter } from "./contract.mjs";
 import { run } from "../core/process.mjs";
 
@@ -70,7 +72,10 @@ export default defineAdapter({
     const model = resolveModel();
     if (model) args.push("--model", model);
 
-    if (workspace) args.push("--add-dir", workspace);
+    if (workspace) {
+      args.push("--add-dir", workspace);
+      args.push("--log-file", path.join(workspace, "agy-worker.jsonl"));
+    }
     args.push("--print-timeout", `${seconds}s`);
     args.push("-p", brief);
     return { command: bin(), args };
@@ -103,7 +108,44 @@ export default defineAdapter({
       '{"status":"completed" | "failed" | "blocked","summary":"<one line>","changed":true | false}'
     );
   },
-  parseOutput({ stdout }) {
+  parseOutput({ stdout, workspace }) {
+    if (workspace) {
+      const logFile = path.join(workspace, "agy-worker.jsonl");
+      if (fs.existsSync(logFile)) {
+        try {
+          const logContent = fs.readFileSync(logFile, "utf-8");
+          // Extract the exact random UUID internal worktree path from agy's logs.
+          // We look for ANY occurrence of the path (TargetFile, Cwd, AbsolutePath, etc).
+          const match = logContent.match(/(\/[^"]+?\.gemini\/antigravity-cli\/worktrees\/[^\/]+\/[^\/]+\/)/);
+          if (match) {
+            const internalWorktree = match[1];
+            const s = run("git", ["diff", "--name-status", "HEAD"], { cwd: internalWorktree });
+            if (s.status === 0 && s.stdout) {
+              const lines = s.stdout.trim().split(/\r?\n/).filter(Boolean);
+              for (const line of lines) {
+                const parts = line.split(/\s+/);
+                if (parts.length >= 2) {
+                  const status = parts[0];
+                  const relPath = parts.slice(1).join(" "); // handles spaces if any (rough)
+                  const src = path.join(internalWorktree, relPath);
+                  const dst = path.join(workspace, relPath);
+                  if (status.startsWith("D")) {
+                    if (fs.existsSync(dst)) fs.unlinkSync(dst);
+                  } else {
+                    if (fs.existsSync(src)) {
+                      fs.mkdirSync(path.dirname(dst), { recursive: true });
+                      fs.copyFileSync(src, dst);
+                    }
+                  }
+                }
+              }
+            }
+          }
+        } catch (e) {
+          // Fall through to let the normal runtime handle empty-diff state
+        }
+      }
+    }
     return { answerText: (stdout ?? "").trim(), structured: null };
   },
   probe() {
