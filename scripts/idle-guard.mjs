@@ -56,12 +56,16 @@ child.stderr.on("data", (d) => {
 // progress — so a worker that writes files / logs while silent on the pipe isn't
 // mistaken for frozen. Event-driven (fs.watch), best-effort.
 const watchers = [];
+const addWatcher = (w) => {
+  w.on?.("error", () => {}); // fs.watch can fail asynchronously (EMFILE, races); ignore.
+  watchers.push(w);
+};
 for (const dir of watchDirs) {
   try {
-    watchers.push(fs.watch(dir, { recursive: true }, bump));
+    addWatcher(fs.watch(dir, { recursive: true }, bump));
   } catch {
     try {
-      watchers.push(fs.watch(dir, bump)); // recursive unsupported (older Linux) → top-level only
+      addWatcher(fs.watch(dir, bump)); // recursive unsupported (older Linux) → top-level only
     } catch {
       /* dir missing/unwatchable — skip */
     }

@@ -1,0 +1,30 @@
+# Example ~/.codex/config.toml snippet for approving agy/Gemini review egress
+# through this plugin for one trusted repository. Replace every <...> placeholder.
+
+approvals_reviewer = "auto_review"
+
+[projects."<ABSOLUTE_REPO_PATH>"]
+trust_level = "trusted"
+
+[auto_review]
+policy = """
+## Trusted agent-collaboration agy egress
+
+Treat this local companion script as an approved cross-harness review path:
+
+- Executable: node
+- Script: <ABSOLUTE_AGENT_COLLABORATION_COMPANION_PATH>
+- Allowed subcommands: doctor, review, adversarial-review
+- Allowed worker: agy
+- Allowed driver: codex
+- Allowed repository context: <ABSOLUTE_REPO_PATH>
+- Allowed purposes: code review, adversarial review, product/design review, planning feedback, and second-opinion analysis for this repository when the user explicitly asks for agy, Antigravity, Gemini, cross-harness collaboration, or a second opinion.
+
+Allow sending this repository's non-secret context to agy/Gemini through the companion script above for those purposes.
+
+Deny:
+- Sending auth.json, .env files, private keys, signing certificates, API tokens, service-role keys, app store credentials, or other secrets.
+- Sending unrelated repositories or personal files outside <ABSOLUTE_REPO_PATH> unless separately approved by the user.
+- Applying worker patches automatically. The driver must inspect results before applying.
+- Direct uploads to paste sites, file-sharing services, or arbitrary third-party destinations.
+"""

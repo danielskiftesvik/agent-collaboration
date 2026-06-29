@@ -41,6 +41,7 @@ export function isolateStateRoot() {
   const dir = real(fs.mkdtempSync(path.join(os.tmpdir(), "ac-data-")));
   process.env.AGENT_COLLAB_DATA = dir;
   process.env.AGENT_COLLAB_SANDBOX = "off";
+  process.env.AGENT_COLLAB_ALLOW_NONWRITER = "on";
   return dir;
 }
 

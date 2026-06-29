@@ -18,3 +18,11 @@ test("CLAUDE.md defaults the second opinion to codex; AGENTS.md to claude", () =
   assert.match(readText("../examples/CLAUDE.md"), /codex/);
   assert.match(readText("../examples/AGENTS.md"), /claude/);
 });
+
+test("ships a Codex auto-review TOML example for agy review egress", () => {
+  const t = readText("../examples/codex-auto-review-policy.toml");
+  assert.match(t, /approvals_reviewer = "auto_review"/);
+  assert.match(t, /Allowed worker: agy/);
+  assert.match(t, /Deny:/);
+  assert.doesNotMatch(t, /prspctv|nbfcqrtwxevypgtsysqr|supabase/i);
+});

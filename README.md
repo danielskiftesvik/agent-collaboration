@@ -179,6 +179,7 @@ node /path/to/agent-collaboration/scripts/agent-companion.mjs \
 | `AGENT_COLLAB_IDLE_TIMEOUT` | **Inactivity** timeout in **seconds** (default 600 = 10 min; `0` disables). If a worker makes **no progress** — neither stdout/stderr **nor file activity** (worktree, and agy's own log dir) — for this long it's killed as `frozen`. Generous so a slow-but-working worker isn't false-killed |
 | `AGENT_COLLAB_CODEX_RESUME=off` | Repair a bad codex reply with a fresh re-send instead of resuming its thread (`task --resume-last`); resume is on by default |
 | `AGENT_COLLAB_ALLOW_INPLACE=on` | Permit an **unisolated** in-place run when a git worktree can't be created. Off by default — without it such a job is `blocked` rather than run in your real tree |
+| `AGENT_COLLAB_ALLOW_NONWRITER=on` | Force a harness marked reviewer-only (currently agy) to run as a write-worker anyway. Off by default; use only for local experiments because patch capture may be empty |
 | `AGENT_COLLAB_AGY_CLASS` | agy model class to pin (`Flash` default, `Pro`, …) |
 | `AGENT_COLLAB_AGY_MODEL` | Pin an exact agy model label (overrides the class) |
 | `AGENT_COLLAB_<AGY\|CLAUDE\|CODEX>_BIN` | Override a harness binary path |

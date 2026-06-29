@@ -20,6 +20,7 @@ import {
   applyResult
 } from "../core/dispatch.mjs";
 import { appendJob, updateJob, getJob } from "../core/state.mjs";
+import { MODEL_PROFILES } from "../core/model-profiles.mjs";
 
 // ---- routing ----
 
@@ -57,6 +58,26 @@ if (process.argv.includes('models')) { process.stdout.write('Gemini 3.5 Flash (H
 fs.writeFileSync('worker-was-here.txt', 'hi from worker\\n');
 process.stdout.write('Done.\\n\\n\`\`\`json\\n{"status":"completed","summary":"made a file","changed":true}\\n\`\`\`\\n');
 `;
+
+test("runWorkerSync blocks write-workers whose profile cannot deliver patches", () => {
+  isolateStateRoot();
+  const repo = makeRepo();
+  const old = MODEL_PROFILES.agy.canWrite;
+  MODEL_PROFILES.agy.canWrite = false;
+  delete process.env.AGENT_COLLAB_ALLOW_NONWRITER;
+  process.env.AGENT_COLLAB_AGY_BIN = stubBin(WRITE_STUB);
+
+  const res = runWorkerSync(repo, { driver: "claude", worker: "agy", role: "worker", brief: "make a file" });
+
+  assert.equal(res.status, "blocked");
+  assert.equal(res.failureKind, "unsupported-worker");
+  assert.match(res.errors.join(" "), /cannot deliver patches/i);
+  assert.equal(fs.existsSync(path.join(repo, "worker-was-here.txt")), false);
+
+  MODEL_PROFILES.agy.canWrite = old;
+  process.env.AGENT_COLLAB_ALLOW_NONWRITER = "on";
+  delete process.env.AGENT_COLLAB_AGY_BIN;
+});
 
 test("runWorkerSync (worker) writes a valid result and a captured patch", () => {
   isolateStateRoot();
@@ -310,6 +331,41 @@ test("runWithFallback falls back to another worker when the first is rate-limite
   assert.equal(res.fellBackFrom[0].failureKind, "rate-limit");
   assert.match(res.note, /agy/);
 
+  delete process.env.AGENT_COLLAB_AGY_BIN;
+  delete process.env.AGENT_COLLAB_CLAUDE_BIN;
+});
+
+test("runWithFallback skips non-writer fallback candidates for write roles", () => {
+  isolateStateRoot();
+  const repo = makeRepo();
+  const old = MODEL_PROFILES.agy.canWrite;
+  MODEL_PROFILES.agy.canWrite = false;
+  delete process.env.AGENT_COLLAB_ALLOW_NONWRITER;
+  process.env.AGENT_COLLAB_CODEX_COMPANION = codexCompanionStub(`
+    process.stdout.write(JSON.stringify({
+      status: 1,
+      rawOutput: JSON.stringify({status:"failed",summary:"429 RESOURCE_EXHAUSTED quota exceeded",changed:false})
+    }));
+  `);
+  process.env.AGENT_COLLAB_AGY_BIN = stubBin(WRITE_STUB);
+  process.env.AGENT_COLLAB_CLAUDE_BIN = stubBin(CLAUDE_SUCCESS_STUB);
+
+  const res = runWithFallback(repo, {
+    driver: "manual",
+    worker: "codex",
+    role: "worker",
+    brief: "x",
+    available: ["codex", "agy", "claude"],
+    maxAttempts: 1
+  });
+
+  assert.equal(res.status, "completed");
+  assert.equal(res.worker, "claude");
+  assert.equal(res.fellBackFrom[0].worker, "codex");
+
+  MODEL_PROFILES.agy.canWrite = old;
+  process.env.AGENT_COLLAB_ALLOW_NONWRITER = "on";
+  delete process.env.AGENT_COLLAB_CODEX_COMPANION;
   delete process.env.AGENT_COLLAB_AGY_BIN;
   delete process.env.AGENT_COLLAB_CLAUDE_BIN;
 });

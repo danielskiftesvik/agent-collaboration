@@ -59,6 +59,14 @@ function watchDirsFor(worker, workspace) {
   return dirs;
 }
 
+function canWrite(worker) {
+  return MODEL_PROFILES[worker]?.canWrite !== false;
+}
+
+function canRunAsWriter(worker, env = process.env) {
+  return canWrite(worker) || env.AGENT_COLLAB_ALLOW_NONWRITER === "on";
+}
+
 /**
  * Decide whether to wrap a worker run in the OS sandbox (preventive write
  * confinement — a belt to breach-detection's suspenders). Policy:
@@ -113,7 +121,7 @@ export function recommendWorker({ task, driver, available = [] }) {
   // For write/implementer tasks, exclude harnesses that can't deliver a patch
   // through the runtime (agy writes to its own scratch, not the worktree).
   const isWrite = WRITE_TASKS.has(task);
-  const canWork = (w) => !(isWrite && MODEL_PROFILES[w]?.canWrite === false);
+  const canWork = (w) => !(isWrite && !canWrite(w));
 
   const cross = entry.workers.filter((w) => avail.has(w) && w !== driver && canWork(w));
   if (cross.length) {
@@ -273,19 +281,27 @@ export function runWorkerSync(cwd, opts) {
   // harness (e.g. `agy --dangerously-skip-permissions`) can never write to the
   // live tree. Only a worker's changes are captured as a patch; a reviewer's are
   // discarded with the worktree.
-  const blocked = (reason) => {
+  const blocked = (reason, failureKind = "isolation") => {
     const errors = [reason];
     writeInitial({
       id: jobId, driver, worker, role, status: "blocked", pid: process.pid,
       baseRef: null, workspace: cwd, artifactDir, heartbeatAt: new Date().toISOString()
     });
-    updateJob(cwd, jobId, { errors, failureKind: "isolation" });
+    updateJob(cwd, jobId, { errors, failureKind });
     return {
       jobId, worker, status: "blocked", resultValid: false, valid: false,
       changed: false, patchApplies: null, artifact: null, artifactDir,
-      patchPath: null, isolated: false, errors
+      patchPath: null, isolated: false, failureKind, errors
     };
   };
+
+  if (role === "worker" && !canRunAsWriter(worker)) {
+    return blocked(
+      `${worker} is reviewer-only through this runtime and cannot deliver patches as a write-worker. ` +
+        "Route implementation work to codex or claude; use agy for review/planning.",
+      "unsupported-worker"
+    );
+  }
 
   let baseRef = null;
   let workspace = cwd;
@@ -670,8 +686,9 @@ export function runWithFallback(cwd, opts) {
   // fallback never spawns the driver's own harness behind its back.
   const candidates = [];
   if (worker) candidates.push(worker);
+  const isWrite = (rest.role ?? "worker") === "worker" || (task && WRITE_TASKS.has(task));
   for (const w of avail) {
-    if (w && w !== driver && !candidates.includes(w)) candidates.push(w);
+    if (w && w !== driver && !candidates.includes(w) && (!isWrite || canRunAsWriter(w))) candidates.push(w);
   }
 
   const fellBackFrom = [];
