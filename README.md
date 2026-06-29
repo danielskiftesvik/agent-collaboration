@@ -121,10 +121,12 @@ driver, `AGENTS.md` for Codex/agy drivers).
   is missing (the patch is the deliverable).
 - **Stall detection:** jobs carry a heartbeat; a job whose heartbeat is stale **and** whose
   process is gone is treated as stalled.
-- **Freeze detection:** every worker runs under an inactivity watchdog (`idle-guard`) — if it
-  produces no output for `AGENT_COLLAB_IDLE_TIMEOUT` (default 3 min) it's killed fast as
-  `failureKind: "frozen"` and falls back, so a hung worker surfaces in minutes instead of at
-  the 20-min hard ceiling.
+- **Freeze detection:** every worker runs under an inactivity watchdog (`idle-guard`). Progress
+  = stdout/stderr **or** file activity (worktree + agy's log dir) — workers often log/write
+  files rather than streaming to the pipe (claude is run in streaming mode to provide a
+  heartbeat). Only a worker making NO progress for `AGENT_COLLAB_IDLE_TIMEOUT` (default 10 min)
+  is killed as `failureKind: "frozen"` (and falls back), so a real hang surfaces before the
+  20-min hard ceiling without false-killing a slow-but-working run.
 - **Limit & timeout handling:** a failed run is classified (`failureKind` = `rate-limit` |
   `auth` | `timeout` | `frozen` | `other` + a best-effort `resetAt`). On a **transient** failure
   (`rate-limit`/`timeout` by default) the runtime **auto-falls-back to the next worker-ready
@@ -174,7 +176,7 @@ node /path/to/agent-collaboration/scripts/agent-companion.mjs \
 | `AGENT_COLLAB_SANDBOX_STRICT=on` | Tighten the macOS profile to deny file-write by default (confine writes to work area + temp + harness state; blocks /tmp & other volumes). Default profile only blocks `$HOME`; Linux bwrap is already strict |
 | `AGENT_COLLAB_FALLBACK` | Auto-fallback policy: `off` \| `on` (rate-limit+auth+timeout) \| comma-list of kinds. Default `rate-limit,timeout` (transient; **auth is surfaced**, not routed around) |
 | `AGENT_COLLAB_TIMEOUT` | Per-attempt worker **hard** timeout in **seconds** (default 1200 = 20 min). Deep reasoners on big diffs need a generous budget — too short kills the run mid-flight |
-| `AGENT_COLLAB_IDLE_TIMEOUT` | **Inactivity** timeout in **seconds** (default 180 = 3 min; `0` disables). If a worker produces no output for this long it's killed fast as `frozen` — so a hung worker is caught in minutes, not at the hard ceiling |
+| `AGENT_COLLAB_IDLE_TIMEOUT` | **Inactivity** timeout in **seconds** (default 600 = 10 min; `0` disables). If a worker makes **no progress** — neither stdout/stderr **nor file activity** (worktree, and agy's own log dir) — for this long it's killed as `frozen`. Generous so a slow-but-working worker isn't false-killed |
 | `AGENT_COLLAB_CODEX_RESUME=off` | Repair a bad codex reply with a fresh re-send instead of resuming its thread (`task --resume-last`); resume is on by default |
 | `AGENT_COLLAB_ALLOW_INPLACE=on` | Permit an **unisolated** in-place run when a git worktree can't be created. Off by default — without it such a job is `blocked` rather than run in your real tree |
 | `AGENT_COLLAB_AGY_CLASS` | agy model class to pin (`Flash` default, `Pro`, …) |

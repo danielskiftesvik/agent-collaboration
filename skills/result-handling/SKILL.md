@@ -64,9 +64,10 @@ from a review is forbidden, even when the fix looks obvious.
 
 A failed result is **classified** so you don't have to guess. Read these fields:
 
-- `failureKind: "frozen"` — the worker produced **no output** for the idle window
-  (`AGENT_COLLAB_IDLE_TIMEOUT`, default 3 min) and was killed fast (well before the
-  hard timeout). Auto-falls-back. A genuinely-stuck worker; tell the user it hung.
+- `failureKind: "frozen"` — the worker made **no progress** (no stdout/stderr AND no
+  file activity) for the idle window (`AGENT_COLLAB_IDLE_TIMEOUT`, default 10 min) and
+  was killed before the hard timeout. Auto-falls-back. A genuinely-stuck worker; tell
+  the user it hung. (If a worker is just slow-but-working, raise the idle budget.)
 - `failureKind: "timeout"` — the worker was killed at the **hard** time budget
   (deep reasoners like codex on big diffs are the usual case). Auto-falls-back; to
   keep the same worker, retry with a bigger `--timeout` / `AGENT_COLLAB_TIMEOUT`.

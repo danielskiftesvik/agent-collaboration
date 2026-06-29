@@ -583,14 +583,39 @@ test("waitForJob marks a job stalled when its process is gone without finishing"
 
 // ---- inactivity (freeze) watchdog ----
 
-test("defaultIdleMs honors AGENT_COLLAB_IDLE_TIMEOUT (incl. 0=off) and defaults to 3 min", () => {
+test("defaultIdleMs honors AGENT_COLLAB_IDLE_TIMEOUT (incl. 0=off) and defaults generously", () => {
   delete process.env.AGENT_COLLAB_IDLE_TIMEOUT;
-  assert.equal(defaultIdleMs(), 180000);
+  assert.equal(defaultIdleMs(), 600000); // 10 min — must not false-kill a slow worker
   process.env.AGENT_COLLAB_IDLE_TIMEOUT = "60";
   assert.equal(defaultIdleMs(), 60000);
   process.env.AGENT_COLLAB_IDLE_TIMEOUT = "0";
   assert.equal(defaultIdleMs(), 0);
   delete process.env.AGENT_COLLAB_IDLE_TIMEOUT;
+});
+
+test("a worker SILENT on stdout but writing files in its worktree is NOT killed as frozen", () => {
+  isolateStateRoot();
+  const repo = makeRepo();
+  // No stdout for ~2s, but file activity every 200ms in the worktree (cwd) — this
+  // is the real-world case (claude/agy work quietly + write files) that the
+  // stdout-only watchdog used to false-kill.
+  process.env.AGENT_COLLAB_AGY_BIN = stubBin(`
+    import fs from 'node:fs';
+    if (process.argv.includes('models')) { process.exit(0); }
+    let n = 0;
+    const iv = setInterval(() => { try { fs.writeFileSync('progress-' + (n++) + '.txt', 'x'); } catch {} }, 200);
+    await new Promise((r) => setTimeout(r, 2000));
+    clearInterval(iv);
+    fs.writeFileSync('done.txt', 'ok\\n');
+    process.stdout.write('\`\`\`json\\n{"status":"completed","summary":"did it","changed":true}\\n\`\`\`');
+  `);
+
+  const res = runWorkerSync(repo, { driver: "claude", worker: "agy", role: "worker", brief: "x", idleMs: 800, timeoutMs: 60000, maxAttempts: 1 });
+
+  assert.notEqual(res.failureKind, "frozen", "file activity must count as progress");
+  assert.equal(res.status, "completed");
+
+  delete process.env.AGENT_COLLAB_AGY_BIN;
 });
 
 test("a worker that goes silent past the idle window is killed FAST as 'frozen'", () => {

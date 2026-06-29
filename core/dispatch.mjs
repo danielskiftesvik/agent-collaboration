@@ -4,6 +4,7 @@
 import { randomUUID } from "node:crypto";
 import { spawn } from "node:child_process";
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -40,7 +41,22 @@ export function defaultTimeoutMs() {
 export function defaultIdleMs() {
   const s = Number(process.env.AGENT_COLLAB_IDLE_TIMEOUT);
   if (Number.isFinite(s)) return Math.max(0, Math.round(s * 1000)); // explicit (incl. 0 = off)
-  return 180000; // 3 min
+  return 600000; // 10 min — generous: only a worker silent AND idle on disk this long is "frozen"
+}
+
+/** Dirs whose file activity counts as worker progress for the idle watchdog: the
+ *  worktree, plus (for agy) its own log dir, since agy streams progress there. */
+function watchDirsFor(worker, workspace) {
+  const dirs = [workspace];
+  if (worker === "agy") {
+    const agyLog = path.join(os.homedir(), ".gemini", "antigravity-cli", "log");
+    try {
+      if (fs.existsSync(agyLog)) dirs.push(agyLog);
+    } catch {
+      /* ignore */
+    }
+  }
+  return dirs;
 }
 
 /**
@@ -380,11 +396,13 @@ export function runWorkerSync(cwd, opts) {
   const wantStrict = process.env.AGENT_COLLAB_SANDBOX_STRICT === "on" || state.config.sandboxStrict === true;
   let sandboxDegraded = false;
 
+  const watchDirs = watchDirsFor(worker, workspace);
   const exec = (cmd, sandbox) =>
     run(cmd.command, cmd.args, {
       cwd: workspace,
       timeout: timeoutMs,
       idleMs,
+      watchDirs,
       env: { ...process.env, ...(cmd.env ?? {}) },
       sandbox,
       sandboxStrict: wantStrict,

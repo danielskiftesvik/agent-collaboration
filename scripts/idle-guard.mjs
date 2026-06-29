@@ -5,16 +5,23 @@
 // also enforces an optional --timeout (hard) ceiling. The child's stdout/stderr
 // are re-emitted verbatim, so the caller captures output exactly as before.
 //
-// Usage: node idle-guard.mjs --idle <ms> [--timeout <ms>] -- <cmd> [args...]
+// "Output" here means EITHER stdout/stderr OR file activity under a --watch dir —
+// many workers stream progress to their own logs / write files rather than to the
+// pipe, so watching only the pipe would false-kill a healthy-but-quiet run.
+//
+// Usage: node idle-guard.mjs --idle <ms> [--timeout <ms>] [--watch <dir>]... -- <cmd> [args...]
 import { spawn } from "node:child_process";
+import fs from "node:fs";
 
 const argv = process.argv.slice(2);
 let idleMs = 0;
 let hardMs = 0;
+const watchDirs = [];
 let i = 0;
 for (; i < argv.length; i++) {
   if (argv[i] === "--idle") idleMs = Number(argv[++i]) || 0;
   else if (argv[i] === "--timeout") hardMs = Number(argv[++i]) || 0;
+  else if (argv[i] === "--watch") watchDirs.push(argv[++i]);
   else if (argv[i] === "--") {
     i++;
     break;
@@ -45,6 +52,31 @@ child.stderr.on("data", (d) => {
   bump();
 });
 
+// File activity under the worktree (and, for agy, its own log dir) ALSO counts as
+// progress — so a worker that writes files / logs while silent on the pipe isn't
+// mistaken for frozen. Event-driven (fs.watch), best-effort.
+const watchers = [];
+for (const dir of watchDirs) {
+  try {
+    watchers.push(fs.watch(dir, { recursive: true }, bump));
+  } catch {
+    try {
+      watchers.push(fs.watch(dir, bump)); // recursive unsupported (older Linux) → top-level only
+    } catch {
+      /* dir missing/unwatchable — skip */
+    }
+  }
+}
+const closeWatchers = () => {
+  for (const w of watchers) {
+    try {
+      w.close();
+    } catch {
+      /* ignore */
+    }
+  }
+};
+
 const killTree = (sig) => {
   try {
     process.kill(-child.pid, sig); // the whole group (sandbox-exec + the worker)
@@ -73,6 +105,7 @@ const timer = setInterval(() => {
 
 child.on("error", (e) => {
   clearInterval(timer);
+  closeWatchers();
   process.stderr.write(`idle-guard: ${e.message}\n`);
   process.exit(2);
 });
@@ -81,6 +114,7 @@ child.on("error", (e) => {
 // has been re-emitted before we decide the exit code.
 child.on("close", (code, signal) => {
   clearInterval(timer);
+  closeWatchers();
   if (reason === "idle") {
     process.stderr.write(`\n[idle-guard] no output for ${Math.round(idleMs / 1000)}s — worker appears frozen; killed.\n`);
     process.exit(124);

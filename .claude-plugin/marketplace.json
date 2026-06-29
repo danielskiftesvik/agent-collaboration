@@ -6,14 +6,14 @@
   },
   "metadata": {
     "description": "Cross-harness agent collaboration: drive Codex, Antigravity (agy), or Claude Code as workers/reviewers from any of them.",
-    "version": "0.3.0"
+    "version": "0.4.0"
   },
   "plugins": [
     {
       "name": "agent-collaboration",
       "source": ".",
       "description": "Delegate a task to a worker/reviewer on another harness (Codex or Antigravity) and apply the result.",
-      "version": "0.3.0",
+      "version": "0.4.0",
       "author": {
         "name": "Daniel Skiftesvik"
       },

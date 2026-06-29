@@ -10,7 +10,11 @@ export default defineAdapter({
   name: "claude",
   supportsStructuredOutput: false, // envelope is JSON; the answer inside is text
   buildCommand({ role, brief, workspace }) {
-    const args = ["-p", brief, "--output-format", "json"];
+    // STREAM the run (NDJSON events) rather than a single JSON at the end, so a
+    // long implementation emits a continuous stdout heartbeat — otherwise the
+    // idle watchdog can't tell "working" from "frozen" (claude is silent until
+    // done in plain --output-format json). stream-json needs --verbose headless.
+    const args = ["-p", brief, "--output-format", "stream-json", "--verbose"];
     args.push("--permission-mode", role === "reviewer" ? "plan" : "acceptEdits");
     if (workspace) args.push("--add-dir", workspace);
     return { command: bin(), args };
@@ -34,7 +38,6 @@ export default defineAdapter({
   },
   parseOutput({ stdout }) {
     const text = stdout ?? "";
-    // Try the whole thing, then the last non-empty line (stream-json).
     const tryParse = (s) => {
       try {
         return JSON.parse(s);
@@ -42,13 +45,19 @@ export default defineAdapter({
         return null;
       }
     };
-    let env = tryParse(text);
-    if (!env) {
-      const lines = text.split(/\r?\n/).filter((l) => l.trim());
-      env = tryParse(lines[lines.length - 1] ?? "");
+    // stream-json: NDJSON events; the final {"type":"result","result":"…"} carries
+    // the answer. Scan from the end for it.
+    const lines = text.split(/\r?\n/).filter((l) => l.trim());
+    for (let i = lines.length - 1; i >= 0; i--) {
+      const ev = tryParse(lines[i]);
+      if (ev && ev.type === "result" && typeof ev.result === "string") {
+        return { answerText: ev.result, structured: null };
+      }
     }
-    if (env && typeof env.result === "string") {
-      return { answerText: env.result, structured: null };
+    // Fallbacks: a single JSON envelope (older --output-format json) or raw text.
+    const whole = tryParse(text) || tryParse(lines[lines.length - 1] ?? "");
+    if (whole && typeof whole.result === "string") {
+      return { answerText: whole.result, structured: null };
     }
     return { answerText: text.trim(), structured: null };
   },

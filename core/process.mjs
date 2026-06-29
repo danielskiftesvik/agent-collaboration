@@ -135,16 +135,22 @@ export function run(command, args = [], opts = {}) {
   delete spawnOpts.sandboxArtifactDir;
   delete spawnOpts.sandboxStrict;
   delete spawnOpts.idleMs;
+  delete spawnOpts.watchDirs;
 
   // Inactivity watchdog: wrap the (possibly sandboxed) command in idle-guard so a
-  // FROZEN run is killed after `idleMs` of no output instead of blocking to the
-  // hard ceiling. The guard also enforces the hard timeout (killing the whole
-  // group, not just the direct child); spawnSync's own timeout becomes a +30s
-  // backstop in case the guard itself wedges.
+  // FROZEN run is killed after `idleMs` with no progress, instead of blocking to
+  // the hard ceiling. "Progress" = stdout/stderr OR file activity under watchDirs
+  // (workers often log/write files rather than streaming to the pipe). The guard
+  // also enforces the hard timeout (killing the whole group); spawnSync's own
+  // timeout becomes a +30s backstop in case the guard itself wedges.
   const idleMs = Number(opts.idleMs) || 0;
   if (idleMs > 0) {
     const hardMs = Number(opts.timeout) || 0;
-    finalArgs = [IDLE_GUARD, "--idle", String(idleMs), "--timeout", String(hardMs), "--", finalCommand, ...finalArgs];
+    const watchArgs = [];
+    for (const d of opts.watchDirs ?? []) {
+      if (d) watchArgs.push("--watch", d);
+    }
+    finalArgs = [IDLE_GUARD, "--idle", String(idleMs), "--timeout", String(hardMs), ...watchArgs, "--", finalCommand, ...finalArgs];
     finalCommand = process.execPath;
     spawnOpts.timeout = hardMs ? hardMs + 30000 : undefined;
   }

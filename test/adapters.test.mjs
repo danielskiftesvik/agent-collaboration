@@ -49,10 +49,13 @@ test("agy parseOutput returns stdout as the answer text", () => {
   assert.equal(r.structured, null);
 });
 
-test("claude buildCommand asks for JSON output; reviewer is read-only, worker can edit", () => {
+test("claude buildCommand STREAMS output (heartbeat); reviewer is read-only, worker can edit", () => {
   const claude = getAdapter("claude");
   const reviewer = claude.buildCommand({ role: "reviewer", brief: "review", workspace: "/w" });
-  assert.ok(reviewer.args.includes("--output-format") && reviewer.args.includes("json"));
+  // stream-json (+ --verbose) so a long run emits a continuous stdout heartbeat the
+  // idle watchdog can see — not a single blob at the end.
+  assert.ok(reviewer.args.includes("--output-format") && reviewer.args.includes("stream-json"));
+  assert.ok(reviewer.args.includes("--verbose"));
   assert.ok(reviewer.args.includes("--permission-mode") && reviewer.args.includes("plan"));
 
   const worker = claude.buildCommand({ role: "worker", brief: "build", workspace: "/w" });

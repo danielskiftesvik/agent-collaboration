@@ -111,11 +111,13 @@ This is the brokerless version of the reference's async model (no app-server bro
 
 ## Freeze detection (idle watchdog)
 
-Every worker runs under an inactivity guard: if it emits **no output** for
-`AGENT_COLLAB_IDLE_TIMEOUT` (default 180s; `0` disables), it's killed and surfaced as
-`failureKind: "frozen"` — caught in minutes, not at the hard ceiling. `frozen` is
-fallback-eligible (auto-hands-off to another worker). This is separate from the hard
-timeout below.
+Every worker runs under an inactivity guard. **Progress** = stdout/stderr OR file
+activity under the worktree (and, for agy, its own log dir) — because workers often
+log/write files instead of streaming to the pipe (claude runs in streaming mode to
+provide a heartbeat). Only NO-progress for `AGENT_COLLAB_IDLE_TIMEOUT` (default 600s;
+`0` disables) trips it → killed, surfaced as `failureKind: "frozen"`, and
+fallback-eligible. Generous default so a slow-but-working worker isn't false-killed.
+Separate from the hard timeout below.
 
 ## Timeouts (avoid the "no JSON found" no-output)
 
@@ -158,7 +160,7 @@ read `tasks/<jobId>/reports/<worker>.md` before concluding nothing came back.
   Validate against your worker with `doctor --live` before relying on it.
 - `AGENT_COLLAB_FALLBACK` — fallback policy: `off` | `on` (rate-limit+auth+timeout) | comma-list. Default: `rate-limit,timeout` (auth surfaces).
 - `AGENT_COLLAB_TIMEOUT=<s>` — per-attempt worker HARD timeout in seconds (default 1200 = 20 min).
-- `AGENT_COLLAB_IDLE_TIMEOUT=<s>` — inactivity timeout in seconds (default 180; 0 = off): no output for this long → killed as `frozen`.
+- `AGENT_COLLAB_IDLE_TIMEOUT=<s>` — inactivity timeout in seconds (default 600; 0 = off): no progress (output OR file activity) for this long → killed as `frozen`.
 - `AGENT_COLLAB_CODEX_RESUME=off` — repair with a fresh re-send instead of resuming the codex thread (resume is on by default).
 - `AGENT_COLLAB_ALLOW_INPLACE=on` — allow an UNISOLATED in-place run when a worktree can't be created (off by default → such a job is `blocked`, never run in the real cwd).
 - `AGENT_COLLAB_<AGY|CLAUDE|CODEX>_BIN` — override a harness binary.
