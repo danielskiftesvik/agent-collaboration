@@ -49,6 +49,17 @@ test("agy parseOutput returns stdout as the answer text", () => {
   assert.equal(r.structured, null);
 });
 
+test("agy parseOutput removes its workspace log before patch capture", () => {
+  const agy = getAdapter("agy");
+  const workspace = fs.mkdtempSync(path.join(os.tmpdir(), "ac-agy-wt-"));
+  const logFile = path.join(workspace, "agy-worker.jsonl");
+  fs.writeFileSync(logFile, "log noise\n");
+
+  agy.parseOutput({ stdout: "{}", stderr: "", exitCode: 0, workspace });
+
+  assert.equal(fs.existsSync(logFile), false);
+});
+
 test("claude buildCommand STREAMS output (heartbeat); reviewer is read-only, worker can edit", () => {
   const claude = getAdapter("claude");
   const reviewer = claude.buildCommand({ role: "reviewer", brief: "review", workspace: "/w" });
