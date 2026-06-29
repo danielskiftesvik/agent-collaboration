@@ -143,6 +143,12 @@ export default defineAdapter({
           }
         } catch (e) {
           // Fall through to let the normal runtime handle empty-diff state
+        } finally {
+          try {
+            fs.rmSync(logFile, { force: true });
+          } catch {
+            // best-effort: the log is only for harvesting, not part of the patch
+          }
         }
       }
     }

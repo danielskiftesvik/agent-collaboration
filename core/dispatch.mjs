@@ -74,10 +74,8 @@ function canRunAsWriter(worker, env = process.env) {
  *     nesting sandbox-exec fails ("Operation not permitted").
  *   - `AGENT_COLLAB_SANDBOX=off` (or config.sandbox===false) → never.
  *   - `AGENT_COLLAB_SANDBOX=on` (or config.sandbox===true) → on (non-codex).
- *   - Otherwise DEFAULT-ON for agy WRITE-workers: agy runs unattended
- *     (--dangerously-skip-permissions) and doesn't self-sandbox, so confine its
- *     writes. Reviewers and other harnesses stay opt-in (don't risk the working
- *     review path; breach detection still covers escapes).
+ *   - Otherwise opt-in. agy write-workers need unsandboxed access to read linked
+ *     worktree .git pointers; breach detection still catches live-tree escapes.
  * If the sandbox can't actually be applied at runtime, the caller degrades to an
  * unsandboxed run (breach detection remains active).
  */
@@ -407,8 +405,8 @@ export function runWorkerSync(cwd, opts) {
       })
     : `${brief ?? ""}${contract}`;
 
-  // Preventive OS-sandbox confinement (default-on for agy write-workers; never
-  // codex; opt-in otherwise — see resolveSandbox). If it can't actually be applied
+  // Preventive OS-sandbox confinement (never codex; opt-in otherwise — see
+  // resolveSandbox). If it can't actually be applied
   // we degrade to an unsandboxed run (breach detection stays active).
   const state = loadState(cwd);
   const wantSandbox = resolveSandbox({ worker, role, config: state.config, env: process.env }).sandbox;

@@ -4,6 +4,7 @@
 // running in a worktree shares state/artifacts with its driver.
 import { execFileSync } from "node:child_process";
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 
 import { resolveStateDir } from "./state.mjs";
@@ -54,7 +55,9 @@ export function resolveWorkspaceRoot(cwd) {
 
 /** Directory (outside the repo) where ephemeral worktrees for a workspace live. */
 export function worktreesDir(cwd) {
-  return path.join(resolveStateDir(cwd), "worktrees");
+  // agy ignores workspace URIs under hidden directories; keep state hidden, but
+  // put ephemeral git worktrees in a visible temp root.
+  return path.join(os.tmpdir(), "agent-collaboration-worktrees", path.basename(resolveStateDir(cwd)));
 }
 
 /**

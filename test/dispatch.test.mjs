@@ -733,13 +733,13 @@ test("runWithFallback falls back when the first worker FREEZES", () => {
 
 // ---- preventive OS-sandbox policy ----
 
-test("resolveSandbox: default-on for agy write-workers, never codex, opt-in otherwise", () => {
+test("resolveSandbox: opt-in for agy write-workers, never codex", () => {
   // codex self-sandboxes → never wrap it (nesting crashes)
   assert.equal(resolveSandbox({ worker: "codex", role: "worker", env: {} }).sandbox, false);
   assert.equal(resolveSandbox({ worker: "codex", role: "worker", env: { AGENT_COLLAB_SANDBOX: "on" } }).sandbox, false);
 
-  // agy write-worker → default-on
-  assert.equal(resolveSandbox({ worker: "agy", role: "worker", env: {} }).sandbox, true);
+  // agy write-worker → opt-in; it must read git worktree pointers outside cwd.
+  assert.equal(resolveSandbox({ worker: "agy", role: "worker", env: {} }).sandbox, false);
   // agy reviewer → opt-in (don't risk the working review path)
   assert.equal(resolveSandbox({ worker: "agy", role: "reviewer", env: {} }).sandbox, false);
   // claude worker → opt-in
