@@ -151,6 +151,7 @@ driver, `AGENTS.md` for Codex/agy drivers).
 | **codex** (GPT-5.x) | ✓ | ✓ | Deepest reasoning; prefers XML-block prompts. Slower — give it a generous timeout; severity case is normalized for you |
 | **claude** | ✓ | ✓ | Use the native `Agent` tool when Claude Code is also the driver |
 | **agy** (Gemini) | ✓ | ✓ | Fast reviewer and implementer (Flash by default; `AGENT_COLLAB_AGY_CLASS=Pro` for depth). The adapter pins model flags before the prompt and harvests patches from agy's internal worktree when needed |
+| **qwen** (local) | ✓ (local-only tasks) | ✓ (plan-execution only) | Local-only, via a local LM Studio server. **Always explicit** — never in `recommend`'s default rotation, never a fallback target, never falls back away from itself on failure. Two routes only: `local-only` (sensitive-data review) and `plan-execution` (implementing a pre-written plan). See [Configuration](#configuration) for the `AGENT_COLLAB_QWEN_*` env vars. Local-only means the *worker run* stays local — compose briefs as file paths, not pasted content, and see the harness-prompting qwen guide for the full privacy boundary |
 
 ## Driving from any harness
 
@@ -176,12 +177,17 @@ node /path/to/agent-collaboration/scripts/agent-companion.mjs \
 | `AGENT_COLLAB_SANDBOX_STRICT=on` | Tighten the macOS profile to deny file-write by default (confine writes to work area + temp + harness state; blocks /tmp & other volumes). Default profile only blocks `$HOME`; Linux bwrap is already strict |
 | `AGENT_COLLAB_FALLBACK` | Auto-fallback policy: `off` \| `on` (rate-limit+auth+timeout) \| comma-list of kinds. Default `rate-limit,timeout` (transient; **auth is surfaced**, not routed around) |
 | `AGENT_COLLAB_TIMEOUT` | Per-attempt worker **hard** timeout in **seconds** (default 1200 = 20 min). Deep reasoners on big diffs need a generous budget — too short kills the run mid-flight |
-| `AGENT_COLLAB_IDLE_TIMEOUT` | **Inactivity** timeout in **seconds** (default 600 = 10 min; `0` disables). If a worker makes **no progress** — neither stdout/stderr **nor file activity** (worktree, and agy's own log dir) — for this long it's killed as `frozen`. Generous so a slow-but-working worker isn't false-killed |
+| `AGENT_COLLAB_IDLE_TIMEOUT` | **Inactivity** timeout in **seconds** (default 600 = 10 min; `0` disables). If a worker makes **no progress** — neither stdout/stderr **nor file activity** (worktree, and agy's own log dir) — for this long it's killed as `frozen`. Generous so a slow-but-working worker isn't false-killed. **qwen has its own, more generous built-in default (30 min, via `MODEL_PROFILES.qwen.idleMsOverride`) that takes precedence over this env var** — `--output-format json` gives no stdout heartbeat, and live testing found no genuine hangs, only wrong/incomplete output within normal wall-time budgets, so a wider allowance was chosen over chasing a streaming heartbeat |
 | `AGENT_COLLAB_CODEX_RESUME=off` | Repair a bad codex reply with a fresh re-send instead of resuming its thread (`task --resume-last`); resume is on by default |
 | `AGENT_COLLAB_ALLOW_INPLACE=on` | Permit an **unisolated** in-place run when a git worktree can't be created. Off by default — without it such a job is `blocked` rather than run in your real tree |
 | `AGENT_COLLAB_ALLOW_NONWRITER=on` | Force a harness marked reviewer-only to run as a write-worker anyway. Off by default; use only for local experiments because patch capture may be empty |
 | `AGENT_COLLAB_AGY_CLASS` | agy model class to pin (`Flash` default, `Pro`, …) |
 | `AGENT_COLLAB_AGY_MODEL` | Pin an exact agy model label (overrides the class) |
+| `AGENT_COLLAB_QWEN_BIN` | Override the `qwen` binary path |
+| `AGENT_COLLAB_QWEN_MODEL` | Pin a specific local model via `-m` (default: none — inherits qwen's own configured default in `~/.qwen/settings.json`, since LM Studio serves one model at a time and can't be reliably auto-detected) |
+| `AGENT_COLLAB_QWEN_BASE_URL` | Override the local LM Studio endpoint (default `http://127.0.0.1:1234/v1`). Must be loopback (`127.0.0.1`/`localhost`/`::1`) — a non-loopback value is refused unless `AGENT_COLLAB_QWEN_ALLOW_REMOTE=on` |
+| `AGENT_COLLAB_QWEN_API_KEY` | Override the local endpoint's API key (default `lm-studio` — LM Studio doesn't validate it, it just needs to be present) |
+| `AGENT_COLLAB_QWEN_ALLOW_REMOTE=on` | Explicitly permit a non-loopback `AGENT_COLLAB_QWEN_BASE_URL`. Off by default — qwen's entire purpose is keeping a job off the cloud, so a remote endpoint must be opt-in, never silently accepted |
 | `AGENT_COLLAB_<AGY\|CLAUDE\|CODEX>_BIN` | Override a harness binary path |
 
 Plus `setup --gate on|off` (opt-in stop-time review gate) and `setup --sandbox on|off`.

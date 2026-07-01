@@ -74,6 +74,12 @@ node "${CLAUDE_PLUGIN_ROOT}/scripts/agent-companion.mjs" recommend --task second
 Defaults to the other strong reasoner — **codex if Claude is driving, claude if Codex is
 driving** (agy driving → codex). Use the returned `worker`.
 
+For an investigation touching sensitive/local-only data, use
+`recommend --task local-only` instead — this routes to `qwen` (local, never a
+cloud API) or returns none if qwen isn't available, never a substituted cloud
+harness. See [harness-prompting's qwen guide](../harness-prompting/references/qwen.md)
+for how to keep the brief itself from leaking the sensitive content before qwen runs.
+
 ## Step 3 — Independent second opinion (anti-anchored)
 
 **Anti-anchoring (critical):** strip the `**Confidence: NN%**` line before sending — the
