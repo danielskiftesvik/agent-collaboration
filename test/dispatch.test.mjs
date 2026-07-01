@@ -451,6 +451,32 @@ test("runWithFallback never auto-appends an explicitOnly harness as a fallback f
   delete process.env.AGENT_COLLAB_AGY_BIN;
 });
 
+test("a cleanEnv harness does not inherit ambient environment variables", () => {
+  isolateStateRoot();
+  const repo = makeRepo();
+  process.env.AGENT_COLLAB_TEST_SECRET = "leaked-if-inherited";
+  process.env.AGENT_COLLAB_CLAUDE_BIN = stubBin(`
+    process.stdout.write(JSON.stringify({
+      result: JSON.stringify({
+        status: "completed",
+        summary: process.env.AGENT_COLLAB_TEST_SECRET ? "SECRET_PRESENT" : "SECRET_ABSENT",
+        changed: false
+      })
+    }));
+  `);
+
+  const original = MODEL_PROFILES.claude.cleanEnv;
+  MODEL_PROFILES.claude.cleanEnv = true; // simulate a cleanEnv harness without needing qwen yet (Task 6)
+
+  const res = runWorkerSync(repo, { driver: "codex", worker: "claude", role: "worker", brief: "x" });
+
+  assert.equal(res.artifact.summary, "SECRET_ABSENT", "ambient env must not reach a cleanEnv harness's process");
+
+  MODEL_PROFILES.claude.cleanEnv = original;
+  delete process.env.AGENT_COLLAB_TEST_SECRET;
+  delete process.env.AGENT_COLLAB_CLAUDE_BIN;
+});
+
 // A reviewer that returns a complete report but with capitalized severity +
 // no next_steps (exactly what codex did) must be normalized & completed, not
 // false-failed.

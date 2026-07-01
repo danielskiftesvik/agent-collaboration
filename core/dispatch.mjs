@@ -431,7 +431,9 @@ export function runWorkerSync(cwd, opts) {
       timeout: timeoutMs,
       idleMs,
       watchDirs,
-      env: { ...process.env, ...(cmd.env ?? {}) },
+      env: MODEL_PROFILES[worker]?.cleanEnv
+        ? { PATH: process.env.PATH, HOME: process.env.HOME, ...(cmd.env ?? {}) }
+        : { ...process.env, ...(cmd.env ?? {}) },
       sandbox,
       sandboxStrict: wantStrict,
       sandboxWorkspace: workspace,
