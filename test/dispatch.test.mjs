@@ -1208,3 +1208,20 @@ test("runWorkerSync retries on malformed output then fails after maxAttempts", (
   delete process.env.AGENT_COLLAB_AGY_BIN;
   delete process.env.AC_COUNT_FILE;
 });
+
+test("runWorkerSync uses MODEL_PROFILES[worker].idleMsOverride when idleMs isn't explicitly passed", () => {
+  isolateStateRoot();
+  const repo = makeRepo();
+  const original = MODEL_PROFILES.claude.idleMsOverride;
+  MODEL_PROFILES.claude.idleMsOverride = 800;
+  process.env.AGENT_COLLAB_CLAUDE_BIN = stubBin(
+    `if (process.argv.includes('models')) process.exit(0); await new Promise(r=>setTimeout(r,4000)); process.stdout.write('late');`
+  );
+
+  const res = runWorkerSync(repo, { driver: "codex", worker: "claude", role: "worker", brief: "x", timeoutMs: 60000 });
+  assert.equal(res.status, "failed");
+  assert.equal(res.failureKind, "frozen");
+
+  MODEL_PROFILES.claude.idleMsOverride = original;
+  delete process.env.AGENT_COLLAB_CLAUDE_BIN;
+});

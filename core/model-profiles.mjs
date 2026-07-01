@@ -58,6 +58,25 @@ export const MODEL_PROFILES = {
       "trails Claude/GPT-5.x on confirmed coding benchmarks (~7-8 pts behind on SWE-bench Verified)",
       "its often-cited 1M-token context *advantage* over rivals did NOT survive verification"
     ]
+  },
+  qwen: {
+    harness: "qwen",
+    model: "local (LM Studio, whatever's currently loaded — Qwen Code CLI as agent scaffold)",
+    vendor: "local / self-hosted",
+    canWrite: true,
+    explicitOnly: true,
+    cleanEnv: true,
+    idleMsOverride: 1800000,
+    strongerAt: [
+      "keeps sensitive/local data off any cloud API entirely",
+      "zero cost, zero rate limit, works offline",
+      "independently-trained model family — useful diversity for a confidence-gate second opinion"
+    ],
+    weakerAt: [
+      "meaningfully weaker reasoning/instruction-following than frontier cloud models at 9-30B local scale",
+      "small context budget relative to cloud harnesses; slow; LM Studio serves one model at a time (concurrent jobs serialize)",
+      "never auto-selected — always requires --worker qwen or an explicit local-only/plan-execution task"
+    ]
   }
 };
 
@@ -71,7 +90,8 @@ export const WRITE_TASKS = new Set([
   "general-swe",
   "hard-bug",
   "architecture",
-  "design-tradeoff"
+  "design-tradeoff",
+  "plan-execution"
 ]);
 
 // task type -> preferred worker order (+ the rationale shown in a recommendation).
@@ -89,7 +109,9 @@ export const TASK_ROUTING = {
   "bulk-edit": { workers: ["agy", "claude", "codex"], why: "high-throughput edits — agy speed/cost is a good fit" },
   "quick-fix": { workers: ["agy", "claude", "codex"], why: "quick fix — agy is the fastest write-capable worker" },
   "large-context": { workers: ["agy", "codex"], why: "Gemini for big scans on cost; context-size advantage unconfirmed" },
-  "broad-scan": { workers: ["agy", "codex"], why: "Gemini for big scans on cost; context-size advantage unconfirmed" }
+  "broad-scan": { workers: ["agy", "codex"], why: "Gemini for big scans on cost; context-size advantage unconfirmed" },
+  "local-only": { workers: ["qwen"], strict: true, why: "task explicitly marked sensitive/local-only — never substitute a cloud harness" },
+  "plan-execution": { workers: ["qwen"], strict: true, why: "brief is a pre-written implementation plan — a narrow enough job for a local model, and never substitute a cloud harness for an explicitly local-only route" }
 };
 
 export const DEFAULT_ROUTING = { workers: ["claude", "codex", "agy"], why: "general default" };

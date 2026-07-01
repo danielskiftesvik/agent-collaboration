@@ -271,7 +271,7 @@ function ensureDirs(base, role) {
  * here (only the driver applies). Returns a summary including the artifact.
  */
 export function runWorkerSync(cwd, opts) {
-  const { driver, worker, role = "worker", brief, kind, focus, targetLabel, timeoutMs = defaultTimeoutMs(), idleMs = defaultIdleMs(), maxAttempts = 2, noResume = false } = opts;
+  const { driver, worker, role = "worker", brief, kind, focus, targetLabel, timeoutMs = defaultTimeoutMs(), idleMs = MODEL_PROFILES[worker]?.idleMsOverride ?? defaultIdleMs(), maxAttempts = 2, noResume = false } = opts;
   const adapter = getAdapter(worker);
   const schema = role === "reviewer" ? reviewSchema : resultSchema;
 

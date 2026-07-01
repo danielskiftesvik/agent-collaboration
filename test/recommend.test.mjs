@@ -91,3 +91,30 @@ test("an explicitOnly harness IS still returned when it's directly in the route'
   assert.deepEqual(TASK_ROUTING, originalRouting);
   MODEL_PROFILES.agy = originalProfile;
 });
+
+test("local-only and plan-execution route to qwen when it's available", () => {
+  const available = [...ALL, "qwen"];
+  assert.equal(recommendWorker({ task: "local-only", driver: "claude", available: available }).worker, "qwen");
+  assert.equal(recommendWorker({ task: "plan-execution", driver: "claude", available: available }).worker, "qwen");
+});
+
+test("local-only and plan-execution return none (never a cloud harness) when qwen is unavailable", () => {
+  const r1 = recommendWorker({ task: "local-only", driver: "claude", available: ALL });
+  const r2 = recommendWorker({ task: "plan-execution", driver: "claude", available: ALL });
+  assert.equal(r1.mode, "none");
+  assert.equal(r2.mode, "none");
+});
+
+test("qwen is never suggested for an existing task type it isn't routed for", () => {
+  const r = recommendWorker({ task: "large-context", driver: "claude", available: ["claude", "qwen"] });
+  assert.equal(r.mode, "none");
+});
+
+test("qwen profile documents stronger/weaker traits and is explicitOnly + canWrite + cleanEnv", () => {
+  assert.ok(MODEL_PROFILES.qwen.strongerAt.length > 0);
+  assert.ok(MODEL_PROFILES.qwen.weakerAt.length > 0);
+  assert.equal(MODEL_PROFILES.qwen.explicitOnly, true);
+  assert.equal(MODEL_PROFILES.qwen.canWrite, true);
+  assert.equal(MODEL_PROFILES.qwen.cleanEnv, true);
+  assert.equal(MODEL_PROFILES.qwen.idleMsOverride, 1800000);
+});

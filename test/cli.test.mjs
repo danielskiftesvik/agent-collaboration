@@ -30,7 +30,7 @@ test("recommend --profiles --json dumps the model profiles", () => {
   const r = cli(["recommend", "--profiles", "--json"]);
   assert.equal(r.status, 0, r.stderr);
   const profiles = JSON.parse(r.stdout);
-  assert.deepEqual(Object.keys(profiles).sort(), ["agy", "claude", "codex"]);
+  assert.deepEqual(Object.keys(profiles).sort(), ["agy", "claude", "codex", "qwen"]);
   assert.ok(profiles.agy.strongerAt.length > 0);
 });
 
