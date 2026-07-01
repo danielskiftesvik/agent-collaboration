@@ -2,7 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 
 import { recommendWorker } from "../core/dispatch.mjs";
-import { MODEL_PROFILES } from "../core/model-profiles.mjs";
+import { MODEL_PROFILES, TASK_ROUTING } from "../core/model-profiles.mjs";
 
 const ALL = ["claude", "codex", "agy"];
 
@@ -58,4 +58,36 @@ test("MODEL_PROFILES documents stronger AND weaker traits + vendor for each harn
     assert.ok(MODEL_PROFILES[h].vendor, `${h} vendor`);
     assert.ok(MODEL_PROFILES[h].model, `${h} model`);
   }
+});
+
+test("a strict route returns none (not a substituted harness) when its only worker is unavailable", () => {
+  const originalRouting = { ...TASK_ROUTING };
+  TASK_ROUTING["test-strict-route"] = { workers: ["ghost"], why: "test fixture", strict: true };
+  const r = recommendWorker({ task: "test-strict-route", driver: "claude", available: ALL });
+  assert.equal(r.mode, "none");
+  assert.equal(r.worker, null);
+  assert.match(r.reason, /strict/i);
+  delete TASK_ROUTING["test-strict-route"];
+  assert.deepEqual(TASK_ROUTING, originalRouting);
+});
+
+test("a non-strict route's generic fallback never substitutes an explicitOnly harness", () => {
+  const originalProfile = MODEL_PROFILES.agy;
+  MODEL_PROFILES.agy = { ...originalProfile, explicitOnly: true };
+  const r = recommendWorker({ task: "totally-novel", driver: "claude", available: ["agy"] });
+  assert.equal(r.mode, "none");
+  MODEL_PROFILES.agy = originalProfile;
+});
+
+test("an explicitOnly harness IS still returned when it's directly in the route's workers list", () => {
+  const originalProfile = MODEL_PROFILES.agy;
+  MODEL_PROFILES.agy = { ...originalProfile, explicitOnly: true };
+  const originalRouting = { ...TASK_ROUTING };
+  TASK_ROUTING["test-explicit-route"] = { workers: ["agy"], why: "test fixture", strict: true };
+  const r = recommendWorker({ task: "test-explicit-route", driver: "claude", available: ALL });
+  assert.equal(r.mode, "cross");
+  assert.equal(r.worker, "agy");
+  delete TASK_ROUTING["test-explicit-route"];
+  assert.deepEqual(TASK_ROUTING, originalRouting);
+  MODEL_PROFILES.agy = originalProfile;
 });

@@ -117,14 +117,16 @@ export function isSandboxStartupFailure(proc) {
  */
 export function recommendWorker({ task, driver, available = [] }) {
   const entry = TASK_ROUTING[task] || DEFAULT_ROUTING;
+  const isDefaultRoute = !TASK_ROUTING[task];
   const avail = new Set(available);
 
   // For write/implementer tasks, exclude harnesses that can't deliver a patch
   // through the runtime.
   const isWrite = WRITE_TASKS.has(task);
   const canWork = (w) => !(isWrite && !canWrite(w));
+  const explicitOnlyOk = (w) => !isDefaultRoute || !MODEL_PROFILES[w]?.explicitOnly;
 
-  const cross = entry.workers.filter((w) => avail.has(w) && w !== driver && canWork(w));
+  const cross = entry.workers.filter((w) => avail.has(w) && w !== driver && canWork(w) && explicitOnlyOk(w));
   if (cross.length) {
     const worker = cross[0];
     return { mode: "cross", task, driver, worker, reason: entry.why, profile: MODEL_PROFILES[worker], alternatives: cross.slice(1) };
@@ -139,7 +141,16 @@ export function recommendWorker({ task, driver, available = [] }) {
       profile: MODEL_PROFILES[driver]
     };
   }
-  const other = available.find((w) => w !== driver && canWork(w));
+  if (entry.strict) {
+    return {
+      mode: "none",
+      task,
+      driver,
+      worker: null,
+      reason: `no worker-ready harness for this strict route (${entry.workers.join(", ")} unavailable)`
+    };
+  }
+  const other = available.find((w) => w !== driver && canWork(w) && !MODEL_PROFILES[w]?.explicitOnly);
   if (other) {
     return { mode: "cross", task, driver, worker: other, reason: "preferred workers unavailable; using the next worker-ready harness", profile: MODEL_PROFILES[other], alternatives: [] };
   }
