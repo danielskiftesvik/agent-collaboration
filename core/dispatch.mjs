@@ -697,8 +697,18 @@ export function runWithFallback(cwd, opts) {
   const candidates = [];
   if (worker) candidates.push(worker);
   const isWrite = (rest.role ?? "worker") === "worker" || (task && WRITE_TASKS.has(task));
-  for (const w of avail) {
-    if (w && w !== driver && !candidates.includes(w) && (!isWrite || canRunAsWriter(w))) candidates.push(w);
+  const explicitWorkerIsExclusive = worker && MODEL_PROFILES[worker]?.explicitOnly === true;
+  if (!explicitWorkerIsExclusive) {
+    for (const w of avail) {
+      if (
+        w &&
+        w !== driver &&
+        !candidates.includes(w) &&
+        !MODEL_PROFILES[w]?.explicitOnly &&
+        (!isWrite || canRunAsWriter(w))
+      )
+        candidates.push(w);
+    }
   }
 
   const fellBackFrom = [];

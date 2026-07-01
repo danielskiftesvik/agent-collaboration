@@ -392,6 +392,65 @@ test("runWithFallback always tries the explicit worker, even if it equals the dr
   delete process.env.AGENT_COLLAB_CLAUDE_BIN;
 });
 
+test("runWithFallback never falls away from an explicitOnly worker on failure", () => {
+  isolateStateRoot();
+  const repo = makeRepo();
+  const originalProfile = MODEL_PROFILES.agy;
+  MODEL_PROFILES.agy = { ...originalProfile, explicitOnly: true };
+  process.env.AGENT_COLLAB_AGY_BIN = stubBin(RATE_LIMITED_STUB);
+  process.env.AGENT_COLLAB_CLAUDE_BIN = stubBin(CLAUDE_SUCCESS_STUB);
+
+  const res = runWithFallback(repo, {
+    driver: "codex",
+    worker: "agy",
+    role: "worker",
+    brief: "x",
+    available: ["agy", "claude"],
+    maxAttempts: 1
+  });
+
+  assert.equal(res.status, "failed", "must surface the failure, not fall through to claude");
+  assert.equal(res.allWorkersLimited, true);
+  assert.equal(res.fellBackFrom.length, 1, "only agy was ever tried — claude was never appended as a candidate");
+  assert.equal(res.fellBackFrom[0].worker, "agy");
+
+  MODEL_PROFILES.agy = originalProfile;
+  delete process.env.AGENT_COLLAB_AGY_BIN;
+  delete process.env.AGENT_COLLAB_CLAUDE_BIN;
+});
+
+test("runWithFallback never auto-appends an explicitOnly harness as a fallback for a DIFFERENT worker", () => {
+  isolateStateRoot();
+  const repo = makeRepo();
+  const originalProfile = MODEL_PROFILES.agy;
+  MODEL_PROFILES.agy = { ...originalProfile, explicitOnly: true };
+  process.env.AGENT_COLLAB_CODEX_COMPANION = codexCompanionStub(`
+    process.stdout.write(JSON.stringify({
+      status: 1,
+      rawOutput: JSON.stringify({status:"failed",summary:"429 RESOURCE_EXHAUSTED quota exceeded",changed:false})
+    }));
+  `);
+  process.env.AGENT_COLLAB_AGY_BIN = stubBin(WRITE_STUB);
+
+  const res = runWithFallback(repo, {
+    driver: "manual",
+    worker: "codex",
+    role: "worker",
+    brief: "x",
+    available: ["codex", "agy"],
+    maxAttempts: 1
+  });
+
+  assert.equal(res.status, "failed", "must surface — agy is explicitOnly, never auto-tried");
+  assert.equal(res.allWorkersLimited, true);
+  assert.equal(res.fellBackFrom.length, 1, "only codex was ever tried — agy was never appended as a candidate");
+  assert.equal(res.fellBackFrom[0].worker, "codex");
+
+  MODEL_PROFILES.agy = originalProfile;
+  delete process.env.AGENT_COLLAB_CODEX_COMPANION;
+  delete process.env.AGENT_COLLAB_AGY_BIN;
+});
+
 // A reviewer that returns a complete report but with capitalized severity +
 // no next_steps (exactly what codex did) must be normalized & completed, not
 // false-failed.
