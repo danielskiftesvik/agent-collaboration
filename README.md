@@ -3,7 +3,9 @@
 Cross-harness agent collaboration. A driver harness — **Claude Code**, **Codex**, or
 **Antigravity (`agy`)** — can delegate a task to a **worker** or **reviewer** running on
 another harness, then apply the result to the working tree. Any of the three can drive;
-any of the three can do the work.
+any of the three can do the work. A fourth harness, **`qwen`** (local, via a local LM
+Studio server), can also work or review — but only as an explicit, opt-in choice for
+sensitive/local-only tasks, never as a driver and never auto-selected.
 
 This is a generalization of OpenAI's Apache-2.0 [`codex-plugin-cc`](https://github.com/openai/codex-plugin-cc)
 (see [`NOTICE`](./NOTICE)): its single Claude Code → Codex direction is widened into a
@@ -49,6 +51,10 @@ node <plugin-dir>/scripts/agent-companion.mjs setup   # Codex / agy / any shell
 - **Node ≥ 20.**
 - The worker CLIs you want to delegate to, on your `PATH`: `codex`, `agy` (Antigravity),
   and/or `claude`.
+- For the local `qwen` harness specifically: the `qwen` CLI (Qwen Code) on your `PATH`,
+  **and** a local LM Studio server running an OpenAI-compatible endpoint (default
+  `http://127.0.0.1:1234/v1`) with a model loaded — `qwen` is the only harness with this
+  extra, separately-running-process dependency; the other three are self-contained CLIs.
 
 ## What it does
 
@@ -188,7 +194,7 @@ node /path/to/agent-collaboration/scripts/agent-companion.mjs \
 | `AGENT_COLLAB_QWEN_BASE_URL` | Override the local LM Studio endpoint (default `http://127.0.0.1:1234/v1`). Must be loopback (`127.0.0.1`/`localhost`/`::1`) — a non-loopback value is refused unless `AGENT_COLLAB_QWEN_ALLOW_REMOTE=on` |
 | `AGENT_COLLAB_QWEN_API_KEY` | Override the local endpoint's API key (default `lm-studio` — LM Studio doesn't validate it, it just needs to be present) |
 | `AGENT_COLLAB_QWEN_ALLOW_REMOTE=on` | Explicitly permit a non-loopback `AGENT_COLLAB_QWEN_BASE_URL`. Off by default — qwen's entire purpose is keeping a job off the cloud, so a remote endpoint must be opt-in, never silently accepted |
-| `AGENT_COLLAB_<AGY\|CLAUDE\|CODEX>_BIN` | Override a harness binary path |
+| `AGENT_COLLAB_<AGY\|CLAUDE\|CODEX\|QWEN>_BIN` | Override a harness binary path |
 
 Plus `setup --gate on|off` (opt-in stop-time review gate) and `setup --sandbox on|off`.
 
@@ -222,7 +228,7 @@ npm test        # node --test — the full suite
 ```
 
 Layout: `scripts/agent-companion.mjs` (CLI/dispatch) · `core/` (state, jobs, worktree,
-heartbeat, git, prompts, schema, dispatch) · `adapters/` (`claude`/`codex`/`agy`) ·
+heartbeat, git, prompts, schema, dispatch) · `adapters/` (`claude`/`codex`/`agy`/`qwen`) ·
 `prompts/` (review templates) · `schemas/` (artifact contracts) ·
 `commands/` `hooks/` `skills/` `.claude-plugin/` `.codex-plugin/` (harness surface).
 
