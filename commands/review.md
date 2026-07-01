@@ -1,6 +1,6 @@
 ---
-description: Get a read-only correctness review from another harness (codex or claude) against the current changes
-argument-hint: '--worker <codex|claude> [--focus <text>] <diff / what to review>'
+description: Get a read-only correctness review from another harness (codex, claude, or agy) against the current changes
+argument-hint: '--worker <codex|claude|agy> [--focus <text>] <diff / what to review>'
 disable-model-invocation: true
 allowed-tools: Bash(node:*), Bash(git:*), Read
 ---
@@ -10,8 +10,8 @@ Request a cross-harness review. Review-only: do not fix issues or apply patches.
 Raw arguments:
 `$ARGUMENTS`
 
-Any worker (**codex**, **claude**, or **agy**) can review — agy reviews on its
-default Gemini 3.1 Pro. Gather the diff (`git diff` / `git diff --cached`) and pass
+Any worker (**codex**, **claude**, or **agy**) can review — agy uses its
+configured Gemini model (Flash by default). Gather the diff (`git diff` / `git diff --cached`) and pass
 it as the brief; it becomes the review template's `{{REVIEW_INPUT}}`. Use `--focus`
 to weight an area.
 

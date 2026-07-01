@@ -11,16 +11,13 @@ test("second-opinion routes to the other strong reasoner (codex <-> claude)", ()
   assert.equal(recommendWorker({ task: "second-opinion", driver: "codex", available: ALL }).worker, "claude");
 });
 
-test("write tasks never route to agy (it can't deliver a patch through the runtime)", () => {
-  // agy writes to its own scratch, not the worktree, so it's excluded from writes.
+test("fast write tasks prefer agy now that it can deliver patches", () => {
   for (const task of ["mechanical", "bulk-edit", "quick-fix"]) {
     const r = recommendWorker({ task, driver: "claude", available: ALL });
-    assert.notEqual(r.worker, "agy", `${task} must not pick agy`);
-    assert.ok(["codex", "claude"].includes(r.worker));
+    assert.equal(r.worker, "agy", `${task} should pick agy`);
   }
-  // even if agy is the ONLY non-driver available, a write task won't pick it
   const r = recommendWorker({ task: "mechanical", driver: "claude", available: ["claude", "agy"] });
-  assert.notEqual(r.worker, "agy");
+  assert.equal(r.worker, "agy");
 });
 
 test("agy is still chosen for read/scan tasks (large-context)", () => {

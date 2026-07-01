@@ -150,10 +150,9 @@ read `tasks/<jobId>/reports/<worker>.md` before concluding nothing came back.
 
 - `AGENT_COLLAB_DATA` — out-of-repo state root (default: tmp/plugin-data).
 - `AGENT_COLLAB_DRIVER` — default driver harness.
-- `AGENT_COLLAB_SANDBOX` — OS-sandbox: `on` (all non-codex) | `off`. Default: **on for agy
-  write-workers** (preventive write confinement), opt-in otherwise; **never codex** (it
-  self-sandboxes). If it can't be applied, the run degrades to unsandboxed (`sandboxed:false` +
-  a note) — breach detection still active.
+- `AGENT_COLLAB_SANDBOX` — OS-sandbox: `on` (all non-codex) | `off`. Default: opt-in
+  for non-codex workers; **never codex** (it self-sandboxes). If it can't be applied,
+  the run degrades to unsandboxed (`sandboxed:false` + a note) — breach detection still active.
 - `AGENT_COLLAB_SANDBOX_STRICT=on` — tighten the macOS profile to **deny file-write by
   default** (confine writes to the work area + temp + harness state; blocks /tmp, other
   volumes, real repos). Default profile only blocks `$HOME`. Linux bwrap is already strict.
@@ -208,5 +207,5 @@ Do **not** obfuscate the payload to slip past the check — it exists to gate th
 
 - One job per invocation. Don't fabricate results if a run fails — surface stderr.
 - The driver holds main-branch authority; workers only produce artifacts.
-- agy is **reviewer-only** as a delegated worker (it writes to its own scratch, not
-  the worktree → `no-changes`); `recommend` keeps it off write tasks.
+- agy is write-capable through the delegated worker path; if a worker reports changes
+  but the runtime captures no patch, trust the runtime's `no-changes` diagnostic.

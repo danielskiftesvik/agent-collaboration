@@ -120,7 +120,7 @@ export function recommendWorker({ task, driver, available = [] }) {
   const avail = new Set(available);
 
   // For write/implementer tasks, exclude harnesses that can't deliver a patch
-  // through the runtime (agy writes to its own scratch, not the worktree).
+  // through the runtime.
   const isWrite = WRITE_TASKS.has(task);
   const canWork = (w) => !(isWrite && !canWrite(w));
 
@@ -299,7 +299,7 @@ export function runWorkerSync(cwd, opts) {
   if (role === "worker" && !canRunAsWriter(worker)) {
     return blocked(
       `${worker} is reviewer-only through this runtime and cannot deliver patches as a write-worker. ` +
-        "Route implementation work to codex or claude; use agy for review/planning.",
+        "Route implementation work to a worker with canWrite:true.",
       "unsupported-worker"
     );
   }
@@ -586,15 +586,13 @@ export function runWorkerSync(cwd, opts) {
   }
 
   // Diagnostic: a worker that self-reports it changed files but left an EMPTY
-  // captured diff almost certainly wrote OUTSIDE the worktree it was handed (agy
-  // 1.0.13 ignores cwd/--add-dir and writes to ~/.gemini/.../scratch). Make the
-  // silent no-changes actionable instead of a filesystem hunt.
+  // captured diff likely wrote somewhere other than the isolated worktree. Make
+  // the silent no-changes actionable instead of a filesystem hunt.
   let note;
   if (status === "no-changes" && coerce.ok && coerce.value.changed === true) {
     note =
       "the worker reported it changed files, but nothing was captured in its isolated worktree — " +
-      "it likely wrote OUTSIDE the worktree (agy writes to ~/.gemini/antigravity-cli/scratch/). " +
-      "Treated as no-changes; this worker can't deliver a patch through the runtime here.";
+      "it likely wrote somewhere else. Treated as no-changes; this run produced no patch.";
   }
   if (sandboxDegraded) {
     note = (note ? note + " " : "") +

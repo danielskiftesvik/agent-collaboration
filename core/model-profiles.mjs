@@ -50,6 +50,7 @@ export const MODEL_PROFILES = {
     canWrite: true,
     strongerAt: [
       "fast, reliable structured REVIEW (verified 2/2 planted-bug recall, 0 false positives)",
+      "fast mechanical/bulk/quick edits through the companion's patch-harvesting path",
       "multimodal input (images, PDFs, screens)",
       "speed & low cost on the Flash tier for read/scan work"
     ],
@@ -84,9 +85,9 @@ export const TASK_ROUTING = {
   refactor: { workers: ["claude", "codex"], why: "Claude leads SWE-bench Verified + Terminal-Bench 2.0" },
   plan: { workers: ["claude", "codex"], why: "Claude's planning + scope discipline" },
   "general-swe": { workers: ["claude", "codex"], why: "Claude leads SWE-bench Verified + Terminal-Bench 2.0" },
-  mechanical: { workers: ["claude", "codex"], why: "fast mechanical edits — agy can't deliver patches through the runtime (reviewer-only)" },
-  "bulk-edit": { workers: ["claude", "codex"], why: "high-throughput edits — agy can't write through the runtime (reviewer-only)" },
-  "quick-fix": { workers: ["claude", "codex"], why: "quick fix — agy can't deliver patches through the runtime (reviewer-only)" },
+  mechanical: { workers: ["agy", "claude", "codex"], why: "fast mechanical edits — agy can deliver patches through the runtime" },
+  "bulk-edit": { workers: ["agy", "claude", "codex"], why: "high-throughput edits — agy speed/cost is a good fit" },
+  "quick-fix": { workers: ["agy", "claude", "codex"], why: "quick fix — agy is the fastest write-capable worker" },
   "large-context": { workers: ["agy", "codex"], why: "Gemini for big scans on cost; context-size advantage unconfirmed" },
   "broad-scan": { workers: ["agy", "codex"], why: "Gemini for big scans on cost; context-size advantage unconfirmed" }
 };

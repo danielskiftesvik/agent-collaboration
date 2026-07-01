@@ -60,7 +60,7 @@ const ESCAPING_AGY = `
   }
 `;
 
-// agy-like: confined (writes nothing into the worktree) but self-reports success.
+// Confined worker: writes nothing into the worktree but self-reports success.
 const CONFINED_EMPTY_AGY = `
   import fs from 'node:fs';
   if (process.argv.includes('--version')) { process.stdout.write('agy 1'); process.exit(0); }
@@ -81,8 +81,8 @@ test("doctor --live WARNS (not fails) when a worker is confined but produces no 
 
   const isolation = r.checks.find((c) => c.name === "isolation:agy");
   assert.equal(isolation.ok, true, "still safe (no escape)");
-  assert.equal(isolation.warn, true, "but flagged: not usable as a write-worker");
-  assert.match(isolation.detail, /not usable as a write-worker/i);
+  assert.equal(isolation.warn, true, "but flagged: no deliverable");
+  assert.match(isolation.detail, /no deliverable/i);
 
   delete process.env.AGENT_COLLAB_AGY_BIN;
 });

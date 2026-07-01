@@ -105,12 +105,12 @@ driver, `AGENTS.md` for Codex/agy drivers).
   **only the driver applies** changes, via `git apply --3way` against a recorded `baseRef`.
 - **Isolation, sandbox & breach detection:** cross-harness workers AND reviewers run in an
   ephemeral git worktree; a worker's changes are captured as a patch, a reviewer's are discarded.
-  Two safety layers guard against an unattended worker escaping: (1) **preventive** — agy
-  write-workers run under an OS sandbox that denies writes outside the worktree/artifacts (proven
-  to block a `$HOME` write with `EPERM`); never applied to codex (it self-sandboxes), degrades
-  gracefully if unavailable. (2) **reactive** — the runtime snapshots the real tree before/after
-  each run; an escaping write is marked **`breach`** with `escapedPaths`, never `completed`. A
-  valid self-report that captured **no** patch is `no-changes`, not `completed`.
+  Two safety layers guard against an unattended worker escaping: (1) **preventive** — an
+  opt-in OS sandbox can deny writes outside the worktree/artifacts; never applied to codex
+  (it self-sandboxes), degrades gracefully if unavailable. (2) **reactive** — the runtime
+  snapshots the real tree before/after each run; an escaping write is marked **`breach`**
+  with `escapedPaths`, never `completed`. A valid self-report that captured **no** patch is
+  `no-changes`, not `completed`.
 - **Prompts:** review-grade work uses code-loaded templates (`prompts/adversarial-review.md`,
   `prompts/review.md`) with a `{{OUTPUT_CONTRACT}}` filled per harness; free-form tasks are
   composed by the driver using the `harness-prompting` skill. When the review input is a real
@@ -150,7 +150,7 @@ driver, `AGENTS.md` for Codex/agy drivers).
 |---|---|---|---|
 | **codex** (GPT-5.x) | ✓ | ✓ | Deepest reasoning; prefers XML-block prompts. Slower — give it a generous timeout; severity case is normalized for you |
 | **claude** | ✓ | ✓ | Use the native `Agent` tool when Claude Code is also the driver |
-| **agy** (Gemini) | ✓ | ✗ | Excellent **reviewer** (Flash by default; `AGENT_COLLAB_AGY_CLASS=Pro` for depth). **Reviewer-only**: as a write-worker agy ignores the worktree and writes to its own `~/.gemini/.../scratch/`, so the runtime returns `no-changes` and `recommend` routes writes to codex/claude. Needs label-format `--model` with flags before the prompt — the adapter handles this |
+| **agy** (Gemini) | ✓ | ✓ | Fast reviewer and implementer (Flash by default; `AGENT_COLLAB_AGY_CLASS=Pro` for depth). The adapter pins model flags before the prompt and harvests patches from agy's internal worktree when needed |
 
 ## Driving from any harness
 
@@ -172,14 +172,14 @@ node /path/to/agent-collaboration/scripts/agent-companion.mjs \
 |---|---|
 | `AGENT_COLLAB_DATA` | Out-of-repo state root (default: a per-plugin / tmp dir) |
 | `AGENT_COLLAB_DRIVER` | Override which harness is driving (`codex`/`agy`/`claude`). Normally auto-detected (Codex `CODEX_THREAD_ID`, agy `ANTIGRAVITY_*`, Claude Code `CLAUDECODE`); set only if detection misses |
-| `AGENT_COLLAB_SANDBOX` | OS sandbox: `on` (all non-codex) \| `off`. Default: **on for agy write-workers** (preventive confinement), opt-in for others, **never codex** (it self-sandboxes). Degrades to unsandboxed if it can't be applied |
+| `AGENT_COLLAB_SANDBOX` | OS sandbox: `on` (all non-codex) \| `off`. Default: opt-in for non-codex workers, **never codex** (it self-sandboxes). Degrades to unsandboxed if it can't be applied |
 | `AGENT_COLLAB_SANDBOX_STRICT=on` | Tighten the macOS profile to deny file-write by default (confine writes to work area + temp + harness state; blocks /tmp & other volumes). Default profile only blocks `$HOME`; Linux bwrap is already strict |
 | `AGENT_COLLAB_FALLBACK` | Auto-fallback policy: `off` \| `on` (rate-limit+auth+timeout) \| comma-list of kinds. Default `rate-limit,timeout` (transient; **auth is surfaced**, not routed around) |
 | `AGENT_COLLAB_TIMEOUT` | Per-attempt worker **hard** timeout in **seconds** (default 1200 = 20 min). Deep reasoners on big diffs need a generous budget — too short kills the run mid-flight |
 | `AGENT_COLLAB_IDLE_TIMEOUT` | **Inactivity** timeout in **seconds** (default 600 = 10 min; `0` disables). If a worker makes **no progress** — neither stdout/stderr **nor file activity** (worktree, and agy's own log dir) — for this long it's killed as `frozen`. Generous so a slow-but-working worker isn't false-killed |
 | `AGENT_COLLAB_CODEX_RESUME=off` | Repair a bad codex reply with a fresh re-send instead of resuming its thread (`task --resume-last`); resume is on by default |
 | `AGENT_COLLAB_ALLOW_INPLACE=on` | Permit an **unisolated** in-place run when a git worktree can't be created. Off by default — without it such a job is `blocked` rather than run in your real tree |
-| `AGENT_COLLAB_ALLOW_NONWRITER=on` | Force a harness marked reviewer-only (currently agy) to run as a write-worker anyway. Off by default; use only for local experiments because patch capture may be empty |
+| `AGENT_COLLAB_ALLOW_NONWRITER=on` | Force a harness marked reviewer-only to run as a write-worker anyway. Off by default; use only for local experiments because patch capture may be empty |
 | `AGENT_COLLAB_AGY_CLASS` | agy model class to pin (`Flash` default, `Pro`, …) |
 | `AGENT_COLLAB_AGY_MODEL` | Pin an exact agy model label (overrides the class) |
 | `AGENT_COLLAB_<AGY\|CLAUDE\|CODEX>_BIN` | Override a harness binary path |

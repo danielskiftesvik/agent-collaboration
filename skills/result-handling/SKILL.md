@@ -33,7 +33,7 @@ from a review is forbidden, even when the fix looks obvious.
 - **`breach` — STOP and surface loudly.** The worker wrote *outside* its worktree,
   into the driver's real checkout (`escapedPaths` lists what). The driver did **not**
   apply these; tell the user to inspect/revert them, and do not trust that worker as
-  an implementer here. (Seen with agy as a write-worker.)
+  an implementer here.
 - **`no-changes`** — the worker reported done but captured **no patch**. Don't read
   that as success; say it produced nothing and ask how to proceed.
 - The worker's deliverable is the **patch**, not the metadata JSON. A
@@ -103,15 +103,11 @@ set `AGENT_COLLAB_FALLBACK=off`); then the limit just surfaces for you to relay.
 
 ## By harness
 
-- **codex / claude** — emit structured findings/result JSON: present findings by
+- **codex / claude / agy** — emit structured findings/result JSON: present findings by
   severity, preserve evidence boundaries.
-- **agy** — an excellent **reviewer** (default **Gemini Flash**; `AGENT_COLLAB_AGY_CLASS=Pro`
-  for deeper passes): present findings like any other harness. But agy is
-  **reviewer-only** — as a *write-worker* it ignores the worktree it's handed and writes to
-  its own `~/.gemini/antigravity-cli/scratch/`, so the runtime captures an empty patch and
-  returns **`no-changes`** with a diagnostic `note`. `recommend` therefore routes write tasks
-  to codex/claude. (If a future agy build escapes into the real tree instead, breach detection
-  catches it as `breach`.)
+- **agy** — usable as reviewer and write-worker (default **Gemini Flash**;
+  `AGENT_COLLAB_AGY_CLASS=Pro` for deeper passes). Its adapter pins model flags before
+  the prompt and harvests patches from agy's internal worktree when needed.
 - **codex / claude** — usable as write-workers (codex is production-ready through the runtime;
   claude-as-worker is the native short-circuit — use the Agent tool).
 

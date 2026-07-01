@@ -840,10 +840,10 @@ test("a worker that reports completed but captures NO patch is 'no-changes', not
   delete process.env.AGENT_COLLAB_AGY_BIN;
 });
 
-test("a worker claiming changed:true but capturing nothing gets a diagnostic note (wrote outside the worktree)", () => {
+test("a worker claiming changed:true but capturing nothing gets a diagnostic note", () => {
   isolateStateRoot();
   const repo = makeRepo();
-  // self-reports changed:true but writes NOTHING into the worktree (mimics agy's scratch write)
+  // self-reports changed:true but writes NOTHING into the worktree.
   process.env.AGENT_COLLAB_AGY_BIN = stubBin(`
     if (process.argv.includes('models')) { process.exit(0); }
     process.stdout.write('\`\`\`json\\n{"status":"completed","summary":"made it","changed":true}\\n\`\`\`');
@@ -852,7 +852,7 @@ test("a worker claiming changed:true but capturing nothing gets a diagnostic not
   const res = runWorkerSync(repo, { driver: "claude", worker: "agy", role: "worker", brief: "x", maxAttempts: 1 });
 
   assert.equal(res.status, "no-changes");
-  assert.match(res.note, /outside the worktree|scratch/i);
+  assert.match(res.note, /nothing was captured|no patch/i);
 
   delete process.env.AGENT_COLLAB_AGY_BIN;
 });

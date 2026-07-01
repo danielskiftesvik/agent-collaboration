@@ -63,11 +63,10 @@ worker (excluding the driver) + the model's profile + a reason. The mapping:
 Benchmarks rank *capability*; delivery reliability through the companion is its own
 axis, observed across real review sessions:
 
-- **agy (Gemini)** — a dependable **reviewer**: fast (~1 min), usually first-try, clean
-  structured output, strong planted-bug recall. **Reviewer-only as a delegated worker**,
-  though: agy (1.0.13) ignores the worktree it's handed and writes to its own
-  `~/.gemini/.../scratch/`, so a delegated *write* task captures an empty patch
-  (`no-changes`). `recommend` routes writes to codex/claude accordingly.
+- **agy (Gemini)** — a dependable **reviewer** and fast implementer: usually
+  first-try, clean structured output, strong planted-bug recall, and now
+  write-capable through the companion's patch-harvesting path. `doctor --live`
+  remains the guard for no-patch or worktree-escape regressions.
 - **codex (GPT-5.x)** — the **specialist ceiling**: catches the deepest architectural
   issues nobody else does, but is **slower** (10+ min on big diffs) and likelier to
   need a retry. Two failure modes the companion now mitigates: (1) *no-output* when a

@@ -1,6 +1,6 @@
 ---
-description: Get an adversarial ("try to break it") review from another harness (codex or claude) against the current changes
-argument-hint: '--worker <codex|claude> [--focus <text>] <what to review>'
+description: Get an adversarial ("try to break it") review from another harness (codex, claude, or agy) against the current changes
+argument-hint: '--worker <codex|claude|agy> [--focus <text>] <what to review>'
 disable-model-invocation: true
 allowed-tools: Bash(node:*), Bash(git:*), Read
 ---
