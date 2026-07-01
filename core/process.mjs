@@ -29,7 +29,7 @@ export function generateMacSandboxProfile(workspace, artifactDir, opts = {}) {
   // Cross-cutting secrets that no worker should read.
   const secretDirs = [".ssh", ".aws", ".kube", ".gnupg"].map((d) => path.join(home, d));
   // The harness's own state dirs — needed for auth, logs, conversation history.
-  const harnessDirs = [".gemini", ".claude", ".codex", ".config/gcloud"].map((d) =>
+  const harnessDirs = [".gemini", ".claude", ".codex", ".config/gcloud", ".qwen"].map((d) =>
     path.join(home, d)
   );
 

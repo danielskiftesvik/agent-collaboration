@@ -30,6 +30,12 @@ test("macOS profile is allow-default, denies secrets, allows harness config + wo
   assert.match(p, /allow file\* \(subpath "\/work\/ws"/);
 });
 
+test("macOS profile allows writes under .qwen (qwen's own session/config state)", () => {
+  const home = process.env.HOME || os.homedir();
+  const p = generateMacSandboxProfile("/work/ws", "/work/art");
+  assert.match(p, new RegExp(`allow file-write\\* \\(subpath "${home}/\\.qwen"`));
+});
+
 test("profile interpolation escapes quotes in paths (no profile injection)", () => {
   const p = generateMacSandboxProfile('/work/a"b', "/work/art");
   assert.match(p, /subpath "\/work\/a\\"b"/, "a quote in the path must be escaped");
