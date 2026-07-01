@@ -1,6 +1,7 @@
 node_modules/
 *.log
 .DS_Store
+.qwen/
 # Local task/job state lives OUTSIDE the repo by default (see core/state.mjs).
 # This entry only guards an opt-in in-repo artifact mirror.
 .agents/
@@ -8,3 +9,5 @@ temp_test_repo/
 temp_*/
 # Scratch cross-harness review reports (written by codex/agy review prompts).
 reviews/
+
+docs/
