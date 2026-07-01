@@ -11,11 +11,11 @@ function cli(args, { cwd, env } = {}) {
   return run(process.execPath, [CLI, ...args], { cwd, env: { ...process.env, ...env } });
 }
 
-test("setup --json lists the three adapters", () => {
+test("setup --json lists the four adapters", () => {
   const r = cli(["setup", "--json"]);
   assert.equal(r.status, 0, r.stderr);
   const rows = JSON.parse(r.stdout);
-  assert.deepEqual(rows.map((x) => x.name).sort(), ["agy", "claude", "codex"]);
+  assert.deepEqual(rows.map((x) => x.name).sort(), ["agy", "claude", "codex", "qwen"]);
 });
 
 test("setup (human) prints a sandboxed-driver hint; --json stays pure JSON", () => {

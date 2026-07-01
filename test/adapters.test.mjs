@@ -6,6 +6,7 @@ import path from "node:path";
 
 import { getAdapter, listAdapters } from "../adapters/index.mjs";
 import { pickLatestModel } from "../adapters/agy.mjs";
+import qwen from "../adapters/qwen.mjs";
 
 function stubBin(body) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "ac-bin-"));
@@ -17,9 +18,9 @@ function stubBin(body) {
   return sh;
 }
 
-test("registry exposes claude, agy and codex", () => {
+test("registry exposes claude, agy, codex and qwen", () => {
   const names = listAdapters().map((a) => a.name).sort();
-  assert.deepEqual(names, ["agy", "claude", "codex"]);
+  assert.deepEqual(names, ["agy", "claude", "codex", "qwen"]);
   assert.throws(() => getAdapter("nope"), /unknown adapter/i);
 });
 
@@ -183,3 +184,110 @@ test("probe reports unavailable for a missing binary", () => {
   assert.equal(r.available, false);
   delete process.env.AGENT_COLLAB_AGY_BIN;
 });
+
+test("qwen buildCommand runs headless, unattended, bare, pinned to the local endpoint", () => {
+  const { args } = qwen.buildCommand({
+    role: "worker",
+    brief: "do the thing",
+    workspace: "/tmp/wt",
+    timeoutMs: 300000
+  });
+  assert.ok(args.includes("--bare"), "bare mode (cuts ~19-30K token startup overhead)");
+  assert.ok(args.includes("--approval-mode") && args.includes("yolo"), "unattended");
+  assert.ok(args.includes("--add-dir") && args.includes("/tmp/wt"), "workspace scoped");
+  assert.ok(args.includes("--openai-base-url") && args.includes("http://127.0.0.1:1234/v1"), "pinned local endpoint");
+  assert.ok(args.includes("--auth-type") && args.includes("openai"), "auth type pinned, not inherited");
+  assert.ok(args.includes("--max-wall-time"), "bounded");
+  assert.ok(args.includes("--exclude-tools") && args.includes("web_fetch"), "network-capable tool excluded");
+  assert.ok(args.includes("--allowed-tools"), "explicit allow-list — yolo mode alone declined a tool call in the pilot");
+  assert.ok(args.includes("--output-format") && args.includes("json"), "buffered json, NOT stream-json — see Step 0");
+  assert.ok(!args.includes("stream-json"), "must not use stream-json — piloted and rejected (0/3 completions)");
+  assert.ok(!args.includes("-m"), "no -m flag unless AGENT_COLLAB_QWEN_MODEL is set — inherit qwen's own configured default");
+});
+
+test("qwen buildCommand respects AGENT_COLLAB_QWEN_MODEL and a loopback AGENT_COLLAB_QWEN_BASE_URL override", () => {
+  process.env.AGENT_COLLAB_QWEN_MODEL = "some-local-model";
+  process.env.AGENT_COLLAB_QWEN_BASE_URL = "http://127.0.0.1:9999/v1";
+  const { args } = qwen.buildCommand({ role: "worker", brief: "x", workspace: "/tmp/wt", timeoutMs: 60000 });
+  assert.ok(args.includes("-m") && args.includes("some-local-model"));
+  assert.ok(args.includes("http://127.0.0.1:9999/v1"));
+  delete process.env.AGENT_COLLAB_QWEN_MODEL;
+  delete process.env.AGENT_COLLAB_QWEN_BASE_URL;
+});
+
+test("qwen buildCommand refuses a non-loopback AGENT_COLLAB_QWEN_BASE_URL", () => {
+  process.env.AGENT_COLLAB_QWEN_BASE_URL = "https://evil.example.com/v1";
+  const { command, args } = qwen.buildCommand({ role: "worker", brief: "x", workspace: "/tmp/wt", timeoutMs: 60000 });
+  assert.equal(command, process.execPath, "refuses by building a command that fails fast, not by running qwen for real");
+  assert.ok(args.some((a) => typeof a === "string" && a.includes("refusing non-loopback")));
+  delete process.env.AGENT_COLLAB_QWEN_BASE_URL;
+});
+
+test("AGENT_COLLAB_QWEN_ALLOW_REMOTE=on explicitly permits a non-loopback endpoint", () => {
+  process.env.AGENT_COLLAB_QWEN_BASE_URL = "https://example.com/v1";
+  process.env.AGENT_COLLAB_QWEN_ALLOW_REMOTE = "on";
+  const { args } = qwen.buildCommand({ role: "worker", brief: "x", workspace: "/tmp/wt", timeoutMs: 60000 });
+  assert.ok(args.includes("https://example.com/v1"));
+  delete process.env.AGENT_COLLAB_QWEN_BASE_URL;
+  delete process.env.AGENT_COLLAB_QWEN_ALLOW_REMOTE;
+});
+
+test("qwen probe refuses a non-loopback AGENT_COLLAB_QWEN_BASE_URL without ever hitting the network", () => {
+  process.env.AGENT_COLLAB_QWEN_BIN = stubBin(`process.stdout.write('qwen 0.19.3');`);
+  process.env.AGENT_COLLAB_QWEN_BASE_URL = "https://evil.example.com/v1";
+  const r = qwen.probe();
+  assert.equal(r.available, false);
+  assert.match(r.error, /non-loopback/i);
+  delete process.env.AGENT_COLLAB_QWEN_BIN;
+  delete process.env.AGENT_COLLAB_QWEN_BASE_URL;
+});
+
+test("qwen parseOutput extracts the terminal result event from the buffered JSON array", () => {
+  const stdout = JSON.stringify([
+    { type: "system", subtype: "init" },
+    { type: "assistant", message: { content: [{ type: "text", text: "working..." }] } },
+    { type: "result", subtype: "success", result: '{"status":"completed","summary":"did it","changed":false}' }
+  ]);
+  const { answerText } = qwen.parseOutput({ stdout });
+  assert.equal(answerText, '{"status":"completed","summary":"did it","changed":false}');
+});
+
+test("qwen parseOutput falls back to raw trimmed text when the array has no result event", () => {
+  const stdout = JSON.stringify([{ type: "system", subtype: "init" }]);
+  const { answerText } = qwen.parseOutput({ stdout });
+  assert.equal(answerText, stdout.trim());
+});
+
+test("qwen parseOutput falls back to raw trimmed text when stdout isn't valid JSON at all", () => {
+  const { answerText } = qwen.parseOutput({ stdout: "  plain text, no JSON array  " });
+  assert.equal(answerText, "plain text, no JSON array");
+});
+
+test("qwen probe reports unavailable with a clear message when the binary is missing", () => {
+  process.env.AGENT_COLLAB_QWEN_BIN = "/nonexistent/qwen-binary-xyz";
+  const r = qwen.probe();
+  assert.equal(r.available, false);
+  assert.ok(r.error && r.error.length > 0);
+  delete process.env.AGENT_COLLAB_QWEN_BIN;
+});
+
+test("qwen probe reports unavailable with a clear message when the local server is unreachable", () => {
+  process.env.AGENT_COLLAB_QWEN_BIN = stubBin(`process.stdout.write('qwen 0.19.3');`);
+  process.env.AGENT_COLLAB_QWEN_BASE_URL = "http://127.0.0.1:1/v1"; // closed port, fails fast
+  const r = qwen.probe();
+  assert.equal(r.available, false);
+  assert.match(r.error, /unreachable|LM Studio/i);
+  delete process.env.AGENT_COLLAB_QWEN_BIN;
+  delete process.env.AGENT_COLLAB_QWEN_BASE_URL;
+});
+
+// No "probe reports available against a live local server" unit test: qwen.probe()
+// shells out to curl via the codebase's synchronous, blocking run()/spawnSync — an
+// in-process http.createServer sharing that same single-threaded test process
+// deadlocks (the event loop can't service the incoming connection while frozen
+// waiting on the very curl subprocess that's waiting for that connection).
+// Reproduced directly while implementing this plan. A real, separate child process
+// could avoid it, but adds real timing/port-coordination complexity for one
+// assertion; the positive path is exercised implicitly by every live qwen run
+// throughout this project's development instead.
+

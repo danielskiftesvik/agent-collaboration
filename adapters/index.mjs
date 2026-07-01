@@ -1,11 +1,13 @@
 import agy from "./agy.mjs";
 import claude from "./claude.mjs";
 import codex from "./codex.mjs";
+import qwen from "./qwen.mjs";
 
 const REGISTRY = new Map([
   [agy.name, agy],
   [claude.name, claude],
-  [codex.name, codex]
+  [codex.name, codex],
+  [qwen.name, qwen]
 ]);
 
 export function getAdapter(name) {
