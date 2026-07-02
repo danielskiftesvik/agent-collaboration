@@ -1,9 +1,26 @@
 # Model capability tests
 
-Five self-contained coding tasks, ordered by difficulty, for benchmarking a local
+Eight self-contained coding tasks, ordered by difficulty, for benchmarking a local
 model's reliability as an unattended "implementer" (e.g. via the `qwen` CLI + LM
 Studio). Each task's starting state and reference solution are verified: the
 starting state fails a known subset of its tests, the solution passes all of them.
+
+**Tasks 01-05 test mechanical execution** (can the model follow instructions and edit
+code without slipping up) — structural complexity rises, but every one of them maps
+to an extremely common, heavily-trained-on pattern (array append, off-by-one,
+query-string parsing, an if/else chain, an LRU cache). A model can solve all five by
+pattern-matching to something it's seen many times, without much genuine reasoning.
+If you see a model clean-sweep 01-05 in one shot each, **that alone doesn't mean it's
+a strong model** — it means it can follow instructions reliably. That's a real,
+useful capability, but distinct from raw reasoning capability.
+
+**Tasks 06-08 test genuine reasoning**, specifically designed to resist
+pattern-matching: each has at least one test case that a plausible-looking but wrong
+"shortcut" solution fails, verified directly (a naive implementation was written and
+confirmed to fail exactly the intended trap case, for every one of these three). A
+model that clean-sweeps 01-05 but starts failing around 06-08 is showing you the
+actual edge of its reasoning ability — that's the more informative signal if you're
+trying to establish a real capability hierarchy, not just an instruction-following one.
 
 ## Tasks
 
@@ -14,11 +31,15 @@ starting state fails a known subset of its tests, the solution passes all of the
 | `03-moderate-implement-from-spec` | Moderate | Implement a function from a doc-comment spec to satisfy a given test suite (TDD) |
 | `04-hard-extend-branching-logic` | Hard | Add a new branch to existing multi-branch logic without breaking any existing branch |
 | `05-very-hard-new-module` | Very hard | Create a new file/class with multiple methods from a written spec, satisfying a full given test suite |
+| `06-extreme-genuine-reasoning` | Extreme (reasoning) | Weighted interval scheduling (DP) — adversarial tests specifically fail both "pick highest priority" and "maximize count" greedy shortcuts |
+| `07-extreme-subtle-debugging` | Extreme (debugging) | Fix a genuinely subtle bug (mutating an array while iterating forward over it) that isn't obvious from reading the code once |
+| `08-extreme-rule-synthesis` | Extreme (spec-following) | Implement a bespoke multi-rule spec (not a named algorithm) where two plausible rule-ordering mistakes are each caught by a dedicated adversarial test |
 
 Each task directory has:
 - `BRIEF.md` — the exact prompt to hand the model (already includes the JSON-status
   contract this repo's adapters use — edit or strip that if testing a different harness).
-- `src/` — the starting state (missing for task 5, since the task is to create it).
+- `src/` — the starting state (missing entirely for task 05, since it creates a new
+  file with no prior stub; tasks 03/06/08 have a stub that throws "not implemented").
 - `test/` — the verification test(s). Do not give the model the `solution/` directory.
 - `solution/` — a verified-correct reference implementation, for scoring/comparison only.
 
