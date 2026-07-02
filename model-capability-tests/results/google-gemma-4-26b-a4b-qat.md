@@ -15,4 +15,29 @@ web_fetch --output-format json`. One attempt per task.
 | 05-very-hard-new-module | ✅ 8/8 | 1 | Same approach as reference (Map + delete/reinsert for LRU ordering); public fields instead of private (`#`) — stylistic only |
 
 **Summary: clean sweep, 5/5 tasks, 1 call each, zero manual corrections, valid JSON
-status every time.** No repair rounds needed on any task.
+status every time.** No repair rounds needed on any task. Every one of these 5 tasks
+maps to an extremely common, heavily-trained-on pattern (see tasks 06-08's addition to
+the suite, added specifically because this run didn't show any sign of a capability
+ceiling) — this result shows reliable instruction-following, not necessarily strong
+reasoning.
+
+## 2026-07-02 — reasoning tasks (06-08)
+
+Same config as above, `--max-wall-time` noted per task (240s was the suite default;
+raised where noted).
+
+| Task | Result | Calls | Wall time (final attempt) | Notes |
+|---|---|---|---|---|
+| 06-extreme-genuine-reasoning | ✅ 7/7 | 2 | ~69s (of a 480s budget) | **First attempt at the default 240s budget produced zero output and zero tool calls at all — aborted by `--max-wall-time` (`FatalBudgetExceededError`, exit 55) with the starting stub completely untouched.** Retried at 480s: succeeded, and not just barely — it implemented an O(n log n) binary-search DP, a more sophisticated approach than this suite's own O(n²) reference solution, correctly passing both adversarial trap cases. |
+| 07-extreme-subtle-debugging | ✅ 5/5 | 1 | ~43s | Correctly diagnosed the mutate-while-iterating bug and applied a valid fix (`i--` after `splice`) — a different, equally correct approach from this suite's reference (which iterates backward instead) |
+| 08-extreme-rule-synthesis | ✅ 8/8 | 1 | ~34s | Exact match to reference solution; correctly navigated both rule-ordering adversarial traps on the first attempt |
+
+**Summary: 3/3 solved correctly, but the difficulty is now visible — not as wrong
+answers, but as latency.** Tasks 07-08 took 6-9x longer than the trivial tasks (30-45s
+vs a handful of seconds), and task 06 didn't just take longer, it **completely failed
+within the same time budget that comfortably covered every other task in this suite**
+and only succeeded once given double the time. A fixed, tasks-1-through-5-calibrated
+timeout would have silently misrecorded this as a hard failure. **Takeaway for future
+runs: budget wall-time per task by expected difficulty, not one constant across the
+whole suite — and record time-to-solve, not just pass/fail, since for a genuinely
+capable model the ceiling shows up as "how long," before it shows up as "wrong."**
