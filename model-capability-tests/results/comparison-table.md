@@ -8,6 +8,7 @@ log file for per-task notes, wall-time budgets, and run history.
 | [google/gemma-4-26b-a4b-qat](google-gemma-4-26b-a4b-qat.md) | 2026-07-02 | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ (2nd try, needed 2x the time budget) | ✅ | ✅ | 8 | 0 |
 | [dreamfoundries/ornith-1.0-9b](dreamfoundries-ornith-1.0-9b.md) | 2026-07-02 | ✅ | ✅ | ✅ | ✅ (slow: ~160s) | ❌ 2/8 (3 attempts, reproducible) | ✅ | ❌ 2/5 (2 attempts, reproducible) | ✅ | 11 | 0 |
 | [qwen3-coder-30b-a3b-instruct](qwen3-coder-30b-a3b-instruct.md) | 2026-07-02 | ✅ | ✅ | ✅ (3 attempts) | ✅ | ❌ 0/8 (3 attempts, reproducible — tooling, not reasoning) | ✅ (2nd try) | ✅ (3rd try) | ❌ 5/8 (6 attempts, reproducible) | 20 | 0 |
+| [ornith-1.0-35b-mtplx](ornith-1.0-35b-mtplx.md) | 2026-07-02 | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ (1st try) | ✅ (1st try) | ✅ (1st try) | 8 | 0 |
 
 `06`'s "2nd try" note matters: at this suite's default 240s wall-time budget, gemma
 produced zero output on task 06 (timed out with the starting stub untouched); at 480s
@@ -66,6 +67,49 @@ reconsidering wrong logic. When a run did make it cleanly through to a tool call
 and a test run, the code itself was consistently correct and reasonable — same DP
 approach as the reference on 06, the same `i--`-after-`splice` fix gemma used on
 07, exact matches to the reference on 01 and 04.
+
+## What ornith-1.0-35b-mtplx's run actually shows
+
+Not to be confused with the smaller `dreamfoundries/ornith-1.0-9b` above — this is
+a separate, larger (35B) model in the same family, and its profile is nothing like
+its smaller sibling's. Where the 9B model durably lost track of mutable state on
+05 and 07, the 35B model went 8/8, 1 call each, first try — including both
+"extreme" reasoning tasks (06, 08) and the LRU cache (05) that tripped up the 9B
+model twice. It's the cleanest run of any of the four models benchmarked: every
+JSON status was valid on the first attempt (no repair rounds needed anywhere, a
+first for this suite), and wall times stayed in the 15-40s range even on the
+480s-budgeted "extreme" tier — no sign of gemma's latency ceiling on task 06
+either. Task 06 in particular got an O(n log n) binary-search DP, a more
+sophisticated solution than this suite's own O(n²) reference.
+
+The one place this model's run diverges from a pure "everything went perfectly"
+story is also the most informative data point: it hit the *exact same*
+`write_file`-declined-by-yolo-mode quirk that both `dreamfoundries/ornith-1.0-9b`'s
+adapter pilot and qwen3-coder-30b-a3b-instruct's task 05 ran into — but instead of
+stalling out (qwen3-coder's failure mode) or not being affected at all, it
+recovered *within the same call*, immediately falling back to `run_shell_command`
+with a `cat > file <<'EOF'` heredoc to create the file and continuing normally.
+That's a genuine difference in tool-use resourcefulness under an identical
+environment glitch, not just a difference in underlying coding/reasoning ability —
+worth watching for in future runs against other models, since this specific
+tool-approval quirk is clearly a recurring feature of this harness/CLI
+combination, not a one-off.
+
+## What glm-4.7-flash-mlx's run shows: nothing — untestable in this environment
+
+Attempted 2026-07-02, immediately blocked. Model identity was confirmed correct
+via `/v1/chat/completions` (plain chat completions work normally), but every
+tool-calling request — via the `qwen` CLI and via a raw `curl` request with a
+minimal one-tool schema, bypassing the CLI entirely — fails deterministically and
+near-instantly (~60-110ms, before any tokens stream) with `AttributeError: 'list'
+object has no attribute 'swapaxes'`, a crash inside LM Studio's MLX inference
+engine specifically in the function/tool-calling code path. This is not a model
+capability issue and not fixable by retrying or adjusting wall-time budgets — it's
+an engine/runtime-level incompatibility between this MLX build of GLM-4.7-flash
+and tool-calling grammar-constrained decoding. No results file was written for
+this model since 8/8 identical infra-crash "failures" would misrepresent it as a
+capability finding rather than an environment one. Revisit if a non-MLX (GGUF)
+build becomes available, or after an LM Studio/MLX runtime update.
 
 Add a row here (and that model's own log file under this directory) after each
 model's full run.
