@@ -53,12 +53,17 @@ described in each model's own notes below.
 
 | Rank | Model | Date | 01 | 02 | 03 | 04 | 05 | 06 (reasoning) | 07 (debugging) | 08 (rule synthesis) | Calls (total) | Manual corrections |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|
-| 1 | [ornith-1.0-35b-mtplx](ornith-1.0-35b-mtplx.md) | 2026-07-02 | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ (1st try) | ✅ (1st try) | ✅ (1st try) | 8 | 0 |
-| 2 | [qwen/qwen3.6-27b](qwen-qwen3.6-27b.md) | 2026-07-02 | ✅ | ✅ | ✅ | ✅ | ✅ (1st try) | ✅ (1st try) | ✅ (1st try) | ✅ (1st try) | 8 | 0 |
-| 3 | [google/gemma-4-26b-a4b-qat](google-gemma-4-26b-a4b-qat.md) | 2026-07-02 | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ (2nd try, needed 2x the time budget) | ✅ | ✅ | 8 | 0 |
-| 4 | [openai/gpt-oss-20b](openai-gpt-oss-20b.md) | 2026-07-02 | ✅ | ✅ | ✅ | ✅ | ✅ (3 attempts) | ✅ (1st try) | ✅ (1st try) | ✅ (1st try) | 10 | 0 |
-| 5 | [dreamfoundries/ornith-1.0-9b](dreamfoundries-ornith-1.0-9b.md) | 2026-07-02 | ✅ | ✅ | ✅ | ✅ (slow: ~160s) | ❌ 2/8 (3 attempts, reproducible) | ✅ | ❌ 2/5 (2 attempts, reproducible) | ✅ | 11 | 0 |
-| 6 | [qwen3-coder-30b-a3b-instruct](qwen3-coder-30b-a3b-instruct.md) | 2026-07-02 | ✅ | ✅ | ✅ (3 attempts) | ✅ | ❌ 0/8 (3 attempts, reproducible — tooling, not reasoning) | ✅ (2nd try) | ✅ (3rd try) | ❌ 5/8 (6 attempts, reproducible) | 20 | 0 |
+| 1 | [qwen3.6-35b-a3b](qwen3.6-35b-a3b.md) | 2026-07-02 | ✅ | ✅ | ✅ | ✅ | ✅ (1st try) | ✅ (1st try) | ✅ (1st try) | ✅ (1st try) | 8 | 0 |
+| 2 | [ornith-1.0-35b-mtplx](ornith-1.0-35b-mtplx.md) | 2026-07-02 | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ (1st try) | ✅ (1st try) | ✅ (1st try) | 8 | 0 |
+| 3 | [qwen/qwen3.6-27b](qwen-qwen3.6-27b.md) | 2026-07-02 | ✅ | ✅ | ✅ | ✅ | ✅ (1st try) | ✅ (1st try) | ✅ (1st try) | ✅ (1st try) | 8 | 0 |
+| 4 | [google/gemma-4-26b-a4b-qat](google-gemma-4-26b-a4b-qat.md) | 2026-07-02 | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ (2nd try, needed 2x the time budget) | ✅ | ✅ | 8 | 0 |
+| 5 | [openai/gpt-oss-20b](openai-gpt-oss-20b.md) | 2026-07-02 | ✅ | ✅ | ✅ | ✅ | ✅ (3 attempts) | ✅ (1st try) | ✅ (1st try) | ✅ (1st try) | 10 | 0 |
+| 6 | [dreamfoundries/ornith-1.0-9b](dreamfoundries-ornith-1.0-9b.md) | 2026-07-02 | ✅ | ✅ | ✅ | ✅ (slow: ~160s) | ❌ 2/8 (3 attempts, reproducible) | ✅ | ❌ 2/5 (2 attempts, reproducible) | ✅ | 11 | 0 |
+| 7 | [qwen3-coder-30b-a3b-instruct](qwen3-coder-30b-a3b-instruct.md) | 2026-07-02 | ✅ | ✅ | ✅ (3 attempts) | ✅ | ❌ 0/8 (3 attempts, reproducible — tooling, not reasoning) | ✅ (2nd try) | ✅ (3rd try) | ❌ 5/8 (6 attempts, reproducible) | 20 | 0 |
+
+Ranks 1-3 are all clean 8/8-in-8-calls sweeps, tie-broken by wall-time: `qwen3.6-35b-a3b`
+(9-23s per task) edges out `ornith-1.0-35b-mtplx` (15-41s) and `qwen/qwen3.6-27b`
+(45-79s) despite all three sharing the identical correctness profile.
 
 `06`'s "2nd try" note matters: at this suite's default 240s wall-time budget, gemma
 produced zero output on task 06 (timed out with the starting stub untouched); at 480s
@@ -199,6 +204,26 @@ binary-search DP approach `ornith-1.0-35b-mtplx` used on 06. No engine-level or
 KV-cache crashes were observed anywhere in this run, unlike the two most recently
 tested models before it (though a pre-flight long-context sanity check was run
 first, given that recent history).
+
+## What qwen3.6-35b-a3b's run actually shows
+
+The fourth clean 8/8 sweep in this suite, and now the fastest: 9-23s per task
+across the board, edging out `ornith-1.0-35b-mtplx` (previously fastest at
+15-41s) and well ahead of the closely-related `qwen/qwen3.6-27b` (45-79s despite
+being the smaller model). That three-way spread among same-lineage MoE models
+with an otherwise identical 8/8-in-8-calls correctness profile is itself the
+finding: within this environment, wall-clock speed is not predictable from
+parameter count or even model family alone. Task 05 hit the `write_file`-declined
+quirk again — the fourth model in a row to hit it, and the fourth to find some
+working recovery (this time a two-decline-then-heredoc pattern, slightly more
+persistent than the single-decline cases seen on `ornith-1.0-35b-mtplx` and
+`qwen/qwen3.6-27b`, but resolved the same way). Across five models that have now
+encountered this quirk, only `qwen3-coder-30b-a3b-instruct` failed to recover —
+strong enough of a pattern to say the *quirk itself* isn't what predicts
+task-05 outcomes, a given model's session-retry behavior under a tool-decline is.
+Both extreme reasoning tasks (06, 08) solved first try, same DP/rule-ordering
+approach as its sibling models. No engine-level or KV-cache crashes anywhere in
+this run (pre-flight sanity-checked first, per the now-established practice).
 
 ## What glm-4.7-flash-mlx's run shows: nothing — untestable in this environment
 
