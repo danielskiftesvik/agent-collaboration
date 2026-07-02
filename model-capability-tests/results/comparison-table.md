@@ -56,7 +56,7 @@ the model hasn't been re-run against the expanded suite yet — not a failure. O
 `qwen3.6-35b-a3b` has 09-12 data so far (see the note below the table).
 
 | Rank | Model | Date | 01 | 02 | 03 | 04 | 05 | 06 (reasoning) | 07 (debugging) | 08 (rule synthesis) | 09 (async) | 10 (streaming) | 11 (refactor) | 12 (performance) | Calls (total) | Manual corrections |
-|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
+|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
 | 1 | [qwen3.6-35b-a3b](qwen3.6-35b-a3b.md) | 2026-07-02 | ✅ | ✅ | ✅ | ✅ | ✅ (1st try) | ✅ (1st try) | ✅ (1st try) | ✅ (1st try) | ✅ (1st try) | ✅ (2 attempts) | ✅ (1st try) | ✅ (1st try) | 13 | 0 |
 | 2 | [ornith-1.0-35b-mtplx](ornith-1.0-35b-mtplx.md) | 2026-07-02 | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ (1st try) | ✅ (1st try) | ✅ (1st try) | — | — | — | — | 8 | 0 |
 | 3 | [qwen/qwen3.6-27b](qwen-qwen3.6-27b.md) | 2026-07-02 | ✅ | ✅ | ✅ | ✅ | ✅ (1st try) | ✅ (1st try) | ✅ (1st try) | ✅ (1st try) | — | — | — | — | 8 | 0 |
