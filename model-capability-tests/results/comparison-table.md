@@ -53,31 +53,36 @@ described in each model's own notes below.
 
 `—` in a `09`-`12` cell means that task didn't exist yet when the model was run, or
 the model hasn't been re-run against the expanded suite yet — not a failure. Only
-`ornith-1.0-35b-mtplx`, `qwen3.6-35b-a3b`, and `qwen/qwen3.6-27b` have 09-12 data
-so far (see the notes below the table).
+`ornith-1.0-35b-mtplx`, `qwen3.6-35b-a3b`, `google/gemma-4-26b-a4b-qat`, and
+`qwen/qwen3.6-27b` have 09-12 data so far (see the notes below the table).
 
 | Rank | Model | Date | 01 | 02 | 03 | 04 | 05 | 06 (reasoning) | 07 (debugging) | 08 (rule synthesis) | 09 (async) | 10 (streaming) | 11 (refactor) | 12 (performance) | Calls (total) | Manual corrections |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
 | 1 | [ornith-1.0-35b-mtplx](ornith-1.0-35b-mtplx.md) | 2026-07-02 | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ (1st try) | ✅ (1st try) | ✅ (1st try) | ✅ (1st try) | ✅ (1st try) | ✅ (1st try) | ✅ (1st try) | 12 | 0 |
 | 2 | [qwen3.6-35b-a3b](qwen3.6-35b-a3b.md) | 2026-07-02 | ✅ | ✅ | ✅ | ✅ | ✅ (1st try) | ✅ (1st try) | ✅ (1st try) | ✅ (1st try) | ✅ (1st try) | ✅ (2 attempts) | ✅ (1st try) | ✅ (1st try) | 13 | 0 |
-| 3 | [qwen/qwen3.6-27b](qwen-qwen3.6-27b.md) | 2026-07-02 | ✅ | ✅ | ✅ | ✅ | ✅ (1st try) | ✅ (1st try) | ✅ (1st try) | ✅ (1st try) | ✅ (1st try) | ✅ (4 attempts) | ✅ (1st try) | ✅ (1st try) | 16 | 0 |
-| 4 | [google/gemma-4-26b-a4b-qat](google-gemma-4-26b-a4b-qat.md) | 2026-07-02 | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ (2nd try, needed 2x the time budget) | ✅ | ✅ | — | — | — | — | 8 | 0 |
+| 3 | [google/gemma-4-26b-a4b-qat](google-gemma-4-26b-a4b-qat.md) | 2026-07-02 | ✅ | ✅ | ✅ | ✅ | ✅ (2 attempts) | ✅ (1st try) | ✅ (1st try) | ✅ (1st try) | ✅ (1st try) | ✅ (2 attempts — 2nd call's session errored, but the file it wrote was verified correct) | ✅ (1st try) | ✅ (1st try) | 15 | 0 |
+| 4 | [qwen/qwen3.6-27b](qwen-qwen3.6-27b.md) | 2026-07-02 | ✅ | ✅ | ✅ | ✅ | ✅ (1st try) | ✅ (1st try) | ✅ (1st try) | ✅ (1st try) | ✅ (1st try) | ✅ (4 attempts) | ✅ (1st try) | ✅ (1st try) | 16 | 0 |
 | 5 | [openai/gpt-oss-20b](openai-gpt-oss-20b.md) | 2026-07-02 | ✅ | ✅ | ✅ | ✅ | ✅ (3 attempts) | ✅ (1st try) | ✅ (1st try) | ✅ (1st try) | — | — | — | — | 10 | 0 |
 | 6 | [dreamfoundries/ornith-1.0-9b](dreamfoundries-ornith-1.0-9b.md) | 2026-07-02 | ✅ | ✅ | ✅ | ✅ (slow: ~160s) | ❌ 2/8 (3 attempts, reproducible) | ✅ | ❌ 2/5 (2 attempts, reproducible) | ✅ | — | — | — | — | 11 | 0 |
 | 7 | [qwen3-coder-30b-a3b-instruct](qwen3-coder-30b-a3b-instruct.md) | 2026-07-02 | ✅ | ✅ | ✅ (3 attempts) | ✅ | ❌ 0/8 (3 attempts, reproducible — tooling, not reasoning) | ✅ (2nd try) | ✅ (3rd try) | ❌ 5/8 (6 attempts, reproducible) | — | — | — | — | 20 | 0 |
 
-Ranks 1-3 all went 12/12 on the full expanded suite, ordered by the sort key's
+Ranks 1-4 all went 12/12 on the full expanded suite, ordered by the sort key's
 call-count tiebreaker: `ornith-1.0-35b-mtplx` (12 calls, zero retries anywhere) >
 `qwen3.6-35b-a3b` (13 calls, one timeout-then-retry on task 10) >
-`qwen/qwen3.6-27b` (16 calls — task 10 alone took 4 attempts across two wall-time
-timeouts and an idle-stream stall before succeeding, the single hardest
-task-model combination in this suite so far, though never a case of confidently
-wrong logic). Ranks 4-6 are 8/8-in-8-to-10-calls sweeps on tasks 01-08 only (no
-09-12 data yet). **Only three of seven models have 09-12 data, so ranks 1-3 aren't
-yet on a fully apples-to-apples footing with ranks 4-7 either** — re-run the
-remaining four models against the full 12-task suite before treating any of this
-as settled; several models could plausibly reorder once everyone has comparable
-data on the harder, newer tasks.
+`google/gemma-4-26b-a4b-qat` (15 calls — two tasks needed a retry, 05 and 10; task
+10's retry is the most interesting result in the whole suite: the CLI session
+itself errored out on a context-window limit *after* the model had already
+written a fully correct fix via a `run_shell_command` heredoc, so it never even
+self-reported success — caught only because this suite scores real test runs, not
+self-reports) > `qwen/qwen3.6-27b` (16 calls — task 10 alone took 4 attempts
+across two wall-time timeouts and an idle-stream stall before succeeding, the
+single hardest task-model combination in this suite so far, though never a case
+of confidently wrong logic). Ranks 5-7 are 8/8-in-8-to-11-calls sweeps on tasks
+01-08 only (no 09-12 data yet). **Only four of seven models have 09-12 data, so
+ranks 1-4 aren't yet on a fully apples-to-apples footing with ranks 5-7 either** —
+re-run the remaining three models against the full 12-task suite before treating
+any of this as settled; several models could plausibly reorder once everyone has
+comparable data on the harder, newer tasks.
 
 `06`'s "2nd try" note matters: at this suite's default 240s wall-time budget, gemma
 produced zero output on task 06 (timed out with the starting stub untouched); at 480s
@@ -278,14 +283,42 @@ this run (pre-flight sanity-checked first, per the now-established practice).
 **2026-07-02 update — 4 new tasks added** (`09-extreme-async-pool`,
 `10-extreme-buffer-parser`, `11-extreme-multi-file-refactor`,
 `12-extreme-performance-pathfinder`; see `../README.md`'s task table), now
-reflected as columns 09-12 in the ranked table above. `qwen3.6-35b-a3b` is still
-the only model with data there (12/12, 13 calls; only task 10 needed a retry — a
-genuine wall-time timeout with real partial progress, not a stall, succeeded at
-2x budget) — every other row shows `—` in those columns because it hasn't been
-re-run against the expanded suite yet, not because it failed. See that model's
-own log for the full per-task table and the task-10 timeout story. Re-run the
-other six models against 09-12 before treating cross-model conclusions on the new
-tasks as settled.
+reflected as columns 09-12 in the ranked table above. At the time of this run,
+`qwen3.6-35b-a3b` was the only model with data there (12/12, 13 calls; only task
+10 needed a retry — a genuine wall-time timeout with real partial progress, not a
+stall, succeeded at 2x budget); three more models have since been re-run against
+09-12 too (see their own sections below and the ranked table's current state).
+
+## What google/gemma-4-26b-a4b-qat's run actually shows (full 12-task re-run)
+
+The original run (2026-07-01/02, tasks 01-08 only) is documented in its own log
+and summarized in the note above the ranked table. This section covers the
+2026-07-02 full re-run against all 12 tasks, driven autonomously via the LM
+Studio `lms` CLI with a live `lms log stream` heartbeat for visibility.
+
+Result: **12/12**, 15 total calls. The original 8-task sweep reproduced (task 06
+solved first-try this time by going straight to the 480s budget informed by the
+original run's own timeout lesson — a nice validation of that lesson actually
+paying off), but task 05 needed a retry this time where it hadn't originally
+(a genuine wall-time timeout with zero progress, unrelated to the `write_file`
+quirk other models hit there — no file was ever attempted) — a reminder that
+run-to-run timeout variance isn't confined to the hardest tier.
+
+The standout result is task 10: attempt 1 timed out with real partial progress
+(2/5), and attempt 2 is the most interesting single data point in this whole
+suite. After a long fix-test-retest cycle (32 assistant turns), the model wrote a
+fully correct implementation directly via a `run_shell_command` heredoc
+(`cat <<'EOF' > src/csv-parser.mjs`) — and then the **CLI session itself** errored
+out with `Context is too large to send safely after automatic compression...
+compression status: COMPRESSION_FAILED_EMPTY_SUMMARY`, before it could run the
+tests itself or emit any JSON status. Scoring by running the real tests against
+the scratch copy (this suite's own rule, stated in `../README.md`: the actual
+test always wins over the model's self-report) showed **all 5 tests passing.**
+The model did everything right; the wrapper process's own context-window
+housekeeping failed around it, after the fact. This is the cleanest possible
+demonstration of why this suite never trusts a session's self-reported status —
+a naive harness that treated a `FatalError`/non-zero-exit as an automatic failure
+would have recorded this as 0/5 when the true result was 5/5.
 
 ## What glm-4.7-flash-mlx's run shows: nothing — untestable in this environment
 
