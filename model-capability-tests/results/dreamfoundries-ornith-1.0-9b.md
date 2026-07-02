@@ -31,3 +31,16 @@ of *which* variable meant *what* partway through, and extra time did not fix tha
 the way it fixed gemma's task 06 slowness. Also notable: even on an *easy-tier*
 mechanical task (04), it took ~160s vs. gemma's few seconds, despite getting it
 right — the speed gap shows up well before the correctness gap does.
+
+### Reproducibility check — full independent re-run, same day
+
+Re-ran all 8 tasks fresh (one attempt each, same config/budgets as above) to check
+whether the 05/07 failures were noise. They were not: **05 failed a 4th consecutive
+time (this run: 3/8, a different partial state than before but still clearly
+broken) and 07 failed a 3rd consecutive time (2/5, identical to both earlier
+attempts).** 06 and 08 both passed again (2/2 and 2/2 cumulative) — 06 this time
+took ~268s vs. the original run's ~44s, a large latency swing that didn't affect
+the outcome. 01-04 all passed again; 04 this time took ~32s vs. the original run's
+~160s — confirms real run-to-run latency variance exists even on tasks it always
+gets right, independent of the 05/07 failure pattern, which held perfectly across
+7 total attempts on the two failing tasks.
