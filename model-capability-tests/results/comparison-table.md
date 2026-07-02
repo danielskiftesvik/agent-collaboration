@@ -51,19 +51,30 @@ result); (3) remaining ties broken by wall-time/latency profile and the severity
 of any non-fatal hiccups (engine crashes recovered from, malformed JSON, etc.),
 described in each model's own notes below.
 
-| Rank | Model | Date | 01 | 02 | 03 | 04 | 05 | 06 (reasoning) | 07 (debugging) | 08 (rule synthesis) | Calls (total) | Manual corrections |
-|---|---|---|---|---|---|---|---|---|---|---|---|---|
-| 1 | [qwen3.6-35b-a3b](qwen3.6-35b-a3b.md) | 2026-07-02 | ✅ | ✅ | ✅ | ✅ | ✅ (1st try) | ✅ (1st try) | ✅ (1st try) | ✅ (1st try) | 8 | 0 |
-| 2 | [ornith-1.0-35b-mtplx](ornith-1.0-35b-mtplx.md) | 2026-07-02 | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ (1st try) | ✅ (1st try) | ✅ (1st try) | 8 | 0 |
-| 3 | [qwen/qwen3.6-27b](qwen-qwen3.6-27b.md) | 2026-07-02 | ✅ | ✅ | ✅ | ✅ | ✅ (1st try) | ✅ (1st try) | ✅ (1st try) | ✅ (1st try) | 8 | 0 |
-| 4 | [google/gemma-4-26b-a4b-qat](google-gemma-4-26b-a4b-qat.md) | 2026-07-02 | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ (2nd try, needed 2x the time budget) | ✅ | ✅ | 8 | 0 |
-| 5 | [openai/gpt-oss-20b](openai-gpt-oss-20b.md) | 2026-07-02 | ✅ | ✅ | ✅ | ✅ | ✅ (3 attempts) | ✅ (1st try) | ✅ (1st try) | ✅ (1st try) | 10 | 0 |
-| 6 | [dreamfoundries/ornith-1.0-9b](dreamfoundries-ornith-1.0-9b.md) | 2026-07-02 | ✅ | ✅ | ✅ | ✅ (slow: ~160s) | ❌ 2/8 (3 attempts, reproducible) | ✅ | ❌ 2/5 (2 attempts, reproducible) | ✅ | 11 | 0 |
-| 7 | [qwen3-coder-30b-a3b-instruct](qwen3-coder-30b-a3b-instruct.md) | 2026-07-02 | ✅ | ✅ | ✅ (3 attempts) | ✅ | ❌ 0/8 (3 attempts, reproducible — tooling, not reasoning) | ✅ (2nd try) | ✅ (3rd try) | ❌ 5/8 (6 attempts, reproducible) | 20 | 0 |
+`—` in a `09`-`12` cell means that task didn't exist yet when the model was run, or
+the model hasn't been re-run against the expanded suite yet — not a failure. Only
+`qwen3.6-35b-a3b` has 09-12 data so far (see the note below the table).
 
-Ranks 1-3 are all clean 8/8-in-8-calls sweeps, tie-broken by wall-time: `qwen3.6-35b-a3b`
-(9-23s per task) edges out `ornith-1.0-35b-mtplx` (15-41s) and `qwen/qwen3.6-27b`
-(45-79s) despite all three sharing the identical correctness profile.
+| Rank | Model | Date | 01 | 02 | 03 | 04 | 05 | 06 (reasoning) | 07 (debugging) | 08 (rule synthesis) | 09 (async) | 10 (streaming) | 11 (refactor) | 12 (performance) | Calls (total) | Manual corrections |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| 1 | [qwen3.6-35b-a3b](qwen3.6-35b-a3b.md) | 2026-07-02 | ✅ | ✅ | ✅ | ✅ | ✅ (1st try) | ✅ (1st try) | ✅ (1st try) | ✅ (1st try) | ✅ (1st try) | ✅ (2 attempts) | ✅ (1st try) | ✅ (1st try) | 13 | 0 |
+| 2 | [ornith-1.0-35b-mtplx](ornith-1.0-35b-mtplx.md) | 2026-07-02 | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ (1st try) | ✅ (1st try) | ✅ (1st try) | — | — | — | — | 8 | 0 |
+| 3 | [qwen/qwen3.6-27b](qwen-qwen3.6-27b.md) | 2026-07-02 | ✅ | ✅ | ✅ | ✅ | ✅ (1st try) | ✅ (1st try) | ✅ (1st try) | ✅ (1st try) | — | — | — | — | 8 | 0 |
+| 4 | [google/gemma-4-26b-a4b-qat](google-gemma-4-26b-a4b-qat.md) | 2026-07-02 | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ (2nd try, needed 2x the time budget) | ✅ | ✅ | — | — | — | — | 8 | 0 |
+| 5 | [openai/gpt-oss-20b](openai-gpt-oss-20b.md) | 2026-07-02 | ✅ | ✅ | ✅ | ✅ | ✅ (3 attempts) | ✅ (1st try) | ✅ (1st try) | ✅ (1st try) | — | — | — | — | 10 | 0 |
+| 6 | [dreamfoundries/ornith-1.0-9b](dreamfoundries-ornith-1.0-9b.md) | 2026-07-02 | ✅ | ✅ | ✅ | ✅ (slow: ~160s) | ❌ 2/8 (3 attempts, reproducible) | ✅ | ❌ 2/5 (2 attempts, reproducible) | ✅ | — | — | — | — | 11 | 0 |
+| 7 | [qwen3-coder-30b-a3b-instruct](qwen3-coder-30b-a3b-instruct.md) | 2026-07-02 | ✅ | ✅ | ✅ (3 attempts) | ✅ | ❌ 0/8 (3 attempts, reproducible — tooling, not reasoning) | ✅ (2nd try) | ✅ (3rd try) | ❌ 5/8 (6 attempts, reproducible) | — | — | — | — | 20 | 0 |
+
+Ranks 1-3 are all clean 8/8-in-8-calls sweeps on tasks 01-08, tie-broken by
+wall-time: `qwen3.6-35b-a3b` (9-23s per task) edges out `ornith-1.0-35b-mtplx`
+(15-41s) and `qwen/qwen3.6-27b` (45-79s) despite all three sharing the identical
+01-08 correctness profile. `qwen3.6-35b-a3b`'s rank isn't yet directly comparable
+to the others on an apples-to-apples basis, though, since it's the only model with
+09-12 data at all (12/12, 13 calls total — see its own log for the full table);
+its `Calls (total)` of 13 mixes in that extra, harder work, while every other
+row's 13 total is still only 01-08. **Re-run the remaining six models against
+09-12 before treating this ranking as final** — a model could easily reorder once
+everyone has comparable data on the harder, newer tasks.
 
 `06`'s "2nd try" note matters: at this suite's default 240s wall-time budget, gemma
 produced zero output on task 06 (timed out with the starting stub untouched); at 480s
@@ -225,18 +236,17 @@ Both extreme reasoning tasks (06, 08) solved first try, same DP/rule-ordering
 approach as its sibling models. No engine-level or KV-cache crashes anywhere in
 this run (pre-flight sanity-checked first, per the now-established practice).
 
-**2026-07-02 update — 4 new tasks added, tested against this model only so far:**
-`09-extreme-async-pool`, `10-extreme-buffer-parser`, `11-extreme-multi-file-refactor`,
-and `12-extreme-performance-pathfinder` were added to `../tasks/` (see
-`../README.md`'s task table) and run against `qwen3.6-35b-a3b` as the first data
-point — see that model's own log for the full table. Result: **12/12**, 13 total
-calls (only task 10 needed a retry, a genuine wall-time timeout with real partial
-progress, not a stall — succeeded at 2x budget). The original 8-task sweep also
-reproduced exactly (8/8 again) on the same run. **The ranked table above still
-only covers tasks 01-08**, since no other model has been run against 09-12 yet —
-re-run the other five models against the full 12-task suite before drawing any
-cross-model conclusions from the new tasks, and extend the table's columns once
-at least two models have 09-12 data.
+**2026-07-02 update — 4 new tasks added** (`09-extreme-async-pool`,
+`10-extreme-buffer-parser`, `11-extreme-multi-file-refactor`,
+`12-extreme-performance-pathfinder`; see `../README.md`'s task table), now
+reflected as columns 09-12 in the ranked table above. `qwen3.6-35b-a3b` is still
+the only model with data there (12/12, 13 calls; only task 10 needed a retry — a
+genuine wall-time timeout with real partial progress, not a stall, succeeded at
+2x budget) — every other row shows `—` in those columns because it hasn't been
+re-run against the expanded suite yet, not because it failed. See that model's
+own log for the full per-task table and the task-10 timeout story. Re-run the
+other six models against 09-12 before treating cross-model conclusions on the new
+tasks as settled.
 
 ## What glm-4.7-flash-mlx's run shows: nothing — untestable in this environment
 
