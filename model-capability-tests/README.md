@@ -34,6 +34,10 @@ trying to establish a real capability hierarchy, not just an instruction-followi
 | `06-extreme-genuine-reasoning` | Extreme (reasoning) | Weighted interval scheduling (DP) — adversarial tests specifically fail both "pick highest priority" and "maximize count" greedy shortcuts |
 | `07-extreme-subtle-debugging` | Extreme (debugging) | Fix a genuinely subtle bug (mutating an array while iterating forward over it) that isn't obvious from reading the code once |
 | `08-extreme-rule-synthesis` | Extreme (spec-following) | Implement a bespoke multi-rule spec (not a named algorithm) where two plausible rule-ordering mistakes are each caught by a dedicated adversarial test |
+| `09-extreme-async-pool` | Extreme (async) | Implement a concurrent task runner that supports pausing/resuming, retries with backoff, and early timeouts |
+| `10-extreme-buffer-parser` | Extreme (streaming) | Implement a streaming CSV parser that processes chunks, emitting rows, and handles escaped quotes or newlines split across boundaries |
+| `11-extreme-multi-file-refactor` | Extreme (refactoring) | Refactor a multi-module database query system to propagate transactions while preserving backward compatibility |
+| `12-extreme-performance-pathfinder` | Extreme (performance) | Implement an efficient Dijkstra shortest-path pathfinder on a large grid using a Min-Heap under a strict CPU time budget |
 
 Each task directory has:
 - `BRIEF.md` — the exact prompt to hand the model (already includes the JSON-status

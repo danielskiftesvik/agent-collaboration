@@ -225,6 +225,19 @@ Both extreme reasoning tasks (06, 08) solved first try, same DP/rule-ordering
 approach as its sibling models. No engine-level or KV-cache crashes anywhere in
 this run (pre-flight sanity-checked first, per the now-established practice).
 
+**2026-07-02 update — 4 new tasks added, tested against this model only so far:**
+`09-extreme-async-pool`, `10-extreme-buffer-parser`, `11-extreme-multi-file-refactor`,
+and `12-extreme-performance-pathfinder` were added to `../tasks/` (see
+`../README.md`'s task table) and run against `qwen3.6-35b-a3b` as the first data
+point — see that model's own log for the full table. Result: **12/12**, 13 total
+calls (only task 10 needed a retry, a genuine wall-time timeout with real partial
+progress, not a stall — succeeded at 2x budget). The original 8-task sweep also
+reproduced exactly (8/8 again) on the same run. **The ranked table above still
+only covers tasks 01-08**, since no other model has been run against 09-12 yet —
+re-run the other five models against the full 12-task suite before drawing any
+cross-model conclusions from the new tasks, and extend the table's columns once
+at least two models have 09-12 data.
+
 ## What glm-4.7-flash-mlx's run shows: nothing — untestable in this environment
 
 Attempted 2026-07-02, immediately blocked. Model identity was confirmed correct
