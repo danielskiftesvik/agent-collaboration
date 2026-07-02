@@ -9,6 +9,7 @@ log file for per-task notes, wall-time budgets, and run history.
 | [dreamfoundries/ornith-1.0-9b](dreamfoundries-ornith-1.0-9b.md) | 2026-07-02 | ✅ | ✅ | ✅ | ✅ (slow: ~160s) | ❌ 2/8 (3 attempts, reproducible) | ✅ | ❌ 2/5 (2 attempts, reproducible) | ✅ | 11 | 0 |
 | [qwen3-coder-30b-a3b-instruct](qwen3-coder-30b-a3b-instruct.md) | 2026-07-02 | ✅ | ✅ | ✅ (3 attempts) | ✅ | ❌ 0/8 (3 attempts, reproducible — tooling, not reasoning) | ✅ (2nd try) | ✅ (3rd try) | ❌ 5/8 (6 attempts, reproducible) | 20 | 0 |
 | [ornith-1.0-35b-mtplx](ornith-1.0-35b-mtplx.md) | 2026-07-02 | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ (1st try) | ✅ (1st try) | ✅ (1st try) | 8 | 0 |
+| [openai/gpt-oss-20b](openai-gpt-oss-20b.md) | 2026-07-02 | ✅ | ✅ | ✅ | ✅ | ✅ (3 attempts) | ✅ (1st try) | ✅ (1st try) | ✅ (1st try) | 10 | 0 |
 
 `06`'s "2nd try" note matters: at this suite's default 240s wall-time budget, gemma
 produced zero output on task 06 (timed out with the starting stub untouched); at 480s
@@ -94,6 +95,37 @@ environment glitch, not just a difference in underlying coding/reasoning ability
 worth watching for in future runs against other models, since this specific
 tool-approval quirk is clearly a recurring feature of this harness/CLI
 combination, not a one-off.
+
+## What openai/gpt-oss-20b's run actually shows
+
+Another clean run — 8/8, only 1 extra call needed (task 05), both extreme
+reasoning tasks (06, 08) solved first try — tied with ornith-1.0-35b-mtplx as the
+two best-performing models in this suite so far. Two things distinguish it from
+the others. First, a **leaked chat-template artifact**: GPT-OSS's native "harmony"
+format uses `<|channel|>...<|message|>` control tokens to separate internal
+commentary from a final answer, and in about half this run's tasks those tokens
+(or plain narration like "All tests passed.") ended up prefixed onto the JSON
+status instead of being stripped by the LM Studio/CLI integration — the JSON
+itself was always syntactically valid, just not "the entire response is JSON and
+nothing else" as the brief requires. Second, and more interesting: task 05 hit the
+same `write_file`-declined-by-yolo-mode quirk every model in this suite has hit —
+but this model's response to it was **more honest than qwen3-coder's stall and
+different from ornith-1.0-35b-mtplx's silent workaround**: it correctly recognized
+the block and self-reported `{"status":"blocked",...}` with an accurate
+explanation, twice, before a third attempt found a genuinely novel workaround none
+of the other three models discovered — calling `edit` with an empty `old_string`
+to create the file, sidestepping `write_file` entirely without needing
+`run_shell_command`.
+
+Also worth recording for future runs against this environment: this model's very
+first `qwen` CLI attempts (before any task-level scoring) failed instantly with an
+unrelated LM Studio engine bug, `NotImplementedError: RotatingKVCache Quantization
+NYI`, triggered purely by context length (reproduced independently with a raw,
+tool-free `curl` request padded to ~9000 tokens). This was resolved by an LM
+Studio-side config change (unlike glm-4.7-flash-mlx's still-unresolved crash,
+below) — after which every task in the table above ran cleanly. If a fresh model
+in this environment fails instantly on its very first attempt, check for an
+engine-level crash message before concluding anything about the model itself.
 
 ## What glm-4.7-flash-mlx's run shows: nothing — untestable in this environment
 
