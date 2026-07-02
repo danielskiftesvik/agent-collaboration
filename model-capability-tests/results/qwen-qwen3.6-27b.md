@@ -41,3 +41,42 @@ response to it varies significantly (compare `qwen3-coder-30b-a3b-instruct`,
 which stalled out completely on the same quirk with zero recovery, 3 attempts,
 0/8). No engine-level or KV-cache crashes were observed anywhere in this run,
 unlike the two most recently tested models before it.
+
+### 2026-07-02 — full re-run, including 4 new tasks (09-12)
+
+Re-ran all 8 original tasks fresh (same config/budgets, driven autonomously via
+the LM Studio `lms` CLI — `lms unload -a` then `lms load "qwen/qwen3.6-27b"
+--identifier "qwen/qwen3.6-27b" -y` — with the same identity/tool-calling sanity
+checks as before) to check reproducibility, plus ran the 4 newly-added tasks in
+`../tasks/`. 09-12 at 480s wall-time.
+
+| Task | Result | Calls | Wall time | Notes |
+|---|---|---|---|---|
+| 01-trivial-add-entry | ✅ 4/4 | 1 | ~71s | Reproduced cleanly |
+| 02-easy-fix-bug | ✅ 4/4 | 1 | ~43s | Reproduced cleanly |
+| 03-moderate-implement-from-spec | ✅ 5/5 | 1 | ~45s | Reproduced cleanly |
+| 04-hard-extend-branching-logic | ✅ 6/6 | 1 | ~51s | Reproduced cleanly |
+| 05-very-hard-new-module | ✅ 8/8 | 1 | ~80s | Reproduced cleanly, including the same `write_file`-decline-then-heredoc-recovery pattern |
+| 06-extreme-genuine-reasoning | ✅ 7/7 | 1 | ~82s | Reproduced cleanly |
+| 07-extreme-subtle-debugging | ✅ 5/5 | 1 | ~48s | Reproduced cleanly |
+| 08-extreme-rule-synthesis | ✅ 8/8 | 1 | ~67s | Reproduced cleanly |
+| `09-extreme-async-pool` | ✅ 5/5 | 1 | ~458s (of 480s budget) | First try, but close to the wall-time budget — noticeably slower than `ornith-1.0-35b-mtplx`'s 316s and `qwen3.6-35b-a3b`'s 99s on the identical task. JSON status invalid: wrapped in prose + a markdown code fence |
+| `10-extreme-buffer-parser` | ✅ 5/5 | **4** | 481s timeout (0/5), 961s timeout (4/5), idle-stream stall at 359s of 1440s budget (4/5, correct diagnosis mid-fix), then 763s success (5/5, of 960s budget) | **By far the hardest single result in this suite so far.** Attempt 1: genuine wall-time timeout with minimal progress (17 lines, 0/5). Attempt 2 (2x budget): another wall-time timeout, but real progress this time (4/5). Attempt 3 (3x original budget): didn't hit the wall-time limit at all — instead an idle-stream API error after 120s of silence, moments after the model correctly identified the two remaining bugs (a `\r\n` split across chunks creating a spurious empty row, and non-fatal UTF-8 decoding masking incomplete byte sequences instead of buffering them) — diagnosis correct, fix never applied before the stream died. Attempt 4: succeeded cleanly, implementing streaming UTF-8 decoding and explicit CRLF-boundary handling. Investigated whether this reflected a genuine environment problem (checked LM Studio responsiveness, system load, process health) partway through — found no infrastructure issue; this was purely task difficulty for this specific model |
+| `11-extreme-multi-file-refactor` | ✅ 4/4 | 1 | ~110s | First try. Correctly propagated the optional `tx` parameter through both services with atomic rollback and no-`tx` backward compatibility. JSON status invalid: a one-line prose prefix ("All 4 tests pass.") before the JSON object |
+| `12-extreme-performance-pathfinder` | ✅ 4/4 | 1 | ~114s | First try. Binary min-heap Dijkstra, passing the 30ms/200×200-grid performance assertion at ~8.5ms measured. JSON status invalid: same prose-prefix pattern as task 11 |
+
+**Summary: 12/12 tasks passed, 16 total calls — the original 8-task sweep
+reproduced exactly (8/8), but the four new tasks cost significantly more friction
+than they did for either `ornith-1.0-35b-mtplx` (12 calls, zero retries) or
+`qwen3.6-35b-a3b` (13 calls, one retry).** Task 10 alone took 4 attempts and three
+different failure modes (two genuine wall-time timeouts with increasing partial
+progress, then an idle-stream stall immediately after a *correct* diagnosis) before
+succeeding — the single hardest task-model combination observed in this suite to
+date, though notably never a case of confidently-wrong logic; every attempt's
+partial state was either literally correct-so-far or, in the stalled attempt,
+about to be fixed correctly. Also notable: JSON status validity got markedly worse
+on the harder, newer tasks — 4 of the 6 tasks in this section (09, 10's final
+attempt, 11, 12) had invalid strict JSON (prose or code-fence wrapping), compared
+to consistently valid JSON across the original 01-08 set in both this model's runs.
+That correlation (harder task → more likely to wrap the JSON in explanation) is a
+pattern worth watching for in future models' 09-12 runs.
