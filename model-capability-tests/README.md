@@ -55,6 +55,10 @@ Use an explicit file path for `node --test` (e.g. `test/clamp.test.mjs`), not a 
 
 ## Scoring
 
+Record results in `results/` — one log file per model (append a dated section per
+run, don't overwrite), plus `results/comparison-table.md` for the cross-model view.
+See `results/README.md` for the exact format.
+
 For each (model, task) pair, record:
 - **Calls needed** — how many separate invocations before the tests passed (a
   single big multi-step brief often stalls partway through; smaller, single-purpose
