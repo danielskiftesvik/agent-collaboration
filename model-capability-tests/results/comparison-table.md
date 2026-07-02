@@ -53,28 +53,32 @@ described in each model's own notes below.
 
 `—` in a `09`-`12` cell means that task didn't exist yet when the model was run, or
 the model hasn't been re-run against the expanded suite yet — not a failure. Only
-`qwen3.6-35b-a3b` has 09-12 data so far (see the note below the table).
+`ornith-1.0-35b-mtplx` and `qwen3.6-35b-a3b` have 09-12 data so far (see the note
+below the table).
 
 | Rank | Model | Date | 01 | 02 | 03 | 04 | 05 | 06 (reasoning) | 07 (debugging) | 08 (rule synthesis) | 09 (async) | 10 (streaming) | 11 (refactor) | 12 (performance) | Calls (total) | Manual corrections |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
-| 1 | [qwen3.6-35b-a3b](qwen3.6-35b-a3b.md) | 2026-07-02 | ✅ | ✅ | ✅ | ✅ | ✅ (1st try) | ✅ (1st try) | ✅ (1st try) | ✅ (1st try) | ✅ (1st try) | ✅ (2 attempts) | ✅ (1st try) | ✅ (1st try) | 13 | 0 |
-| 2 | [ornith-1.0-35b-mtplx](ornith-1.0-35b-mtplx.md) | 2026-07-02 | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ (1st try) | ✅ (1st try) | ✅ (1st try) | — | — | — | — | 8 | 0 |
+| 1 | [ornith-1.0-35b-mtplx](ornith-1.0-35b-mtplx.md) | 2026-07-02 | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ (1st try) | ✅ (1st try) | ✅ (1st try) | ✅ (1st try) | ✅ (1st try) | ✅ (1st try) | ✅ (1st try) | 12 | 0 |
+| 2 | [qwen3.6-35b-a3b](qwen3.6-35b-a3b.md) | 2026-07-02 | ✅ | ✅ | ✅ | ✅ | ✅ (1st try) | ✅ (1st try) | ✅ (1st try) | ✅ (1st try) | ✅ (1st try) | ✅ (2 attempts) | ✅ (1st try) | ✅ (1st try) | 13 | 0 |
 | 3 | [qwen/qwen3.6-27b](qwen-qwen3.6-27b.md) | 2026-07-02 | ✅ | ✅ | ✅ | ✅ | ✅ (1st try) | ✅ (1st try) | ✅ (1st try) | ✅ (1st try) | — | — | — | — | 8 | 0 |
 | 4 | [google/gemma-4-26b-a4b-qat](google-gemma-4-26b-a4b-qat.md) | 2026-07-02 | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ (2nd try, needed 2x the time budget) | ✅ | ✅ | — | — | — | — | 8 | 0 |
 | 5 | [openai/gpt-oss-20b](openai-gpt-oss-20b.md) | 2026-07-02 | ✅ | ✅ | ✅ | ✅ | ✅ (3 attempts) | ✅ (1st try) | ✅ (1st try) | ✅ (1st try) | — | — | — | — | 10 | 0 |
 | 6 | [dreamfoundries/ornith-1.0-9b](dreamfoundries-ornith-1.0-9b.md) | 2026-07-02 | ✅ | ✅ | ✅ | ✅ (slow: ~160s) | ❌ 2/8 (3 attempts, reproducible) | ✅ | ❌ 2/5 (2 attempts, reproducible) | ✅ | — | — | — | — | 11 | 0 |
 | 7 | [qwen3-coder-30b-a3b-instruct](qwen3-coder-30b-a3b-instruct.md) | 2026-07-02 | ✅ | ✅ | ✅ (3 attempts) | ✅ | ❌ 0/8 (3 attempts, reproducible — tooling, not reasoning) | ✅ (2nd try) | ✅ (3rd try) | ❌ 5/8 (6 attempts, reproducible) | — | — | — | — | 20 | 0 |
 
-Ranks 1-3 are all clean 8/8-in-8-calls sweeps on tasks 01-08, tie-broken by
-wall-time: `qwen3.6-35b-a3b` (9-23s per task) edges out `ornith-1.0-35b-mtplx`
-(15-41s) and `qwen/qwen3.6-27b` (45-79s) despite all three sharing the identical
-01-08 correctness profile. `qwen3.6-35b-a3b`'s rank isn't yet directly comparable
-to the others on an apples-to-apples basis, though, since it's the only model with
-09-12 data at all (12/12, 13 calls total — see its own log for the full table);
-its `Calls (total)` of 13 mixes in that extra, harder work, while every other
-row's 13 total is still only 01-08. **Re-run the remaining six models against
-09-12 before treating this ranking as final** — a model could easily reorder once
-everyone has comparable data on the harder, newer tasks.
+Ranks 1-2 both went 12/12 on the full expanded suite; `ornith-1.0-35b-mtplx` edges
+out `qwen3.6-35b-a3b` per the sort key's tiebreaker (fewer total calls — 12 vs. 13,
+since `qwen3.6-35b-a3b` needed a genuine timeout-then-retry on task 10 while
+`ornith-1.0-35b-mtplx` solved every single task, including that one, on the first
+attempt) despite being slower in wall-clock time on several of the harder new
+tasks. Ranks 3-5 are 8/8-in-8-to-10-calls sweeps on tasks 01-08 only (no 09-12 data
+yet) — `qwen/qwen3.6-27b` (45-79s per task) is the fastest of that group but
+that's a 01-08-only comparison; it isn't necessarily still 3rd once it's run
+against 09-12 too. **Only two of seven models have 09-12 data, so ranks 1-2 aren't
+yet on a fully apples-to-apples footing with ranks 3-7 either** — re-run the
+remaining five models against the full 12-task suite before treating any of this
+as settled; several models could plausibly reorder once everyone has comparable
+data on the harder, newer tasks.
 
 `06`'s "2nd try" note matters: at this suite's default 240s wall-time budget, gemma
 produced zero output on task 06 (timed out with the starting stub untouched); at 480s
@@ -164,6 +168,22 @@ worth watching for in future runs against other models, since this specific
 tool-approval quirk is clearly a recurring feature of this harness/CLI
 combination, not a one-off. (It has now recurred on `openai/gpt-oss-20b`'s and
 `qwen/qwen3.6-27b`'s task 05 runs too — see their sections below.)
+
+**2026-07-02 update — 4 new tasks added, re-run driven autonomously via the LM
+Studio `lms` CLI** (`lms unload -a` / `lms load <model> --identifier <model> -y`,
+no manual model-switching needed). The original 8-task sweep reproduced exactly
+(8/8), and all 4 new tasks (09-12) passed too — **12/12 overall, and the only
+model in this suite so far to solve all 12 on the first attempt with zero
+retries anywhere**, edging out `qwen3.6-35b-a3b`'s otherwise-comparable 12/12 run
+(which needed a genuine timeout-then-retry on task 10) purely on call-efficiency.
+The trade-off is speed on the two hardest new tasks: 316s (09) and 385s (10) here,
+noticeably slower than `qwen3.6-35b-a3b`'s single-attempt numbers on those same
+tasks — but where `qwen3.6-35b-a3b` ran out of budget and needed a second call on
+10, this model just took the time it needed in one shot and got it right. The one
+new wrinkle: task 11 (the 3-file transaction refactor) produced this model's
+first invalid-JSON status in the whole suite — wrapped in explanatory prose and a
+markdown code fence rather than a bare object, breaking a "zero repair rounds
+anywhere" streak that had held since its very first run.
 
 ## What openai/gpt-oss-20b's run actually shows
 

@@ -37,3 +37,42 @@ raw task-solving ability. Every JSON status was valid, well-formed, and accurate
 summarized what was actually done — no repair rounds needed anywhere in the run,
 which stands out against every other model tested (all of which needed at least
 one JSON repair round or had a call fail to complete cleanly).
+
+### 2026-07-02 — full re-run, including 4 new tasks (09-12)
+
+Re-ran all 8 original tasks fresh (same config/budgets as above, driven
+autonomously this time via the LM Studio `lms` CLI — `lms unload -a` then `lms
+load ornith-1.0-35b-mtplx --identifier ornith-1.0-35b-mtplx -y` — with the same
+identity/tool-calling sanity checks as before) to check reproducibility, plus ran
+the 4 newly-added tasks in `../tasks/` (09-12 at 480s wall-time; none needed a
+retry).
+
+| Task | Result | Calls | Wall time | Notes |
+|---|---|---|---|---|
+| 01-trivial-add-entry | ✅ 4/4 | 1 | ~15s | Reproduced cleanly |
+| 02-easy-fix-bug | ✅ 4/4 | 1 | ~15s | Reproduced cleanly |
+| 03-moderate-implement-from-spec | ✅ 5/5 | 1 | ~22s | Reproduced cleanly |
+| 04-hard-extend-branching-logic | ✅ 6/6 | 1 | ~27s | Reproduced cleanly |
+| 05-very-hard-new-module | ✅ 8/8 | 1 | ~34s | Reproduced cleanly, including the same `write_file`-decline-then-heredoc-recovery pattern |
+| 06-extreme-genuine-reasoning | ✅ 7/7 | 1 | ~34s | Reproduced cleanly |
+| 07-extreme-subtle-debugging | ✅ 5/5 | 1 | ~18s | Reproduced cleanly |
+| 08-extreme-rule-synthesis | ✅ 8/8 | 1 | ~24s | Reproduced cleanly |
+| `09-extreme-async-pool` | ✅ 5/5 | 1 | ~316s (of 480s budget) | First try. Correctly implemented concurrency limiting, pause/resume, timeout-driven slot-freeing without double-settling an already-settled promise, and exponential backoff retries. Noticeably slower than `qwen3.6-35b-a3b`'s ~99s on the identical task despite the same one-call, first-try success |
+| `10-extreme-buffer-parser` | ✅ 5/5 | 1 | ~385s (of 480s budget) | First try — no timeout needed at all, unlike `qwen3.6-35b-a3b`'s run of the same task (which needed a timeout-then-retry cycle). Implemented a four-state character-level parser (normal / after-CR / quoted / quote-expected) plus explicit incomplete-UTF-8-sequence buffering across chunk boundaries |
+| `11-extreme-multi-file-refactor` | ✅ 4/4 | 1 | ~55s | First try. Correctly propagated the optional `tx` parameter through both services with atomic rollback and no-`tx` backward compatibility. **JSON status was invalid strict JSON** — wrapped in explanatory prose and a ` ```json ` code fence rather than being the literal, unadorned object the brief required (valid JSON once extracted) |
+| `12-extreme-performance-pathfinder` | ✅ 4/4 | 1 | ~112s (of 480s budget) | First try. Binary min-heap Dijkstra with lazy deletion, passing the 30ms/200×200-grid performance assertion at ~20.7ms measured. Valid JSON status |
+
+**Summary: 12/12 tasks passed, and — unlike `qwen3.6-35b-a3b`'s otherwise-comparable
+12/12 run — every single task passed on the first attempt, 12 calls total, zero
+retries anywhere, including both of the two tasks (09, 10) that gave
+`qwen3.6-35b-a3b` the most trouble.** The trade-off is raw speed on those same two
+tasks: 316s and 385s respectively here, vs. `qwen3.6-35b-a3b`'s faster individual
+attempts (though `qwen3.6-35b-a3b` needed a full timeout-and-retry cycle on task
+10, so its total wall-clock cost there was actually comparable once both attempts
+are counted). The original 8-task sweep reproduced exactly (8/8, similar
+timings). One real regression from the original run's "zero repair rounds
+anywhere" record: task 11's JSON status was wrapped in prose and a markdown code
+fence rather than being a bare JSON object — the first invalid-JSON case this
+model has produced in this suite, on a task involving 3 separate source files
+(more surface area for the model to want to explain its changes at length before
+emitting the final status).
