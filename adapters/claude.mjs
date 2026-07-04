@@ -5,6 +5,7 @@ import { defineAdapter } from "./contract.mjs";
 import { run } from "../core/process.mjs";
 
 const bin = () => process.env.AGENT_COLLAB_CLAUDE_BIN || "claude";
+const model = () => process.env.AGENT_COLLAB_CLAUDE_MODEL || "default";
 
 export default defineAdapter({
   name: "claude",
@@ -14,7 +15,7 @@ export default defineAdapter({
     // long implementation emits a continuous stdout heartbeat — otherwise the
     // idle watchdog can't tell "working" from "frozen" (claude is silent until
     // done in plain --output-format json). stream-json needs --verbose headless.
-    const args = ["-p", brief, "--output-format", "stream-json", "--verbose"];
+    const args = ["-p", brief, "--output-format", "stream-json", "--verbose", "--model", model()];
     args.push("--permission-mode", role === "reviewer" ? "plan" : "acceptEdits");
     if (workspace) args.push("--add-dir", workspace);
     return { command: bin(), args };

@@ -74,6 +74,22 @@ test("claude buildCommand STREAMS output (heartbeat); reviewer is read-only, wor
   assert.ok(worker.args.includes("acceptEdits"));
 });
 
+test("claude buildCommand pins the default model by default", () => {
+  delete process.env.AGENT_COLLAB_CLAUDE_MODEL;
+  const { args } = getAdapter("claude").buildCommand({ role: "reviewer", brief: "x", workspace: "/w" });
+  const mi = args.indexOf("--model");
+  assert.ok(mi >= 0, "--model present");
+  assert.equal(args[mi + 1], "default");
+});
+
+test("claude buildCommand honors an explicit model env override", () => {
+  process.env.AGENT_COLLAB_CLAUDE_MODEL = "opus";
+  const { args } = getAdapter("claude").buildCommand({ role: "worker", brief: "x", workspace: "/w" });
+  const mi = args.indexOf("--model");
+  assert.equal(args[mi + 1], "opus");
+  delete process.env.AGENT_COLLAB_CLAUDE_MODEL;
+});
+
 test("claude parseOutput unwraps the result field from the JSON envelope", () => {
   const claude = getAdapter("claude");
   const envelope = JSON.stringify({ type: "result", subtype: "success", result: '{"status":"completed"}' });
