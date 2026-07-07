@@ -37,15 +37,17 @@ function sleepSync(ms) {
 
 /**
  * Serialize state read-modify-write across processes via an exclusive lockfile, so
- * two concurrent background workers can't lose each other's updates. Best-effort:
- * steals a stale lock (>10s) and, after a deadline, proceeds anyway rather than
- * deadlock (atomic temp+rename keeps each write self-consistent).
+ * two concurrent background workers can't lose each other's updates. Stale locks are
+ * stolen, but a fresh lock is never bypassed: failing is safer than interleaving
+ * read-modify-write and dropping jobs.
  */
 function withLock(cwd, fn) {
   const dir = resolveStateDir(cwd);
   fs.mkdirSync(dir, { recursive: true });
   const lock = path.join(dir, ".lock");
-  const deadline = Date.now() + 5000;
+  const timeoutMs = Number(process.env.AGENT_COLLAB_LOCK_TIMEOUT_MS) || 60000;
+  const staleMs = Number(process.env.AGENT_COLLAB_STALE_LOCK_MS) || 120000;
+  const deadline = Date.now() + timeoutMs;
   let fd;
   for (;;) {
     try {
@@ -54,14 +56,14 @@ function withLock(cwd, fn) {
     } catch (e) {
       if (e.code !== "EEXIST") throw e;
       try {
-        if (Date.now() - fs.statSync(lock).mtimeMs > 10000) {
+        if (Date.now() - fs.statSync(lock).mtimeMs > staleMs) {
           fs.unlinkSync(lock);
           continue;
         }
       } catch {
         /* lock vanished — retry */
       }
-      if (Date.now() > deadline) break; // proceed without the lock rather than deadlock
+      if (Date.now() > deadline) throw new Error(`state lock busy after ${timeoutMs}ms: ${lock}`);
       sleepSync(15);
     }
   }

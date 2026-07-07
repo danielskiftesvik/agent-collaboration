@@ -28,6 +28,20 @@ const CLEAN_AGY = `
   }
 `;
 
+const CLEAN_CLAUDE = `
+  import fs from 'node:fs';
+  if (process.argv.includes('--version')) { process.stdout.write('claude 1'); process.exit(0); }
+  const brief = process.argv.join(' ');
+  if (/Review this change/i.test(brief)) {
+    const result = '\`\`\`json\\n' + JSON.stringify({verdict:'needs-attention',summary:'bug',findings:[{severity:'high',title:'subtracts',body:'add() subtracts'}]}) + '\\n\`\`\`';
+    process.stdout.write(JSON.stringify({type:'result', result}) + '\\n');
+  } else {
+    fs.writeFileSync('note.txt', 'ok\\n');
+    const result = '\`\`\`json\\n{"status":"completed","summary":"made note","changed":true}\\n\`\`\`';
+    process.stdout.write(JSON.stringify({type:'result', result}) + '\\n');
+  }
+`;
+
 test("doctor --live passes for a clean reviewer + confined worker", () => {
   isolateStateRoot();
   process.env.AGENT_COLLAB_AGY_BIN = stubBin(CLEAN_AGY);
@@ -38,6 +52,21 @@ test("doctor --live passes for a clean reviewer + confined worker", () => {
   assert.equal(r.checks.find((c) => c.name === "isolation:agy").ok, true);
 
   delete process.env.AGENT_COLLAB_AGY_BIN;
+});
+
+test("doctor --live exercises a rate-limit fallback to a second worker", () => {
+  isolateStateRoot();
+  process.env.AGENT_COLLAB_AGY_BIN = stubBin(CLEAN_AGY);
+  process.env.AGENT_COLLAB_CLAUDE_BIN = stubBin(CLEAN_CLAUDE);
+
+  const r = runDoctor(process.cwd(), { live: true, workers: ["agy", "claude"] });
+
+  const fallback = r.checks.find((c) => c.name === "fallback:agy->claude");
+  assert.equal(fallback.ok, true);
+  assert.match(fallback.detail, /fell back/i);
+
+  delete process.env.AGENT_COLLAB_AGY_BIN;
+  delete process.env.AGENT_COLLAB_CLAUDE_BIN;
 });
 
 // agy stub that ESCAPES: from its worktree it resolves the canonical checkout (via

@@ -66,12 +66,9 @@ export function classifyFailure({ stdout = "", stderr = "", exitCode, worker } =
   return { kind: "other", resetAt: null, worker };
 }
 
-// Kinds that mean "this worker is unusable right now" → worth auto-falling-back
-// to another worker-ready harness. "timeout"/"frozen" are included because a worker
-// that blows the time budget or stops producing output is best handed to another
-// worker rather than retried in place. "other" is a genuine task failure: don't mask
-// it by silently retrying elsewhere.
-const FALLBACK_KINDS = new Set(["rate-limit", "auth", "timeout", "frozen"]);
+// Default auto-fallback policy: transient capacity/runtime failures only. Auth is
+// surfaced by default because another worker cannot fix this worker's login/config.
+export const FALLBACK_KINDS = new Set(["rate-limit", "timeout", "frozen"]);
 
 export function isFallbackKind(kind) {
   return FALLBACK_KINDS.has(kind);

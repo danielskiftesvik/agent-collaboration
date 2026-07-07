@@ -53,6 +53,9 @@ from a review is forbidden, even when the fix looks obvious.
 
 - If the run **failed or returned invalid output**, surface the worker's actual
   output and the most actionable stderr lines. Do **not** fabricate a result.
+- If a reviewer run is `completed` with `resultValid:false` and `report:true`, the
+  model produced prose but invalid JSON. Read the saved prose report; do not discard
+  it as a task failure.
 - Do **not** silently fall back to doing the task yourself in the driver. If the
   cross-harness run failed, report the failure and ask how to proceed.
 - If the worker was never successfully invoked, don't generate a substitute
@@ -77,12 +80,14 @@ A failed result is **classified** so you don't have to guess. Read these fields:
 - `failureKind: "auth"` — the worker isn't logged in / the key is invalid. By
   default this is **surfaced, not routed around** (a different worker can't fix the
   *config*) — point the user at `/agent-collab:setup` or the harness's own `login`.
+- `failureKind: "stalled"` — a background job's process died without writing a
+  terminal result. Surface it and inspect `run.log` / artifacts; retry as a fresh job.
 - `failureKind: "other"` — an ordinary task failure. Surface it; do **not** treat
   it as a limit.
 
 **What the runtime already did:** by default it **auto-falls-back to the next
 worker-ready harness** (never the driver) on a **transient** failure —
-`rate-limit` or `timeout` (auth is surfaced instead; tune with
+`rate-limit`, `timeout`, or `frozen` (auth is surfaced instead; tune with
 `AGENT_COLLAB_FALLBACK=off|on|<kinds>`). The result then carries:
 
 - `note` — a human sentence describing the fallback ("Auto-fell back to claude
@@ -108,16 +113,17 @@ set `AGENT_COLLAB_FALLBACK=off`); then the limit just surfaces for you to relay.
 - **agy** — usable as reviewer and write-worker (default **Gemini Flash**;
   `AGENT_COLLAB_AGY_CLASS=Pro` for deeper passes). Its adapter pins model flags before
   the prompt and harvests patches from agy's internal worktree when needed.
-- **codex / claude** — usable as write-workers (codex is production-ready through the runtime;
-  claude-as-worker is the native short-circuit — use the Agent tool).
+- **codex** — reviewer/analyst only through this runtime (`canWrite:false`); use it
+  for hard reasoning and adversarial review, not implementation patches.
+- **claude** — usable as a write-worker; when Claude Code is also the driver, use the
+  native Agent tool.
 
-Observed reliability (mid-2026, from real sessions): **agy is the dependable
-workhorse** (fast, usually first-try, good correctness coverage) and **codex is
-the specialist** for the hardest reasoning — high signal but slower and likelier
-to need a retry, especially on large diffs. For high-stakes review, running both
-(agy as the floor, codex as the ceiling) gives the best coverage. Severity case
-and missing `next_steps` are normalized automatically, so don't reject a codex
-report for those.
+Observed reliability: **agy is the dependable workhorse** for fast patch delivery
+and **codex is the specialist** for the hardest review reasoning — high signal but
+slower and sometimes quiet for long stretches. For high-stakes review, running both
+(agy as the floor, codex as the ceiling) gives the best coverage. Severity/verdict
+cosmetics and missing `next_steps` are normalized automatically, so don't reject a
+codex report for those.
 
 ## Why this matters
 

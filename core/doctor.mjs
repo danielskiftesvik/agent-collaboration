@@ -9,7 +9,7 @@ import os from "node:os";
 import path from "node:path";
 
 import { runOk } from "./process.mjs";
-import { runSetup, runWorkerSync } from "./dispatch.mjs";
+import { runSetup, runWorkerSync, runWithFallback } from "./dispatch.mjs";
 import { resolveStateDir } from "./state.mjs";
 import { version } from "./version.mjs";
 
@@ -102,6 +102,52 @@ function liveIsolationCheck(worker) {
   }
 }
 
+function limitStubFor(worker) {
+  const dir = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), "ac-doctor-limit-")));
+  const file = path.join(dir, "limit.mjs");
+  fs.writeFileSync(file, "#!/usr/bin/env node\nprocess.stderr.write('429 rate limit; retry-after: 60'); process.exit(1);\n");
+  fs.chmodSync(file, 0o755);
+  return {
+    file,
+    envKey: worker === "codex" ? "AGENT_COLLAB_CODEX_COMPANION" : `AGENT_COLLAB_${worker.toUpperCase()}_BIN`
+  };
+}
+
+function liveFallbackCheck(targets) {
+  const writeTargets = targets.filter((w) => w !== "codex");
+  if (writeTargets.length < 2) return null;
+  const [first, second] = writeTargets;
+  const stub = limitStubFor(first);
+  const old = process.env[stub.envKey];
+  const repo = seedRepo();
+  try {
+    process.env[stub.envKey] = stub.file;
+    const res = runWithFallback(repo, {
+      driver: "doctor",
+      worker: first,
+      role: "worker",
+      brief: "Create a new file `note.txt` containing exactly the text: ok. Modify nothing else.",
+      available: [first, second],
+      maxAttempts: 1
+    });
+    const ok = res.status === "completed" && res.worker === second && res.fellBackFrom?.[0]?.worker === first;
+    return {
+      name: `fallback:${first}->${second}`,
+      ok,
+      detail: ok
+        ? `fell back after ${first} (${res.fellBackFrom[0].failureKind}) and completed on ${second}`
+        : `status=${res.status} worker=${res.worker} ${(res.errors || []).join("; ")}`
+    };
+  } catch (e) {
+    return { name: `fallback:${first}->${second}`, ok: false, detail: e.message };
+  } finally {
+    if (old === undefined) delete process.env[stub.envKey];
+    else process.env[stub.envKey] = old;
+    rmrf(repo);
+    rmrf(path.dirname(stub.file));
+  }
+}
+
 /**
  * Run the doctor checks. Returns { ready, live, checks: [{name, ok, detail}], ok }.
  * `live` runs real worker calls (spends model usage); `workers` restricts which
@@ -140,6 +186,8 @@ export function runDoctor(cwd, { live = false, workers } = {}) {
       checks.push(liveReviewCheck(w));
       checks.push(liveIsolationCheck(w));
     }
+    const fallback = liveFallbackCheck(targets);
+    if (fallback) checks.push(fallback);
   }
 
   return { ready, live, checks, ok: checks.every((c) => c.ok) };

@@ -1,14 +1,15 @@
 ---
 name: collaborative-investigation
-description: Use BEFORE debugging a non-trivial bug or designing a non-trivial implementation, and whenever the user says "are you sure", "make sure this is right", or "get a second opinion". Forces the driver to form a hypothesis with an explicit confidence score, then gets an INDEPENDENT second opinion from a different harness (via the agent-collaboration runtime). Implementation is gated behind both parties reaching ≥90% confidence and agreeing.
+description: Use BEFORE debugging a non-trivial bug or designing a non-trivial implementation, and whenever the user says "are you sure", "make sure this is right", or "get a second opinion". Forces the driver to form a hypothesis with an explicit confidence score, then gets an INDEPENDENT second opinion from a different harness (via the agent-collaboration runtime). Implementation starts when both parties agree and no high-severity objection remains unresolved.
 ---
 
 # Collaborative Investigation
 
 A two-party gate that prevents implementation drift on hard problems. The **driver**
 investigates first; an **independent reviewer on a different harness** validates; and
-**neither party's word alone is sufficient** — both must reach ≥90% confidence with
-agreement before code is written.
+**neither party's word alone is sufficient**. Implementation may start when both
+parties agree on the approach and no high-severity objection remains unresolved.
+Record each party's confidence for the log — the number itself is not the gate.
 
 This skill is harness-agnostic: whichever harness is driving (Claude Code, Codex, or
 Antigravity) forms the hypothesis, and the second opinion comes from another harness via
@@ -60,10 +61,11 @@ Read the relevant code yourself (or dispatch an Explore agent). Then produce:
 **Confidence: NN%** — one sentence justifying the number.
 ```
 
-Calibration: ≥95% verified end-to-end · 80–94% strong but an unchecked assumption · <80%
-keep investigating. **Two-stage threshold:** 80% to *consult*, 90% to *ship*. The reviewer
-validates a real hypothesis — it does not bump you 80→90. If your number rises without new
-evidence in their report, that's drift: keep the honest number and ITERATE.
+Calibration: high confidence = verified end-to-end; medium confidence = strong but
+with unchecked assumptions; low confidence = keep investigating. The reviewer
+validates a real hypothesis — it does not magically raise your number. If your
+number rises without new evidence in their report, that's drift: keep the honest
+number and ITERATE.
 
 ## Step 2 — Pick the reviewer (different harness)
 
@@ -114,10 +116,12 @@ Read the worker's report (`… result <jobId>`). The assessment is the report te
 - Resolution: PROCEED | ITERATE | ASK USER
 ```
 
-- **PROCEED** — both ≥90% AND no substantive disagreement. Implement (then your normal
-  TDD/plan skills apply — this gate runs *before* them, not instead).
-- **ITERATE** — someone <90% or a substantive disagreement that more investigation can close.
-  Back to Step 1. After two loops without convergence, escalate to ASK USER.
+- **PROCEED** — both parties agree on the approach and no high-severity objection
+  remains unresolved. Implement (then your normal TDD/plan skills apply — this
+  gate runs *before* them, not instead).
+- **ITERATE** — confidence is low/medium for a load-bearing claim, or a substantive
+  disagreement can be closed by more investigation. Back to Step 1. After two
+  loops without convergence, escalate to ASK USER.
 - **ASK USER** — disagreement is a product/scope call code can't settle.
 
 ### If the reviewer is unavailable or returns garbage
@@ -134,5 +138,5 @@ Options: retry · authorize single-party (YOU own the residual risk) · rescope.
 - No confidence number — "I think this is right" is a vibe, not an investigation.
 - Forgetting to strip the confidence (anchors the reviewer; kills independence).
 - Treating the reviewer as ground truth — if it contradicts a load-bearing fact, re-verify yourself.
-- Inflating your number to clear 90% — that's drift; ITERATE instead.
+- Inflating your confidence number to justify proceeding — that's drift; ITERATE instead.
 - Running the gate on a typo. The bypass exists for a reason.

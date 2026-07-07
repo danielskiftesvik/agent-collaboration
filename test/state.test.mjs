@@ -75,6 +75,22 @@ test("updateJob merges a patch and bumps updatedAt", () => {
   assert.ok(updated.updatedAt >= created.updatedAt);
 });
 
+test("state writes do not proceed without the lock under contention", () => {
+  isolateStateRoot();
+  const cwd = tmpCwd();
+  const dir = resolveStateDir(cwd);
+  fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(path.join(dir, ".lock"), "held");
+  const oldTimeout = process.env.AGENT_COLLAB_LOCK_TIMEOUT_MS;
+  process.env.AGENT_COLLAB_LOCK_TIMEOUT_MS = "30";
+
+  assert.throws(() => appendJob(cwd, { id: "blocked", status: "running" }), /state lock/i);
+  assert.equal(loadState(cwd).jobs.length, 0);
+
+  if (oldTimeout === undefined) delete process.env.AGENT_COLLAB_LOCK_TIMEOUT_MS;
+  else process.env.AGENT_COLLAB_LOCK_TIMEOUT_MS = oldTimeout;
+});
+
 test("appendJob prunes to the newest MAX_JOBS records", () => {
   isolateStateRoot();
   const cwd = tmpCwd();

@@ -28,8 +28,22 @@ test("large-context routes to agy (context window)", () => {
   assert.equal(recommendWorker({ task: "large-context", driver: "codex", available: ALL }).worker, "agy");
 });
 
-test("hard-bug routes to a reasoner, excluding the driver", () => {
-  assert.equal(recommendWorker({ task: "hard-bug", driver: "claude", available: ALL }).worker, "codex");
+test("hard-bug routes to a write-capable worker, excluding the driver", () => {
+  const r = recommendWorker({ task: "hard-bug", driver: "claude", available: ALL });
+  assert.notEqual(r.worker, "claude");
+  assert.notEqual(r.worker, "codex");
+  assert.notEqual(MODEL_PROFILES[r.worker]?.canWrite, false);
+});
+
+test("codex is review-only and is not recommended for write tasks", () => {
+  assert.equal(MODEL_PROFILES.codex.canWrite, false);
+  const r = recommendWorker({ task: "refactor", driver: "agy", available: ALL });
+  assert.notEqual(r.worker, "codex");
+});
+
+test("visual and multimodal tasks route to agy", () => {
+  assert.equal(recommendWorker({ task: "visual", driver: "claude", available: ALL }).worker, "agy");
+  assert.equal(recommendWorker({ task: "multimodal", driver: "codex", available: ALL }).worker, "agy");
 });
 
 test("a recommendation carries the worker's model profile and a reason", () => {

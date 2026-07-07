@@ -49,8 +49,9 @@ Before debugging a non-trivial bug or designing a non-trivial implementation: fo
 hypothesis with an explicit confidence score, then take an **independent second opinion**
 from another harness. When **Codex** is driving, the gate defaults the second opinion to
 **claude** (the other strong reasoner); when **agy** is driving, to **codex**. Strip your
-confidence number before sending (anti-anchoring). Implement only at **≥90% mutual confidence
-with agreement**:
+confidence number before sending (anti-anchoring). Implementation may start when both parties
+agree on the approach and no high-severity objection remains unresolved. Record each party's
+confidence for the log — the number itself is not the gate:
 
 ```
 node "$COMPANION" recommend --task second-opinion --driver <self> --json

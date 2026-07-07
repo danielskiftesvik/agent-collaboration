@@ -63,9 +63,9 @@ test("rate-limit dominates when both rate-limit and auth words appear", () => {
 
 // ---- which kinds trigger an auto-fallback ----
 
-test("rate-limit, auth, timeout and frozen are fallback-worthy; other is not", () => {
+test("default fallback kinds are transient-only; auth is surfaced", () => {
   assert.equal(isFallbackKind("rate-limit"), true);
-  assert.equal(isFallbackKind("auth"), true);
+  assert.equal(isFallbackKind("auth"), false);
   assert.equal(isFallbackKind("timeout"), true);
   assert.equal(isFallbackKind("frozen"), true);
   assert.equal(isFallbackKind("other"), false);

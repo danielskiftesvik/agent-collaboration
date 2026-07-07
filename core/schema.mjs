@@ -89,6 +89,7 @@ export function extractJson(text) {
 }
 
 const SEVERITIES = new Set(["critical", "high", "medium", "low"]);
+const REVIEW_KEYS = new Set(["verdict", "summary", "findings", "next_steps"]);
 const SEVERITY_SYNONYMS = {
   blocker: "critical",
   crit: "critical",
@@ -107,11 +108,29 @@ const SEVERITY_SYNONYMS = {
   style: "low"
 };
 
+const VERDICT_SYNONYMS = {
+  approved: "approve",
+  lgtm: "approve",
+  "looks good": "approve",
+  "needs attention": "needs-attention",
+  "needs_attention": "needs-attention",
+  "request-changes": "needs-attention",
+  "request changes": "needs-attention",
+  "changes-requested": "needs-attention",
+  "changes requested": "needs-attention"
+};
+
 function normalizeSeverity(s) {
   if (typeof s !== "string") return s;
   const k = s.trim().toLowerCase();
   if (SEVERITIES.has(k)) return k;
   return SEVERITY_SYNONYMS[k] ?? k; // leave a truly unknown word lowercased; validation will flag it
+}
+
+function normalizeVerdict(s) {
+  if (typeof s !== "string") return s;
+  const k = s.trim().toLowerCase();
+  return VERDICT_SYNONYMS[k] ?? k;
 }
 
 /**
@@ -128,7 +147,10 @@ function normalizeSeverity(s) {
 export function normalizeReviewArtifact(value) {
   if (!value || typeof value !== "object" || Array.isArray(value)) return value;
   const out = { ...value };
-  if (typeof out.verdict === "string") out.verdict = out.verdict.trim().toLowerCase();
+  for (const key of Object.keys(out)) {
+    if (!REVIEW_KEYS.has(key)) delete out[key];
+  }
+  if (typeof out.verdict === "string") out.verdict = normalizeVerdict(out.verdict);
   if (Array.isArray(out.findings)) {
     out.findings = out.findings.map((f) =>
       f && typeof f === "object" && !Array.isArray(f)

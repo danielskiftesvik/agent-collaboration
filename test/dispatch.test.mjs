@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { spawn } from "node:child_process";
 
 import { makeRepo, isolateStateRoot, stubBin, real, git } from "./helpers.mjs";
 import {
@@ -15,6 +16,7 @@ import {
   isSandboxStartupFailure,
   launchBackground,
   waitForJob,
+  refreshJobStatus,
   defaultTimeoutMs,
   defaultIdleMs,
   applyResult
@@ -134,6 +136,20 @@ test("applyResult lands the change in the working tree UNSTAGED, leaving a clean
   delete process.env.AGENT_COLLAB_AGY_BIN;
 });
 
+test("applyResult returns applied paths and a diffstat", () => {
+  isolateStateRoot();
+  const repo = makeRepo();
+  process.env.AGENT_COLLAB_AGY_BIN = stubBin(WRITE_STUB);
+
+  const res = runWorkerSync(repo, { driver: "claude", worker: "agy", role: "worker", brief: "x" });
+  const applied = applyResult(repo, res.jobId);
+
+  assert.deepEqual(applied.paths, ["worker-was-here.txt"]);
+  assert.match(applied.stat, /worker-was-here\.txt/);
+
+  delete process.env.AGENT_COLLAB_AGY_BIN;
+});
+
 // A worker that does real work (writes a file) but replies in prose, not JSON.
 const PROSE_WORKER_STUB = `
 import fs from 'node:fs';
@@ -189,6 +205,39 @@ test("runWorkerSync (reviewer) validates against the review schema, no patch", (
   assert.equal(res.valid, true);
   assert.equal(res.artifact.verdict, "approve");
   assert.equal(fs.existsSync(path.join(res.artifactDir, "patches", "agy.diff")), false);
+
+  delete process.env.AGENT_COLLAB_AGY_BIN;
+});
+
+test("reviewer verdict synonyms and top-level extras are normalized", () => {
+  isolateStateRoot();
+  const repo = makeRepo();
+  process.env.AGENT_COLLAB_AGY_BIN = stubBin(`
+    process.stdout.write('\`\`\`json\\n' + JSON.stringify({verdict:'Approved',summary:'ok',findings:[],risk:'low'}) + '\\n\`\`\`');
+  `);
+
+  const res = runWorkerSync(repo, { driver: "claude", worker: "agy", role: "reviewer", brief: "review" });
+
+  assert.equal(res.status, "completed");
+  assert.equal(res.resultValid, true);
+  assert.equal(res.artifact.verdict, "approve");
+  assert.equal("risk" in res.artifact, false);
+
+  delete process.env.AGENT_COLLAB_AGY_BIN;
+});
+
+test("a reviewer with prose but invalid JSON completes with an unparsed report", () => {
+  isolateStateRoot();
+  const repo = makeRepo();
+  process.env.AGENT_COLLAB_AGY_BIN = stubBin(`process.stdout.write('Verdict: approve\\nNo findings.');`);
+
+  const res = runWorkerSync(repo, { driver: "claude", worker: "agy", role: "reviewer", brief: "review", maxAttempts: 1 });
+
+  assert.equal(res.status, "completed");
+  assert.equal(res.resultValid, false);
+  assert.equal(res.report, true);
+  assert.match(res.note, /read the prose/i);
+  assert.match(fs.readFileSync(path.join(res.artifactDir, "reports", "agy.md"), "utf8"), /No findings/);
 
   delete process.env.AGENT_COLLAB_AGY_BIN;
 });
@@ -341,31 +390,24 @@ test("runWithFallback skips non-writer fallback candidates for write roles", () 
   const old = MODEL_PROFILES.agy.canWrite;
   MODEL_PROFILES.agy.canWrite = false;
   delete process.env.AGENT_COLLAB_ALLOW_NONWRITER;
-  process.env.AGENT_COLLAB_CODEX_COMPANION = codexCompanionStub(`
-    process.stdout.write(JSON.stringify({
-      status: 1,
-      rawOutput: JSON.stringify({status:"failed",summary:"429 RESOURCE_EXHAUSTED quota exceeded",changed:false})
-    }));
-  `);
   process.env.AGENT_COLLAB_AGY_BIN = stubBin(WRITE_STUB);
-  process.env.AGENT_COLLAB_CLAUDE_BIN = stubBin(CLAUDE_SUCCESS_STUB);
+  process.env.AGENT_COLLAB_CLAUDE_BIN = stubBin(RATE_LIMITED_STUB);
 
   const res = runWithFallback(repo, {
     driver: "manual",
-    worker: "codex",
+    worker: "claude",
     role: "worker",
     brief: "x",
-    available: ["codex", "agy", "claude"],
+    available: ["claude", "agy"],
     maxAttempts: 1
   });
 
-  assert.equal(res.status, "completed");
-  assert.equal(res.worker, "claude");
-  assert.equal(res.fellBackFrom[0].worker, "codex");
+  assert.equal(res.status, "failed");
+  assert.equal(res.allWorkersLimited, true);
+  assert.deepEqual(res.fellBackFrom.map((f) => f.worker), ["claude"]);
 
   MODEL_PROFILES.agy.canWrite = old;
   process.env.AGENT_COLLAB_ALLOW_NONWRITER = "on";
-  delete process.env.AGENT_COLLAB_CODEX_COMPANION;
   delete process.env.AGENT_COLLAB_AGY_BIN;
   delete process.env.AGENT_COLLAB_CLAUDE_BIN;
 });
@@ -722,6 +764,23 @@ test("waitForJob marks a job stalled when its process is gone without finishing"
   assert.equal(job.failureKind, "stalled");
 });
 
+test("refreshJobStatus marks a dead running job stalled without waiting", () => {
+  isolateStateRoot();
+  const repo = makeRepo();
+  appendJob(repo, {
+    id: "stale-read",
+    worker: "agy",
+    status: "running",
+    pid: 2147483646,
+    heartbeatAt: new Date().toISOString()
+  });
+
+  const job = refreshJobStatus(repo, "stale-read");
+
+  assert.equal(job.status, "failed");
+  assert.equal(job.failureKind, "stalled");
+});
+
 // ---- inactivity (freeze) watchdog ----
 
 test("defaultIdleMs honors AGENT_COLLAB_IDLE_TIMEOUT (incl. 0=off) and defaults generously", () => {
@@ -816,6 +875,37 @@ test("runWithFallback falls back when the first worker FREEZES", () => {
   delete process.env.AGENT_COLLAB_CLAUDE_BIN;
 });
 
+test("codex session log activity counts as progress for the idle watchdog", () => {
+  isolateStateRoot();
+  const repo = makeRepo();
+  const oldHome = process.env.HOME;
+  const fakeHome = real(fs.mkdtempSync(path.join(os.tmpdir(), "ac-codex-home-")));
+  const sessions = path.join(fakeHome, ".codex", "sessions");
+  fs.mkdirSync(sessions, { recursive: true });
+  process.env.HOME = fakeHome;
+  process.env.AGENT_COLLAB_CODEX_COMPANION = codexCompanionStub(`
+    import fs from 'node:fs';
+    import os from 'node:os';
+    import path from 'node:path';
+    const dir = path.join(os.homedir(), '.codex', 'sessions');
+    let n = 0;
+    const iv = setInterval(() => fs.writeFileSync(path.join(dir, 'progress-' + (n++) + '.jsonl'), 'x'), 200);
+    await new Promise((r) => setTimeout(r, 1800));
+    clearInterval(iv);
+    const review = JSON.stringify({verdict:'approve',summary:'ok',findings:[]});
+    process.stdout.write(JSON.stringify({ status: 0, rawOutput: review }));
+  `);
+
+  const res = runWorkerSync(repo, { driver: "claude", worker: "codex", role: "reviewer", brief: "review", idleMs: 800, timeoutMs: 60000, maxAttempts: 1 });
+
+  assert.equal(res.status, "completed");
+  assert.notEqual(res.failureKind, "frozen");
+
+  if (oldHome === undefined) delete process.env.HOME;
+  else process.env.HOME = oldHome;
+  delete process.env.AGENT_COLLAB_CODEX_COMPANION;
+});
+
 // ---- preventive OS-sandbox policy ----
 
 test("resolveSandbox: opt-in for agy write-workers, never codex", () => {
@@ -906,6 +996,60 @@ test("a worker that writes OUTSIDE its worktree (into the real repo) is flagged 
   assert.match(res.errors.join(" "), /outside its worktree|breach/i);
 
   delete process.env.AGENT_COLLAB_AGY_BIN;
+  delete process.env.AC_ESCAPE;
+});
+
+test("a concurrent driver edit is a breachWarning, not a failed worker breach", () => {
+  isolateStateRoot();
+  const repo = makeRepo();
+  const target = path.join(repo, "driver-note.txt");
+  const child = spawn(
+    process.execPath,
+    ["-e", "setTimeout(()=>require('node:fs').writeFileSync(process.env.TARGET, 'driver\\n'), 250)"],
+    { env: { ...process.env, TARGET: target }, stdio: "ignore" }
+  );
+  child.unref();
+  process.env.AGENT_COLLAB_AGY_BIN = stubBin(`
+    import fs from 'node:fs';
+    if (process.argv.includes('models')) { process.exit(0); }
+    await new Promise((r) => setTimeout(r, 1200));
+    fs.writeFileSync('worker.txt', 'patch\\n');
+    process.stdout.write('\`\`\`json\\n{"status":"completed","summary":"ok","changed":true}\\n\`\`\`');
+  `);
+
+  const res = runWorkerSync(repo, { driver: "claude", worker: "agy", role: "worker", brief: "x", maxAttempts: 1 });
+
+  assert.equal(fs.existsSync(target), true);
+  assert.equal(res.status, "completed");
+  assert.equal(res.breach, false);
+  assert.deepEqual(res.breachWarning.escapedPaths, ["driver-note.txt"]);
+
+  delete process.env.AGENT_COLLAB_AGY_BIN;
+});
+
+test("breach exempt paths are reported as warnings and do not override status", () => {
+  isolateStateRoot();
+  const repo = makeRepo();
+  process.env.AC_ESCAPE = repo;
+  process.env.AGENT_COLLAB_BREACH_EXEMPT_PATHS = "reports/";
+  process.env.AGENT_COLLAB_AGY_BIN = stubBin(`
+    import fs from 'node:fs';
+    import path from 'node:path';
+    if (process.argv.includes('models')) { process.exit(0); }
+    fs.mkdirSync(path.join(process.env.AC_ESCAPE, 'reports'), { recursive: true });
+    fs.writeFileSync(path.join(process.env.AC_ESCAPE, 'reports', 'worker.md'), 'out of tree\\n');
+    fs.writeFileSync('worker.txt', 'patch\\n');
+    process.stdout.write('\`\`\`json\\n{"status":"completed","summary":"ok","changed":true}\\n\`\`\`');
+  `);
+
+  const res = runWorkerSync(repo, { driver: "claude", worker: "agy", role: "worker", brief: "x", maxAttempts: 1 });
+
+  assert.equal(res.status, "completed");
+  assert.equal(res.breach, false);
+  assert.deepEqual(res.breachWarning.escapedPaths, ["reports/"]);
+
+  delete process.env.AGENT_COLLAB_AGY_BIN;
+  delete process.env.AGENT_COLLAB_BREACH_EXEMPT_PATHS;
   delete process.env.AC_ESCAPE;
 });
 
@@ -1184,7 +1328,7 @@ test("runWithFallback honors fallback=false (single-worker, surface the limit)",
   delete process.env.AGENT_COLLAB_CLAUDE_BIN;
 });
 
-test("runWorkerSync retries on malformed output then fails after maxAttempts", () => {
+test("worker runs still retry on malformed output then fail after maxAttempts", () => {
   isolateStateRoot();
   const repo = makeRepo();
   const countFile = path.join(isolateStateRoot(), "count.txt");
@@ -1199,7 +1343,7 @@ test("runWorkerSync retries on malformed output then fails after maxAttempts", (
     process.stdout.write('no json here, just prose');
   `);
 
-  const res = runWorkerSync(repo, { driver: "claude", worker: "agy", role: "reviewer", brief: "review", maxAttempts: 2 });
+  const res = runWorkerSync(repo, { driver: "claude", worker: "agy", role: "worker", brief: "review", maxAttempts: 2 });
 
   assert.equal(res.valid, false);
   assert.equal(res.status, "failed");

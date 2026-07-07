@@ -1,4 +1,4 @@
-# Prompting codex (GPT-5.x)
+# Prompting codex
 
 Adapted from codex-plugin-cc's `gpt-5-4-prompting` skill (Apache-2.0).
 

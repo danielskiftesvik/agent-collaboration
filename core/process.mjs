@@ -72,6 +72,14 @@ function isBwrapAvailable() {
   return isBwrapAvailableCached;
 }
 
+export function writeTempSandboxProfile(profile) {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "agent-collab-sandbox-"));
+  fs.chmodSync(dir, 0o700);
+  const file = path.join(dir, "profile.sb");
+  fs.writeFileSync(file, profile, { encoding: "utf8", mode: 0o600 });
+  return file;
+}
+
 /** Run a command synchronously and return { status, stdout, stderr } without throwing. */
 export function run(command, args = [], opts = {}) {
   let finalCommand = command;
@@ -88,10 +96,7 @@ export function run(command, args = [], opts = {}) {
       const artifactDir = opts.sandboxArtifactDir || workspace;
       const profile = generateMacSandboxProfile(workspace, artifactDir, { strict: opts.sandboxStrict });
 
-      const tempDir = os.tmpdir();
-      const profileName = `sandbox-${Math.random().toString(36).substring(2)}.sb`;
-      tempProfileFile = path.join(tempDir, profileName);
-      fs.writeFileSync(tempProfileFile, profile, "utf8");
+      tempProfileFile = writeTempSandboxProfile(profile);
 
       finalCommand = "/usr/bin/sandbox-exec";
       finalArgs = ["-f", tempProfileFile, command, ...args];
@@ -171,7 +176,7 @@ export function run(command, args = [], opts = {}) {
   } finally {
     if (tempProfileFile && fs.existsSync(tempProfileFile)) {
       try {
-        fs.unlinkSync(tempProfileFile);
+        fs.rmSync(path.dirname(tempProfileFile), { recursive: true, force: true });
       } catch {
         // ignore
       }
@@ -189,4 +194,3 @@ export function runOk(command, args = [], opts = {}) {
   }
   return r.stdout;
 }
-

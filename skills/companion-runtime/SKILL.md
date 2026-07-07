@@ -51,7 +51,7 @@ would otherwise default to `claude`, so `--worker claude` would look like
 `driver === worker` and return a "use your own subagent" no-op **instead of
 actually delegating**. So a guessed driver always takes the cross-harness path.
 
-Auto-detection status (mid-2026, verified from live sessions) — all three now
+Auto-detection status (verified from live sessions) — all three now
 auto-detect, so `--driver`/`AGENT_COLLAB_DRIVER` is only an override:
 - **Codex** — `CODEX_THREAD_ID` (every session) / `CODEX_MANAGED_*`.
 - **agy** — `ANTIGRAVITY_AGENT` / `ANTIGRAVITY_CONVERSATION_ID` / `ANTIGRAVITY_PROJECT_ID`.
@@ -69,27 +69,31 @@ auto-detect, so `--driver`/`AGENT_COLLAB_DRIVER` is only an override:
 ## --json result fields
 
 `{ jobId, worker, status, resultValid, changed, patchApplies, attempts, artifact,
-artifactDir, patchPath, breach, escapedPaths, errors }`. `status` is one of
+artifactDir, patchPath, breach, escapedPaths, breachWarning, report, errors }`. `status` is one of
 `completed | no-changes | conflicted | breach | blocked | failed`. A worker is
 `completed` on a clean non-empty patch even if `resultValid` is false (the patch
 is the deliverable); a valid self-report with **no** patch is `no-changes`, never
 `completed`. `breach: true` (+ `escapedPaths`) means the worker wrote into the
-driver's real checkout — surface it, don't apply. `patchApplies` is null for
-reviewers (no patch). Apply a worker patch only via `apply` / `--apply`, after
-inspection. `worker` is the harness that actually ran (may differ from the one you
-asked for — see auto-fallback).
+driver's real checkout — surface it, don't apply. `breachWarning` means the real
+checkout changed during the run but the clean captured patch was preserved (for
+example a concurrent driver edit or an exempt report path). `patchApplies` is null
+for reviewers (no patch). A reviewer can be `completed` with `resultValid:false`
+and `report:true`: read the prose report in `reports/<worker>.md`. Apply a worker
+patch only via `apply` / `--apply`, after inspection. `worker` is the harness that
+actually ran (may differ from the one you asked for — see auto-fallback).
 
 On a **failed** run, two more fields explain why: `failureKind`
-(`rate-limit` | `auth` | `timeout` | `other`) and `resetAt` (best-effort reset
-hint for a limit). See the `result-handling` skill for how to present these.
+(`rate-limit` | `auth` | `timeout` | `frozen` | `stalled` | `other`) and `resetAt`
+(best-effort reset hint for a limit). See the `result-handling` skill for how to
+present these.
 
 ## Auto-fallback on transient failures
 
 `delegate`/`review`/`adversarial-review` auto-fall-back to the next worker-ready
 harness when the chosen worker hits a **transient** failure. Default policy:
-`rate-limit` + `timeout` (another worker can do it now); **`auth` is surfaced**, not
-routed around (it's a config fix); `other` never triggers it. Tune with
-`AGENT_COLLAB_FALLBACK`: `off` (none), `on` (rate-limit+auth+timeout), or a
+`rate-limit` + `timeout` + `frozen` (another worker can do it now); **`auth` is surfaced**, not
+routed around (it's a config fix); `other` and `stalled` never trigger it. Tune with
+`AGENT_COLLAB_FALLBACK`: `off` (none), `on` (rate-limit+auth+timeout+frozen), or a
 comma-list of kinds; `--no-fallback` forces a single worker. The result carries
 `note`, `fellBackFrom[]` (`{worker, failureKind, resetAt}`), and — if every worker
 failed eligibly — `allWorkersLimited: true`. Fallback only ever moves to another
@@ -102,7 +106,7 @@ done, with auto-fallback). With **`--background`** the runtime spawns a **detach
 worker and returns `{jobId, status:"running", background:true}` immediately — the run
 survives a driver crash. Then:
 - `status <jobId>` — poll once; `status <jobId> --wait [--timeout <s>]` — block until
-  the job reaches a terminal status (or the process dies → `stalled`).
+  the job reaches a terminal status (or the process dies → `failureKind:"stalled"`).
 - `result <jobId>` — the report + structured output once terminal.
 - `cancel <jobId>` — kills the detached worker's whole process group.
 
@@ -112,12 +116,13 @@ This is the brokerless version of the reference's async model (no app-server bro
 ## Freeze detection (idle watchdog)
 
 Every worker runs under an inactivity guard. **Progress** = stdout/stderr OR file
-activity under the worktree (and, for agy, its own log dir) — because workers often
-log/write files instead of streaming to the pipe (claude runs in streaming mode to
-provide a heartbeat). Only NO-progress for `AGENT_COLLAB_IDLE_TIMEOUT` (default 600s;
-`0` disables) trips it → killed, surfaced as `failureKind: "frozen"`, and
-fallback-eligible. Generous default so a slow-but-working worker isn't false-killed.
-Separate from the hard timeout below.
+activity under the worktree, agy's log dir, or codex's `~/.codex/log` /
+`~/.codex/sessions` dirs — because workers often log/write files instead of
+streaming to the pipe (claude runs in streaming mode to provide a heartbeat). Only
+NO-progress for `AGENT_COLLAB_IDLE_TIMEOUT` (default 600s; `0` disables) trips it
+→ killed, surfaced as `failureKind: "frozen"`, and fallback-eligible. Codex and
+qwen also have wider profile idle budgets for quiet long-running work. Separate
+from the hard timeout below.
 
 ## Timeouts (avoid the "no JSON found" no-output)
 
@@ -142,9 +147,10 @@ Disable with `AGENT_COLLAB_CODEX_RESUME=off`.
 
 Reviewer JSON is normalized before validation so a complete report isn't
 false-failed over cosmetics: `severity`/`verdict` are lowercased/trimmed (codex
-often emits `"High"`), common severity synonyms are mapped, and `next_steps` is
-optional. The deliverable is still the report — if a job ever shows `failed`,
-read `tasks/<jobId>/reports/<worker>.md` before concluding nothing came back.
+often emits `"High"`), common severity/verdict synonyms are mapped, unknown
+top-level keys are stripped, and `next_steps` is optional. If JSON is still invalid
+but prose exists, the review completes with `resultValid:false` and `report:true`:
+read `tasks/<jobId>/reports/<worker>.md`.
 
 ## Env
 
@@ -157,9 +163,10 @@ read `tasks/<jobId>/reports/<worker>.md` before concluding nothing came back.
   default** (confine writes to the work area + temp + harness state; blocks /tmp, other
   volumes, real repos). Default profile only blocks `$HOME`. Linux bwrap is already strict.
   Validate against your worker with `doctor --live` before relying on it.
-- `AGENT_COLLAB_FALLBACK` — fallback policy: `off` | `on` (rate-limit+auth+timeout) | comma-list. Default: `rate-limit,timeout` (auth surfaces).
+- `AGENT_COLLAB_FALLBACK` — fallback policy: `off` | `on` (rate-limit+auth+timeout+frozen) | comma-list. Default: `rate-limit,timeout,frozen` (auth surfaces).
 - `AGENT_COLLAB_TIMEOUT=<s>` — per-attempt worker HARD timeout in seconds (default 1200 = 20 min).
 - `AGENT_COLLAB_IDLE_TIMEOUT=<s>` — inactivity timeout in seconds (default 600; 0 = off): no progress (output OR file activity) for this long → killed as `frozen`.
+- `AGENT_COLLAB_BREACH_EXEMPT_PATHS=a,b` — comma-separated real-checkout paths that should be warnings, not hard breaches (for intentional reports/scratch output).
 - `AGENT_COLLAB_CODEX_RESUME=off` — repair with a fresh re-send instead of resuming the codex thread (resume is on by default).
 - `AGENT_COLLAB_ALLOW_INPLACE=on` — allow an UNISOLATED in-place run when a worktree can't be created (off by default → such a job is `blocked`, never run in the real cwd).
 - `AGENT_COLLAB_<AGY|CLAUDE|CODEX>_BIN` — override a harness binary.
@@ -187,8 +194,8 @@ control; the runtime can't (and shouldn't) override it. Legitimate options:
 2. Run the companion **yourself in the shell** (you authorize the export) with
    `AGENT_COLLAB_DRIVER=codex`.
 3. Practical default: from a codex driver, use **claude** as the worker/reviewer (it runs);
-   reserve agy for when you've authorized Gemini egress — or keep codex as the *worker*
-   (driven by claude/agy), its strongest role.
+   reserve agy for when you've authorized Gemini egress; use codex primarily as a
+   reviewer/analyst when another harness is driving.
 Do **not** obfuscate the payload to slip past the check — it exists to gate third-party export.
 
 ## status vs result vs apply

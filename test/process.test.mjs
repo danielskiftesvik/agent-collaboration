@@ -4,7 +4,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-import { run, generateMacSandboxProfile } from "../core/process.mjs";
+import { run, generateMacSandboxProfile, writeTempSandboxProfile } from "../core/process.mjs";
 
 test("run captures stdout and a zero status", () => {
   const r = run("node", ["-e", "process.stdout.write('hi')"]);
@@ -57,6 +57,17 @@ test("run reports sandboxApplied true on darwin, null when not requested", () =>
   }
 });
 
+test("sandbox profile temp file is created in a private dir with 0600 perms", () => {
+  const file = writeTempSandboxProfile("(version 1)");
+  try {
+    const mode = fs.statSync(file).mode & 0o777;
+    assert.equal(mode, 0o600);
+    assert.match(path.basename(path.dirname(file)), /^agent-collab-sandbox-/);
+  } finally {
+    fs.rmSync(path.dirname(file), { recursive: true, force: true });
+  }
+});
+
 test("STRICT sandbox blocks a /tmp escape that the default profile would allow", () => {
   if (os.platform() !== "darwin") return;
   const ws = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), "sbstrict-")));
@@ -95,4 +106,3 @@ test("run with sandbox: true blocks read from sensitive path on macOS", () => {
   // The command should exit with non-zero (or throw inside the child process, resulting in exit status > 0)
   assert.notEqual(r.status, 0, "should be denied access to ~/.ssh");
 });
-

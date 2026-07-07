@@ -77,7 +77,7 @@ Two delegation paths, chosen automatically:
 | `/agent-collab:setup [--gate on\|off] [--sandbox on\|off]` | Detect worker-ready harnesses; toggle the stop-time review gate and the OS sandbox |
 | `/agent-collab:doctor [--live] [--workers a,b]` | Self-check: config + readiness, and (with `--live`) a review-cycle + worktree-isolation smoke per worker against a throwaway repo |
 | `/agent-collab:recommend --task <type> --driver <self>` (or `--profiles`) | Pick the strongest available worker for a task by underlying-model strength |
-| `/agent-collab:delegate --worker <agy\|codex\|claude> [--background] [--apply] <brief>` | Run a cross-harness **worker** task (produces a patch); `--background` detaches and returns a jobId |
+| `/agent-collab:delegate --worker <agy\|claude> [--background] [--apply] <brief>` | Run a cross-harness **worker** task (produces a patch); `--background` detaches and returns a jobId |
 | `/agent-collab:review --worker <name> [--focus <text>] <diff>` | Read-only cross-harness **review** |
 | `/agent-collab:adversarial-review --worker <name> <diff>` | "Try to break it" review |
 | `/agent-collab:status [jobId] [--wait]` | List / inspect jobs; `--wait` blocks until a job finishes |
@@ -128,22 +128,23 @@ driver, `AGENTS.md` for Codex/agy drivers).
 - **Stall detection:** jobs carry a heartbeat; a job whose heartbeat is stale **and** whose
   process is gone is treated as stalled.
 - **Freeze detection:** every worker runs under an inactivity watchdog (`idle-guard`). Progress
-  = stdout/stderr **or** file activity (worktree + agy's log dir) — workers often log/write
+  = stdout/stderr **or** file activity (worktree, agy's log dir, and codex's `.codex` log/session dirs) — workers often log/write
   files rather than streaming to the pipe (claude is run in streaming mode to provide a
   heartbeat). Only a worker making NO progress for `AGENT_COLLAB_IDLE_TIMEOUT` (default 10 min)
   is killed as `failureKind: "frozen"` (and falls back), so a real hang surfaces before the
   20-min hard ceiling without false-killing a slow-but-working run.
 - **Limit & timeout handling:** a failed run is classified (`failureKind` = `rate-limit` |
-  `auth` | `timeout` | `frozen` | `other` + a best-effort `resetAt`). On a **transient** failure
-  (`rate-limit`/`timeout` by default) the runtime **auto-falls-back to the next worker-ready
+  `auth` | `timeout` | `frozen` | `stalled` | `other` + a best-effort `resetAt`). On a **transient** failure
+  (`rate-limit`/`timeout`/`frozen` by default) the runtime **auto-falls-back to the next worker-ready
   harness** (never the driver), tagging the result with a `note` + `fellBackFrom[]`; **`auth`
   is surfaced** (a config fix), not routed around. Tune via `AGENT_COLLAB_FALLBACK`
   (`off`/`on`/comma-list) or `--no-fallback`. The default per-attempt budget is 20 min so deep
   reviews aren't killed mid-run (the empty "no JSON found" failure); tune with
   `AGENT_COLLAB_TIMEOUT`.
-- **Review-output normalization:** reviewer JSON is normalized before validation (severity
-  lowercased/trimmed, synonyms mapped, `next_steps` optional) so a complete report isn't
-  false-failed over cosmetics like codex emitting `"High"`.
+- **Review-output normalization:** reviewer JSON is normalized before validation (severity/verdict
+  lowercased/trimmed, synonyms mapped, top-level extras stripped, `next_steps` optional) so a complete report isn't
+  false-failed over cosmetics like codex emitting `"High"` or `"Approved"`. If prose exists but JSON
+  is still invalid, the review completes with `resultValid:false` and `report:true`.
 - **Repair by resume:** a non-timeout repair attempt *continues* the worker's existing thread
   (codex `task --resume-last`) with a short "emit clean JSON" ask instead of re-running cold,
   falling back to a fresh re-send if the thread can't be resumed.
@@ -154,7 +155,7 @@ driver, `AGENTS.md` for Codex/agy drivers).
 
 | Harness | Reviewer | Worker | Notes |
 |---|---|---|---|
-| **codex** (GPT-5.x) | ✓ | ✓ | Deepest reasoning; prefers XML-block prompts. Slower — give it a generous timeout; severity case is normalized for you |
+| **codex** | ✓ | no | Deepest review reasoning; prefers XML-block prompts. Slower and often quiet — it has a wider idle budget and `.codex` log/session activity counts as progress |
 | **claude** | ✓ | ✓ | Use the native `Agent` tool when Claude Code is also the driver |
 | **agy** (Gemini) | ✓ | ✓ | Fast reviewer and implementer (Flash by default; `AGENT_COLLAB_AGY_CLASS=Pro` for depth). The adapter pins model flags before the prompt and harvests patches from agy's internal worktree when needed |
 | **qwen** (local) | ✓ (local-only tasks) | ✓ (plan-execution only) | Local-only, via a local LM Studio server. **Always explicit** — never in `recommend`'s default rotation, never a fallback target, never falls back away from itself on failure. Two routes only: `local-only` (sensitive-data review) and `plan-execution` (implementing a pre-written plan). See [Configuration](#configuration) for the `AGENT_COLLAB_QWEN_*` env vars. Local-only means the *worker run* stays local — compose briefs as file paths, not pasted content, and see the harness-prompting qwen guide for the full privacy boundary |
@@ -181,9 +182,10 @@ node /path/to/agent-collaboration/scripts/agent-companion.mjs \
 | `AGENT_COLLAB_DRIVER` | Override which harness is driving (`codex`/`agy`/`claude`). Normally auto-detected (Codex `CODEX_THREAD_ID`, agy `ANTIGRAVITY_*`, Claude Code `CLAUDECODE`); set only if detection misses |
 | `AGENT_COLLAB_SANDBOX` | OS sandbox: `on` (all non-codex) \| `off`. Default: opt-in for non-codex workers, **never codex** (it self-sandboxes). Degrades to unsandboxed if it can't be applied |
 | `AGENT_COLLAB_SANDBOX_STRICT=on` | Tighten the macOS profile to deny file-write by default (confine writes to work area + temp + harness state; blocks /tmp & other volumes). Default profile only blocks `$HOME`; Linux bwrap is already strict |
-| `AGENT_COLLAB_FALLBACK` | Auto-fallback policy: `off` \| `on` (rate-limit+auth+timeout) \| comma-list of kinds. Default `rate-limit,timeout` (transient; **auth is surfaced**, not routed around) |
+| `AGENT_COLLAB_FALLBACK` | Auto-fallback policy: `off` \| `on` (rate-limit+auth+timeout+frozen) \| comma-list of kinds. Default `rate-limit,timeout,frozen` (transient; **auth is surfaced**, not routed around) |
 | `AGENT_COLLAB_TIMEOUT` | Per-attempt worker **hard** timeout in **seconds** (default 1200 = 20 min). Deep reasoners on big diffs need a generous budget — too short kills the run mid-flight |
-| `AGENT_COLLAB_IDLE_TIMEOUT` | **Inactivity** timeout in **seconds** (default 600 = 10 min; `0` disables). If a worker makes **no progress** — neither stdout/stderr **nor file activity** (worktree, and agy's own log dir) — for this long it's killed as `frozen`. Generous so a slow-but-working worker isn't false-killed. **qwen has its own, more generous built-in default (30 min, via `MODEL_PROFILES.qwen.idleMsOverride`) that takes precedence over this env var** — `--output-format json` gives no stdout heartbeat, and live testing found no genuine hangs, only wrong/incomplete output within normal wall-time budgets, so a wider allowance was chosen over chasing a streaming heartbeat |
+| `AGENT_COLLAB_IDLE_TIMEOUT` | **Inactivity** timeout in **seconds** (default 600 = 10 min; `0` disables). If a worker makes **no progress** — neither stdout/stderr **nor file activity** (worktree, agy's log dir, codex log/session dirs) — for this long it's killed as `frozen`. Generous so a slow-but-working worker isn't false-killed. **codex and qwen have more generous built-in defaults (30 min via `MODEL_PROFILES.<worker>.idleMsOverride`) that take precedence over this env var** |
+| `AGENT_COLLAB_BREACH_EXEMPT_PATHS` | Comma-separated real-checkout paths that become `breachWarning` instead of hard `breach` (for intentional report/scratch output) |
 | `AGENT_COLLAB_CODEX_RESUME=off` | Repair a bad codex reply with a fresh re-send instead of resuming its thread (`task --resume-last`); resume is on by default |
 | `AGENT_COLLAB_ALLOW_INPLACE=on` | Permit an **unisolated** in-place run when a git worktree can't be created. Off by default — without it such a job is `blocked` rather than run in your real tree |
 | `AGENT_COLLAB_ALLOW_NONWRITER=on` | Force a harness marked reviewer-only to run as a write-worker anyway. Off by default; use only for local experiments because patch capture may be empty |

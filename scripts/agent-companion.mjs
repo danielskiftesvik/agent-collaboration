@@ -5,7 +5,7 @@
 import fs from "node:fs";
 import path from "node:path";
 
-import { decideRoute, resolveDriver, isAuthoritativeDriver, runSetup, runWorkerSync, runWithFallback, resolveFallbackKinds, launchBackground, runJob, waitForJob, applyResult, recommendWorker } from "../core/dispatch.mjs";
+import { decideRoute, resolveDriver, isAuthoritativeDriver, runSetup, runWorkerSync, runWithFallback, resolveFallbackKinds, launchBackground, runJob, waitForJob, refreshJobStatus, applyResult, recommendWorker } from "../core/dispatch.mjs";
 import { runDoctor } from "../core/doctor.mjs";
 import { version } from "../core/version.mjs";
 import { listJobs, getJob, updateJob, sortJobsNewestFirst, loadState, saveState } from "../core/state.mjs";
@@ -174,10 +174,10 @@ switch (subcommand) {
     if (id) {
       const job = options.wait
         ? waitForJob(cwd, id, { timeoutMs: options.timeout ? Number(options.timeout) * 1000 : undefined })
-        : getJob(cwd, id);
+        : refreshJobStatus(cwd, id);
       out(job ?? { error: "unknown job" }, options, renderJob(job));
     } else {
-      const jobs = sortJobsNewestFirst(listJobs(cwd)).slice(0, 8);
+      const jobs = sortJobsNewestFirst(listJobs(cwd).map((j) => refreshJobStatus(cwd, j))).slice(0, 8);
       out(jobs, options, renderJobList(jobs));
     }
     break;
@@ -186,7 +186,7 @@ switch (subcommand) {
   case "result": {
     const id = positionals[0];
     if (!id) fail("result: a job id is required");
-    const job = getJob(cwd, id);
+    const job = refreshJobStatus(cwd, id);
     if (!job) fail("result: unknown job");
     const outputFile = path.join(job.artifactDir, "outputs", `${job.worker}.json`);
     const artifact = fs.existsSync(outputFile)
@@ -205,6 +205,10 @@ switch (subcommand) {
     let human = result.applied
       ? "patch applied to the working tree (unstaged; `git diff` to inspect, then commit). Pre-existing staged work is left untouched."
       : `not applied: ${result.error ?? result.stderr}`;
+    if (result.applied) {
+      if (result.paths?.length) human += `\nPaths: ${result.paths.join(", ")}`;
+      if (result.stat) human += `\n${result.stat}`;
+    }
     if (!result.applied) {
       const s = `${result.stderr ?? ""} ${result.error ?? ""}`;
       if (/does not match index|already exists in (the )?index|cannot read the current contents/i.test(s)) {

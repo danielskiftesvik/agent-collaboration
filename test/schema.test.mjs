@@ -121,6 +121,27 @@ test("coerceArtifact with the review normalizer accepts a capitalized-severity r
   assert.equal(r.value.findings[0].severity, "high");
 });
 
+test("normalizeReviewArtifact maps verdict synonyms and strips top-level extras", () => {
+  const raw = JSON.stringify({
+    verdict: "Approved",
+    summary: "looks fine",
+    findings: [],
+    risk: "low"
+  });
+  const r = coerceArtifact(reviewSchema, raw, normalizeReviewArtifact);
+  assert.equal(r.ok, true, JSON.stringify(r.errors));
+  assert.equal(r.value.verdict, "approve");
+  assert.equal("risk" in r.value, false);
+
+  const changes = coerceArtifact(
+    reviewSchema,
+    JSON.stringify({ verdict: "request changes", summary: "fix it", findings: [] }),
+    normalizeReviewArtifact
+  );
+  assert.equal(changes.ok, true, JSON.stringify(changes.errors));
+  assert.equal(changes.value.verdict, "needs-attention");
+});
+
 test("a review without next_steps is valid (next_steps no longer required)", () => {
   const v = validReview();
   delete v.next_steps;

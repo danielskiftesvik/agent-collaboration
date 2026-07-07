@@ -54,8 +54,7 @@ export default defineAdapter({
     const t = `${stdout ?? ""}\n${stderr ?? ""}`;
     return /no previous[\s\S]*thread|no resumable task|thread was found/i.test(t);
   },
-  // Codex/GPT-5.x respond best to XML-tagged, block-structured contracts
-  // (see codex-plugin-cc's gpt-5-4-prompting skill).
+  // Codex responds best to XML-tagged, block-structured contracts.
   outputContract(role) {
     const shape =
       role === "reviewer"

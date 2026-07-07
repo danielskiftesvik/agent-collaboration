@@ -11,12 +11,12 @@ import { fileURLToPath } from "node:url";
 import { getAdapter, listAdapters } from "../adapters/index.mjs";
 import { resolveStateDir, appendJob, updateJob, getJob, loadState, isTerminalStatus } from "./state.mjs";
 import { createWorktree, removeWorktree } from "./workspace.mjs";
-import { headRef, captureWorkingDiff, applyPatch, checkPatchApplies, workingTreeStatus, newStatusPaths, stageDiffIntoWorktree } from "./git.mjs";
+import { headRef, captureWorkingDiff, applyPatch, checkPatchApplies, workingTreeStatus, newStatusPaths, stageDiffIntoWorktree, diffPaths } from "./git.mjs";
 import { run } from "./process.mjs";
-import { isPidAlive } from "./heartbeat.mjs";
+import { isPidAlive, isStalled, touchHeartbeat } from "./heartbeat.mjs";
 import { coerceArtifact, normalizeReviewArtifact } from "./schema.mjs";
 import { buildFromTemplate } from "./prompts.mjs";
-import { classifyFailure } from "./failures.mjs";
+import { classifyFailure, FALLBACK_KINDS } from "./failures.mjs";
 import { MODEL_PROFILES, TASK_ROUTING, DEFAULT_ROUTING, WRITE_TASKS } from "./model-profiles.mjs";
 
 const TEMPLATE_KINDS = new Set(["review", "adversarial-review"]);
@@ -35,8 +35,9 @@ export function defaultTimeoutMs() {
 /**
  * Inactivity (idle) budget: if a worker produces NO output for this long it's
  * treated as FROZEN and killed fast — well before the hard timeout. Generous by
- * default so a healthy-but-quiet worker isn't false-killed (codex streams progress;
- * agy is fast). `AGENT_COLLAB_IDLE_TIMEOUT` seconds; 0 disables.
+ * default so a healthy-but-quiet worker isn't false-killed. Per-worker profile
+ * overrides can widen this for quiet deep reasoners. `AGENT_COLLAB_IDLE_TIMEOUT`
+ * seconds; 0 disables.
  */
 export function defaultIdleMs() {
   const s = Number(process.env.AGENT_COLLAB_IDLE_TIMEOUT);
@@ -44,8 +45,7 @@ export function defaultIdleMs() {
   return 600000; // 10 min — generous: only a worker silent AND idle on disk this long is "frozen"
 }
 
-/** Dirs whose file activity counts as worker progress for the idle watchdog: the
- *  worktree, plus (for agy) its own log dir, since agy streams progress there. */
+/** Dirs whose file activity counts as worker progress for the idle watchdog. */
 function watchDirsFor(worker, workspace) {
   const dirs = [workspace];
   if (worker === "agy") {
@@ -54,6 +54,15 @@ function watchDirsFor(worker, workspace) {
       if (fs.existsSync(agyLog)) dirs.push(agyLog);
     } catch {
       /* ignore */
+    }
+  }
+  if (worker === "codex") {
+    for (const p of [path.join(os.homedir(), ".codex", "log"), path.join(os.homedir(), ".codex", "sessions")]) {
+      try {
+        if (fs.existsSync(p)) dirs.push(p);
+      } catch {
+        /* ignore */
+      }
     }
   }
   return dirs;
@@ -65,6 +74,38 @@ function canWrite(worker) {
 
 function canRunAsWriter(worker, env = process.env) {
   return canWrite(worker) || env.AGENT_COLLAB_ALLOW_NONWRITER === "on";
+}
+
+function splitPathList(value) {
+  if (Array.isArray(value)) return value.flatMap(splitPathList);
+  return String(value ?? "")
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean);
+}
+
+function isExemptPath(file, patterns) {
+  return patterns.some((p) => file === p || file.startsWith(p.endsWith("/") ? p : `${p}/`));
+}
+
+function pathSet(paths) {
+  return new Set(paths.map((p) => p.replace(/^\/+/, "")));
+}
+
+function stalledUpdate() {
+  return {
+    status: "failed",
+    failureKind: "stalled",
+    errors: ["the background worker process exited without writing a result"]
+  };
+}
+
+export function refreshJobStatus(cwd, jobOrId) {
+  const job = typeof jobOrId === "string" ? getJob(cwd, jobOrId) : jobOrId;
+  if (job && !isTerminalStatus(job.status) && job.pid && (isStalled(job, { staleMs: 0 }) || !isPidAlive(job.pid))) {
+    return updateJob(cwd, job.id, stalledUpdate());
+  }
+  return job;
 }
 
 /**
@@ -353,7 +394,12 @@ export function runWorkerSync(cwd, opts) {
   // (observed with agy resolving the canonical $HOME repo under
   // --dangerously-skip-permissions). Only meaningful when we actually isolated;
   // in the run-in-place fallback the worker is supposed to write to cwd.
-  const breachBefore = worktree ? workingTreeStatus(cwd) : null;
+  const breachHeadBefore = worktree ? (opts.breachHeadBefore ?? baseRef) : null;
+  const breachBefore = worktree
+    ? opts.breachBefore
+      ? new Set(opts.breachBefore)
+      : workingTreeStatus(cwd)
+    : null;
 
   writeInitial({
     id: jobId,
@@ -467,6 +513,7 @@ export function runWorkerSync(cwd, opts) {
   let attempts = 0;
   while (attempts < maxAttempts) {
     attempts += 1;
+    touchHeartbeat(cwd, jobId);
     let proc;
     if (attempts === 1) {
       proc = execGuarded(adapter.buildCommand({ role, brief: basePrompt, workspace, timeoutMs }));
@@ -516,15 +563,17 @@ export function runWorkerSync(cwd, opts) {
   // Capture the worker's patch, then tear down the worktree (the diff is the artifact).
   let patchPath = null;
   let changed = false;
+  let diff = "";
+  let patchPaths = [];
   let patchApplies = role === "worker" ? true : null; // reviewers have no patch
   if (role === "worker") {
-    let diff = "";
     try {
       diff = captureWorkingDiff(workspace, baseRef);
     } catch {
       diff = "";
     }
     changed = !!diff.trim();
+    patchPaths = diffPaths(diff);
     patchApplies = changed ? checkPatchApplies(cwd, diff) : true;
     patchPath = path.join(artifactDir, "patches", `${worker}.diff`);
     fs.writeFileSync(patchPath, diff);
@@ -532,7 +581,25 @@ export function runWorkerSync(cwd, opts) {
   if (worktree) removeWorktree(cwd, worktree);
 
   // Did the worker write OUTSIDE its worktree, into the driver's real tree?
-  const escapedPaths = worktree ? newStatusPaths(breachBefore, workingTreeStatus(cwd)) : [];
+  const rawEscapedPaths = worktree ? newStatusPaths(breachBefore, workingTreeStatus(cwd)) : [];
+  let escapedPaths = rawEscapedPaths;
+  let breachWarning;
+  if (rawEscapedPaths.length) {
+    const exemptions = splitPathList([process.env.AGENT_COLLAB_BREACH_EXEMPT_PATHS, opts.breachExemptPaths]);
+    const exempted = rawEscapedPaths.filter((p) => isExemptPath(p, exemptions));
+    escapedPaths = rawEscapedPaths.filter((p) => !isExemptPath(p, exemptions));
+    const headAfter = worktree ? headRef(cwd) : null;
+    const headMoved = !!(breachHeadBefore && headAfter && breachHeadBefore !== headAfter);
+    const patched = pathSet(patchPaths);
+    const disjointFromPatch = escapedPaths.length > 0 && escapedPaths.every((p) => !patched.has(p));
+    const cleanPatch = role === "worker" && changed && patchApplies;
+    const warningPaths = [...exempted];
+    if (escapedPaths.length && cleanPatch && (headMoved || disjointFromPatch)) {
+      warningPaths.push(...escapedPaths);
+      escapedPaths = [];
+    }
+    if (warningPaths.length) breachWarning = { escapedPaths: warningPaths, headMoved };
+  }
 
   fs.writeFileSync(path.join(artifactDir, "reports", `${worker}.md`), answerText);
   fs.writeFileSync(
@@ -542,10 +609,13 @@ export function runWorkerSync(cwd, opts) {
 
   // A worker's deliverable is the PATCH, not the result-JSON. So a real,
   // cleanly-applying patch means success even if the metadata JSON is missing.
-  // A reviewer's only artifact IS the JSON, so it must validate.
+  // A reviewer's structured result must validate, but prose is still useful
+  // when the JSON is malformed.
   let status;
+  const reviewerHasReport =
+    role === "reviewer" && !coerce.ok && !timedOut && !frozen && exitCode === 0 && answerText.trim().length > 0;
   if (role === "reviewer") {
-    status = coerce.ok ? "completed" : "failed";
+    status = coerce.ok || reviewerHasReport ? "completed" : "failed";
   } else if (changed) {
     status = patchApplies ? "completed" : "conflicted";
   } else if (!coerce.ok) {
@@ -611,6 +681,14 @@ export function runWorkerSync(cwd, opts) {
     note = (note ? note + " " : "") +
       "OS sandbox could not be applied in this environment; ran unsandboxed — breach detection still active.";
   }
+  if (reviewerHasReport) {
+    note = (note ? note + " " : "") +
+      "Reviewer returned prose but invalid JSON; report was saved. Read the prose report instead of discarding the review.";
+  }
+  if (breachWarning) {
+    note = (note ? note + " " : "") +
+      `Real checkout changed during the worker run (${breachWarning.escapedPaths.join(", ")}); recorded as breachWarning, not a hard breach.`;
+  }
   const sandboxed = wantSandbox && !sandboxDegraded;
 
   const breach = escapedPaths.length > 0;
@@ -626,6 +704,8 @@ export function runWorkerSync(cwd, opts) {
     resetAt,
     breach,
     escapedPaths: breach ? escapedPaths : undefined,
+    breachWarning,
+    report: role === "reviewer" && answerText.trim().length > 0,
     sandboxed,
     note,
     errors
@@ -647,6 +727,8 @@ export function runWorkerSync(cwd, opts) {
     resetAt,
     breach,
     escapedPaths: breach ? escapedPaths : undefined,
+    breachWarning,
+    report: role === "reviewer" && answerText.trim().length > 0,
     sandboxed,
     note,
     errors
@@ -678,7 +760,7 @@ export function resolveFallbackKinds(env = process.env) {
   if (v === "off") return new Set();
   if (v === "on") return new Set(["rate-limit", "auth", "timeout", "frozen"]);
   if (v) return new Set(v.split(",").map((s) => s.trim().toLowerCase()).filter(Boolean));
-  return new Set(["rate-limit", "timeout", "frozen"]);
+  return new Set(FALLBACK_KINDS);
 }
 
 export function runWithFallback(cwd, opts) {
@@ -772,6 +854,15 @@ export function launchBackground(cwd, opts) {
   const artifactDir = path.join(resolveStateDir(cwd), "tasks", jobId);
   ensureDirs(artifactDir, role);
   fs.writeFileSync(path.join(artifactDir, "brief.md"), brief ?? "");
+  let breachHeadBefore = null;
+  let breachBefore = null;
+  try {
+    breachHeadBefore = headRef(cwd);
+    const s = workingTreeStatus(cwd);
+    breachBefore = s ? [...s] : null;
+  } catch {
+    // best-effort; runWorkerSync will snapshot if this failed
+  }
 
   appendJob(cwd, {
     id: jobId,
@@ -781,7 +872,7 @@ export function launchBackground(cwd, opts) {
     status: "queued",
     background: true,
     artifactDir,
-    request: { driver, worker, role, brief, kind, focus, targetLabel, timeoutMs, maxAttempts },
+    request: { driver, worker, role, brief, kind, focus, targetLabel, timeoutMs, maxAttempts, breachHeadBefore, breachBefore },
     heartbeatAt: new Date().toISOString()
   });
 
@@ -816,12 +907,9 @@ export function waitForJob(cwd, jobId, { timeoutMs = 1800000, pollMs = 1000 } = 
   const deadline = Date.now() + timeoutMs;
   let job = getJob(cwd, jobId);
   while (job && !isTerminalStatus(job.status)) {
-    if (job.pid && !isPidAlive(job.pid)) {
-      job = updateJob(cwd, jobId, {
-        status: "failed",
-        failureKind: "stalled",
-        errors: ["the background worker process exited without writing a result"]
-      });
+    const refreshed = refreshJobStatus(cwd, job);
+    if (refreshed !== job) {
+      job = refreshed;
       break;
     }
     if (Date.now() >= deadline) break;
@@ -839,7 +927,10 @@ export function applyResult(cwd, jobId) {
     return { applied: false, error: "no patch for this job (reviewer or empty result)" };
   }
   const diff = fs.readFileSync(job.patchPath, "utf8");
+  const paths = diffPaths(diff);
+  const stat = diff.trim() ? run("git", ["apply", "--stat"], { cwd, input: diff }).stdout.trim() : "";
   const result = applyPatch(cwd, diff);
-  updateJob(cwd, jobId, { applied: result.applied, conflicted: result.conflicted });
-  return result;
+  const out = { ...result, paths, stat };
+  updateJob(cwd, jobId, { applied: result.applied, conflicted: result.conflicted, appliedPaths: paths, diffStat: stat });
+  return out;
 }

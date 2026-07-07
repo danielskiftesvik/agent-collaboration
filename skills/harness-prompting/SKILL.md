@@ -33,7 +33,7 @@ The companion appends the harness's output contract automatically — don't hand
 
 | Harness | Best for | Guide |
 |---|---|---|
-| **codex** (GPT-5.x) | reviewer **and** worker; reliable JSON | [references/codex.md](references/codex.md) |
+| **codex** | reviewer / analyst; reliable deep review, quiet on long runs | [references/codex.md](references/codex.md) |
 | **claude** | reviewer **and** worker; native `Agent` tool when same-harness | [references/claude.md](references/claude.md) |
 | **agy** (Gemini) | reviewer **and** worker; pinned to latest Gemini **Flash** for speed (`AGENT_COLLAB_AGY_CLASS=Pro` for stronger reasoning) | [references/agy.md](references/agy.md) |
 | **qwen** (local) | `local-only` sensitive review and `plan-execution` implementation ONLY — always explicit, never in default routing | [references/qwen.md](references/qwen.md) |

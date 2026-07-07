@@ -19,7 +19,7 @@ node "${CLAUDE_PLUGIN_ROOT}/scripts/agent-collaboration/scripts/agent-companion.
 (or just reason from the guide below). Then run `/agent-collab:delegate` or
 `/agent-collab:review` with the returned `--worker`.
 
-- **Hard reasoning / subtle bugs / adversarial review →** `codex` (GPT-5.x).
+- **Hard reasoning / subtle bugs / adversarial review →** `codex` (reviewer/analyst only).
 - **Careful refactor / planning / general SWE →** `claude` (use the native `Agent` tool — same harness).
 - **Fast/mechanical/bulk edits, or large-context / whole-repo scans →** `agy` (Gemini: speed + big context).
 - Full matrix + model profiles: `agent-companion.mjs recommend --profiles`.
@@ -35,8 +35,9 @@ the soonest `resetAt`); never quietly do the task yourself in the driver. See th
 Invoke the **`collaborative-investigation`** skill before debugging a non-trivial bug or
 designing a non-trivial implementation. You form a hypothesis with an explicit confidence
 score; an **independent second opinion** is taken from **codex** (Claude is the driver here,
-so the gate defaults to the other reasoner); implementation is allowed only at **≥90% mutual
-confidence with agreement**.
+so the gate defaults to the other reasoner). Implementation may start when both parties agree
+on the approach and no high-severity objection remains unresolved. Record each party's
+confidence for the log — the number itself is not the gate.
 
 **Mandatory triggers:**
 - The user says "are you sure", "make sure this is right", or "get a second opinion".

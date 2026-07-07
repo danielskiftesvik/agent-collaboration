@@ -56,15 +56,18 @@ child.stderr.on("data", (d) => {
 // progress — so a worker that writes files / logs while silent on the pipe isn't
 // mistaken for frozen. Event-driven (fs.watch), best-effort.
 const watchers = [];
+const watchMtimes = new Map();
 const addWatcher = (w) => {
   w.on?.("error", () => {}); // fs.watch can fail asynchronously (EMFILE, races); ignore.
   watchers.push(w);
 };
 for (const dir of watchDirs) {
   try {
+    watchMtimes.set(dir, fs.statSync(dir).mtimeMs);
     addWatcher(fs.watch(dir, { recursive: true }, bump));
   } catch {
     try {
+      if (!watchMtimes.has(dir)) watchMtimes.set(dir, fs.statSync(dir).mtimeMs);
       addWatcher(fs.watch(dir, bump)); // recursive unsupported (older Linux) → top-level only
     } catch {
       /* dir missing/unwatchable — skip */
@@ -95,6 +98,17 @@ const killTree = (sig) => {
 
 const timer = setInterval(() => {
   const now = Date.now();
+  for (const [dir, prev] of watchMtimes) {
+    try {
+      const mtime = fs.statSync(dir).mtimeMs;
+      if (mtime > prev) {
+        watchMtimes.set(dir, mtime);
+        bump();
+      }
+    } catch {
+      // best-effort only
+    }
+  }
   if (idleMs > 0 && now - last > idleMs) {
     reason = "idle";
   } else if (hardMs > 0 && now - start > hardMs) {
