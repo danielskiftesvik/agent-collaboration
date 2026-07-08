@@ -46,7 +46,7 @@ function withLock(cwd, fn) {
   fs.mkdirSync(dir, { recursive: true });
   const lock = path.join(dir, ".lock");
   const timeoutMs = Number(process.env.AGENT_COLLAB_LOCK_TIMEOUT_MS) || 60000;
-  const staleMs = Number(process.env.AGENT_COLLAB_STALE_LOCK_MS) || 120000;
+  const staleMs = Number(process.env.AGENT_COLLAB_STALE_LOCK_MS) || 10000;
   const deadline = Date.now() + timeoutMs;
   let fd;
   for (;;) {

@@ -781,6 +781,25 @@ test("refreshJobStatus marks a dead running job stalled without waiting", () => 
   assert.equal(job.failureKind, "stalled");
 });
 
+test("refreshJobStatus does not attach stalled metadata to an already-completed job", () => {
+  isolateStateRoot();
+  const repo = makeRepo();
+  const stale = appendJob(repo, {
+    id: "stale-complete",
+    worker: "agy",
+    status: "running",
+    pid: 2147483645,
+    heartbeatAt: new Date().toISOString()
+  });
+  updateJob(repo, "stale-complete", { status: "completed", exitCode: 0 });
+
+  const job = refreshJobStatus(repo, stale);
+
+  assert.equal(job.status, "completed");
+  assert.equal(job.failureKind, undefined);
+  assert.equal(job.errors, undefined);
+});
+
 // ---- inactivity (freeze) watchdog ----
 
 test("defaultIdleMs honors AGENT_COLLAB_IDLE_TIMEOUT (incl. 0=off) and defaults generously", () => {
@@ -906,6 +925,52 @@ test("codex session log activity counts as progress for the idle watchdog", () =
   delete process.env.AGENT_COLLAB_CODEX_COMPANION;
 });
 
+test("nested file activity counts as progress when fs.watch is unavailable", () => {
+  isolateStateRoot();
+  const repo = makeRepo();
+  const oldNodeOptions = process.env.NODE_OPTIONS;
+  const preloadDir = real(fs.mkdtempSync(path.join(os.tmpdir(), "ac-no-recursive-watch-")));
+  const preload = path.join(preloadDir, "preload.mjs");
+  fs.writeFileSync(
+    preload,
+    `
+      import fs from 'node:fs';
+      if (process.argv[1]?.endsWith('idle-guard.mjs')) {
+        const statSync = fs.statSync;
+        fs.watch = function patchedWatch() { throw new Error('watch unsupported'); };
+        fs.statSync = function patchedStatSync(p, ...args) {
+          const s = statSync.call(this, p, ...args);
+          if (String(p) === process.cwd()) return { ...s, mtimeMs: 1 };
+          return s;
+        };
+      }
+    `
+  );
+  process.env.NODE_OPTIONS = [oldNodeOptions, `--import=${preload}`].filter(Boolean).join(" ");
+  process.env.AGENT_COLLAB_CLAUDE_BIN = stubBin(`
+    import fs from 'node:fs';
+    if (process.argv.includes('models')) { process.exit(0); }
+    fs.mkdirSync('nested', { recursive: true });
+    fs.writeFileSync('nested/progress.txt', '0');
+    let n = 1;
+    const iv = setInterval(() => fs.writeFileSync('nested/progress.txt', String(n++)), 200);
+    await new Promise((r) => setTimeout(r, 4000));
+    clearInterval(iv);
+    fs.writeFileSync('done.txt', 'ok\\n');
+    const result = JSON.stringify({status:"completed",summary:"ok",changed:true});
+    process.stdout.write(JSON.stringify({type:"result",result}) + "\\n");
+  `);
+
+  const res = runWorkerSync(repo, { driver: "codex", worker: "claude", role: "worker", brief: "x", idleMs: 1500, timeoutMs: 60000, maxAttempts: 1 });
+
+  assert.equal(res.status, "completed", JSON.stringify({ status: res.status, failureKind: res.failureKind, errors: res.errors, note: res.note }));
+  assert.notEqual(res.failureKind, "frozen");
+
+  if (oldNodeOptions === undefined) delete process.env.NODE_OPTIONS;
+  else process.env.NODE_OPTIONS = oldNodeOptions;
+  delete process.env.AGENT_COLLAB_CLAUDE_BIN;
+});
+
 // ---- preventive OS-sandbox policy ----
 
 test("resolveSandbox: opt-in for agy write-workers, never codex", () => {
@@ -999,10 +1064,34 @@ test("a worker that writes OUTSIDE its worktree (into the real repo) is flagged 
   delete process.env.AC_ESCAPE;
 });
 
-test("a concurrent driver edit is a breachWarning, not a failed worker breach", () => {
+test("a disjoint real-checkout write is still a breach even when the patch is clean", () => {
+  isolateStateRoot();
+  const repo = makeRepo();
+  process.env.AC_ESCAPE = repo;
+  process.env.AGENT_COLLAB_AGY_BIN = stubBin(`
+    import fs from 'node:fs';
+    import path from 'node:path';
+    if (process.argv.includes('models')) { process.exit(0); }
+    fs.writeFileSync(path.join(process.env.AC_ESCAPE, 'leaked.txt'), 'escaped\\n');
+    fs.writeFileSync('worker.txt', 'patch\\n');
+    process.stdout.write('\`\`\`json\\n{"status":"completed","summary":"ok","changed":true}\\n\`\`\`');
+  `);
+
+  const res = runWorkerSync(repo, { driver: "claude", worker: "agy", role: "worker", brief: "x", maxAttempts: 1 });
+
+  assert.equal(res.status, "breach");
+  assert.equal(res.breach, true);
+  assert.ok(res.escapedPaths.some((p) => /leaked\.txt/.test(p)));
+
+  delete process.env.AGENT_COLLAB_AGY_BIN;
+  delete process.env.AC_ESCAPE;
+});
+
+test("an opted-in concurrent reviewer edit is a breachWarning, not a failed review breach", () => {
   isolateStateRoot();
   const repo = makeRepo();
   const target = path.join(repo, "driver-note.txt");
+  process.env.AGENT_COLLAB_BREACH_WARN_CONCURRENT = "on";
   const child = spawn(
     process.execPath,
     ["-e", "setTimeout(()=>require('node:fs').writeFileSync(process.env.TARGET, 'driver\\n'), 250)"],
@@ -1010,14 +1099,12 @@ test("a concurrent driver edit is a breachWarning, not a failed worker breach", 
   );
   child.unref();
   process.env.AGENT_COLLAB_AGY_BIN = stubBin(`
-    import fs from 'node:fs';
     if (process.argv.includes('models')) { process.exit(0); }
     await new Promise((r) => setTimeout(r, 1200));
-    fs.writeFileSync('worker.txt', 'patch\\n');
-    process.stdout.write('\`\`\`json\\n{"status":"completed","summary":"ok","changed":true}\\n\`\`\`');
+    process.stdout.write('\`\`\`json\\n{"verdict":"approve","summary":"ok","findings":[]}\\n\`\`\`');
   `);
 
-  const res = runWorkerSync(repo, { driver: "claude", worker: "agy", role: "worker", brief: "x", maxAttempts: 1 });
+  const res = runWorkerSync(repo, { driver: "codex", worker: "agy", role: "reviewer", brief: "x", maxAttempts: 1 });
 
   assert.equal(fs.existsSync(target), true);
   assert.equal(res.status, "completed");
@@ -1025,6 +1112,7 @@ test("a concurrent driver edit is a breachWarning, not a failed worker breach", 
   assert.deepEqual(res.breachWarning.escapedPaths, ["driver-note.txt"]);
 
   delete process.env.AGENT_COLLAB_AGY_BIN;
+  delete process.env.AGENT_COLLAB_BREACH_WARN_CONCURRENT;
 });
 
 test("breach exempt paths are reported as warnings and do not override status", () => {

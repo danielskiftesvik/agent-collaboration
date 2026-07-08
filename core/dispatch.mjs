@@ -102,10 +102,13 @@ function stalledUpdate() {
 
 export function refreshJobStatus(cwd, jobOrId) {
   const job = typeof jobOrId === "string" ? getJob(cwd, jobOrId) : jobOrId;
-  if (job && !isTerminalStatus(job.status) && job.pid && (isStalled(job, { staleMs: 0 }) || !isPidAlive(job.pid))) {
-    return updateJob(cwd, job.id, stalledUpdate());
+  if (!job || isTerminalStatus(job.status)) return job;
+  const fresh = getJob(cwd, job.id) ?? job;
+  if (!fresh || isTerminalStatus(fresh.status)) return fresh;
+  if (fresh.pid && (isStalled(fresh, { staleMs: 0 }) || !isPidAlive(fresh.pid))) {
+    return updateJob(cwd, fresh.id, stalledUpdate());
   }
-  return job;
+  return fresh;
 }
 
 /**
@@ -592,9 +595,13 @@ export function runWorkerSync(cwd, opts) {
     const headMoved = !!(breachHeadBefore && headAfter && breachHeadBefore !== headAfter);
     const patched = pathSet(patchPaths);
     const disjointFromPatch = escapedPaths.length > 0 && escapedPaths.every((p) => !patched.has(p));
-    const cleanPatch = role === "worker" && changed && patchApplies;
+    const cleanArtifact =
+      role === "worker"
+        ? changed && patchApplies
+        : !timedOut && !frozen && exitCode === 0 && answerText.trim().length > 0;
+    const warnConcurrent = process.env.AGENT_COLLAB_BREACH_WARN_CONCURRENT === "on" || opts.breachWarnConcurrent === true;
     const warningPaths = [...exempted];
-    if (escapedPaths.length && cleanPatch && (headMoved || disjointFromPatch)) {
+    if (escapedPaths.length && warnConcurrent && cleanArtifact && (headMoved || disjointFromPatch)) {
       warningPaths.push(...escapedPaths);
       escapedPaths = [];
     }
@@ -907,11 +914,8 @@ export function waitForJob(cwd, jobId, { timeoutMs = 1800000, pollMs = 1000 } = 
   const deadline = Date.now() + timeoutMs;
   let job = getJob(cwd, jobId);
   while (job && !isTerminalStatus(job.status)) {
-    const refreshed = refreshJobStatus(cwd, job);
-    if (refreshed !== job) {
-      job = refreshed;
-      break;
-    }
+    job = refreshJobStatus(cwd, job) ?? job;
+    if (!job || isTerminalStatus(job.status)) break;
     if (Date.now() >= deadline) break;
     sleepSync(pollMs);
     job = getJob(cwd, jobId);

@@ -91,6 +91,28 @@ test("state writes do not proceed without the lock under contention", () => {
   else process.env.AGENT_COLLAB_LOCK_TIMEOUT_MS = oldTimeout;
 });
 
+test("state writes steal a stale lock before the write timeout", () => {
+  isolateStateRoot();
+  const cwd = tmpCwd();
+  const dir = resolveStateDir(cwd);
+  fs.mkdirSync(dir, { recursive: true });
+  const lock = path.join(dir, ".lock");
+  fs.writeFileSync(lock, "crashed");
+  const stale = new Date(Date.now() - 20000);
+  fs.utimesSync(lock, stale, stale);
+  const oldTimeout = process.env.AGENT_COLLAB_LOCK_TIMEOUT_MS;
+  delete process.env.AGENT_COLLAB_STALE_LOCK_MS;
+  process.env.AGENT_COLLAB_LOCK_TIMEOUT_MS = "50";
+
+  const job = appendJob(cwd, { id: "stolen", status: "running" });
+
+  assert.equal(job.id, "stolen");
+  assert.equal(fs.existsSync(lock), false);
+
+  if (oldTimeout === undefined) delete process.env.AGENT_COLLAB_LOCK_TIMEOUT_MS;
+  else process.env.AGENT_COLLAB_LOCK_TIMEOUT_MS = oldTimeout;
+});
+
 test("appendJob prunes to the newest MAX_JOBS records", () => {
   isolateStateRoot();
   const cwd = tmpCwd();

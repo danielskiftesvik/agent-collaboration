@@ -74,9 +74,9 @@ artifactDir, patchPath, breach, escapedPaths, breachWarning, report, errors }`. 
 `completed` on a clean non-empty patch even if `resultValid` is false (the patch
 is the deliverable); a valid self-report with **no** patch is `no-changes`, never
 `completed`. `breach: true` (+ `escapedPaths`) means the worker wrote into the
-driver's real checkout — surface it, don't apply. `breachWarning` means the real
-checkout changed during the run but the clean captured patch was preserved (for
-example a concurrent driver edit or an exempt report path). `patchApplies` is null
+driver's real checkout — surface it, don't apply. `breachWarning` means only exempt
+paths changed, or ambiguous concurrent-edit downgrade was explicitly enabled and the
+clean captured artifact was preserved. `patchApplies` is null
 for reviewers (no patch). A reviewer can be `completed` with `resultValid:false`
 and `report:true`: read the prose report in `reports/<worker>.md`. Apply a worker
 patch only via `apply` / `--apply`, after inspection. `worker` is the harness that
@@ -167,6 +167,7 @@ read `tasks/<jobId>/reports/<worker>.md`.
 - `AGENT_COLLAB_TIMEOUT=<s>` — per-attempt worker HARD timeout in seconds (default 1200 = 20 min).
 - `AGENT_COLLAB_IDLE_TIMEOUT=<s>` — inactivity timeout in seconds (default 600; 0 = off): no progress (output OR file activity) for this long → killed as `frozen`.
 - `AGENT_COLLAB_BREACH_EXEMPT_PATHS=a,b` — comma-separated real-checkout paths that should be warnings, not hard breaches (for intentional reports/scratch output).
+- `AGENT_COLLAB_BREACH_WARN_CONCURRENT=on` — opt in to downgrading ambiguous concurrent real-checkout edits to warnings. Off by default because they are indistinguishable from a worker escape.
 - `AGENT_COLLAB_CODEX_RESUME=off` — repair with a fresh re-send instead of resuming the codex thread (resume is on by default).
 - `AGENT_COLLAB_ALLOW_INPLACE=on` — allow an UNISOLATED in-place run when a worktree can't be created (off by default → such a job is `blocked`, never run in the real cwd).
 - `AGENT_COLLAB_<AGY|CLAUDE|CODEX>_BIN` — override a harness binary.

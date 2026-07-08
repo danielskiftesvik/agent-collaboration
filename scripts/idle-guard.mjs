@@ -12,6 +12,7 @@
 // Usage: node idle-guard.mjs --idle <ms> [--timeout <ms>] [--watch <dir>]... -- <cmd> [args...]
 import { spawn } from "node:child_process";
 import fs from "node:fs";
+import path from "node:path";
 
 const argv = process.argv.slice(2);
 let idleMs = 0;
@@ -57,6 +58,33 @@ child.stderr.on("data", (d) => {
 // mistaken for frozen. Event-driven (fs.watch), best-effort.
 const watchers = [];
 const watchMtimes = new Map();
+// ponytail: bounded subtree scan; use platform-specific recursive watchers if huge worktrees make this too expensive.
+const MAX_MTIME_SCAN_ENTRIES = 20000;
+function treeMtimeMs(root) {
+  let max = 0;
+  let seen = 0;
+  const stack = [root];
+  while (stack.length && seen < MAX_MTIME_SCAN_ENTRIES) {
+    const p = stack.pop();
+    let st;
+    try {
+      st = fs.lstatSync(p);
+    } catch {
+      continue;
+    }
+    seen += 1;
+    max = Math.max(max, st.mtimeMs);
+    if (!st.isDirectory()) continue;
+    try {
+      for (const entry of fs.readdirSync(p, { withFileTypes: true })) {
+        stack.push(path.join(p, entry.name));
+      }
+    } catch {
+      /* ignore unreadable/racing dirs */
+    }
+  }
+  return max;
+}
 const addWatcher = (w) => {
   w.on?.("error", () => {}); // fs.watch can fail asynchronously (EMFILE, races); ignore.
   watchers.push(w);
@@ -67,10 +95,11 @@ for (const dir of watchDirs) {
     addWatcher(fs.watch(dir, { recursive: true }, bump));
   } catch {
     try {
-      if (!watchMtimes.has(dir)) watchMtimes.set(dir, fs.statSync(dir).mtimeMs);
+      watchMtimes.set(dir, treeMtimeMs(dir));
       addWatcher(fs.watch(dir, bump)); // recursive unsupported (older Linux) → top-level only
     } catch {
-      /* dir missing/unwatchable — skip */
+      const mtime = treeMtimeMs(dir);
+      if (mtime) watchMtimes.set(dir, mtime);
     }
   }
 }
@@ -100,7 +129,7 @@ const timer = setInterval(() => {
   const now = Date.now();
   for (const [dir, prev] of watchMtimes) {
     try {
-      const mtime = fs.statSync(dir).mtimeMs;
+      const mtime = treeMtimeMs(dir);
       if (mtime > prev) {
         watchMtimes.set(dir, mtime);
         bump();
