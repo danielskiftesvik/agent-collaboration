@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.5.5 - 2026-07-09
+
+- Persist per-attempt stdout/stderr and redacted command metadata, expose runtime/state paths, and add active/recent status filters for quieter Codex-driven Claude collaboration.
+- Record review provenance (`baseRef`, dirty launch paths, diff-staging state) and classify empty-output runs as fallback-eligible.
+
 ## 0.5.4 - 2026-07-09
 
 - Re-enable codex as a write-worker, keep it eligible in write-task routing, and document its slower/quiet-run caveats instead of treating it as reviewer-only.

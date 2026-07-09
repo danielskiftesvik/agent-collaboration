@@ -219,6 +219,49 @@ test("a worker that produces nothing and no valid result is failed", () => {
   delete process.env.AGENT_COLLAB_AGY_BIN;
 });
 
+test("runWorkerSync persists raw stdout/stderr and command metadata for failed sync runs", () => {
+  isolateStateRoot();
+  const repo = makeRepo();
+  process.env.AGENT_COLLAB_AGY_BIN = stubBin(`
+    if (process.argv.includes('models')) process.exit(0);
+    process.stdout.write('plain progress\\n');
+    process.stderr.write('diagnostic detail\\n');
+    process.exit(1);
+  `);
+
+  const res = runWorkerSync(repo, { driver: "claude", worker: "agy", role: "reviewer", brief: "review\\nsecret", maxAttempts: 1 });
+
+  assert.equal(res.status, "failed");
+  assert.equal(fs.readFileSync(path.join(res.artifactDir, "logs", "agy.stdout.log"), "utf8"), "plain progress\n");
+  assert.equal(fs.readFileSync(path.join(res.artifactDir, "logs", "agy.stderr.log"), "utf8"), "diagnostic detail\n");
+  const meta = JSON.parse(fs.readFileSync(path.join(res.artifactDir, "logs", "run.jsonl"), "utf8").trim());
+  assert.equal(meta.worker, "agy");
+  assert.equal(meta.attempt, 1);
+  assert.equal(meta.exitCode, 1);
+  assert.equal(meta.stdoutBytes, "plain progress\n".length);
+  assert.equal(meta.stderrBytes, "diagnostic detail\n".length);
+  assert.ok(meta.args.some((a) => /redacted/.test(a)), "brief-like argv must be redacted in metadata");
+
+  delete process.env.AGENT_COLLAB_AGY_BIN;
+});
+
+test("review jobs record whether the requested diff was staged into the reviewer worktree", () => {
+  isolateStateRoot();
+  const repo = makeRepo();
+  fs.writeFileSync(path.join(repo, "local-only.txt"), "dirty\\n");
+  process.env.AGENT_COLLAB_AGY_BIN = stubBin(REVIEW_STUB);
+
+  const res = runWorkerSync(repo, { driver: "claude", worker: "agy", role: "reviewer", kind: "review", brief: "review the current branch", maxAttempts: 1 });
+  const job = getJob(repo, res.jobId);
+
+  assert.equal(job.reviewContext.stagedIntoWorktree, false);
+  assert.equal(job.reviewContext.stageReason, "input is not a unified diff");
+  assert.deepEqual(job.reviewContext.mainDirtyPathsAtLaunch, ["local-only.txt"]);
+  assert.match(job.note, /uncommitted changes.*HEAD only/i);
+
+  delete process.env.AGENT_COLLAB_AGY_BIN;
+});
+
 const REVIEW_STUB = `
 process.stdout.write('\`\`\`json\\n' + JSON.stringify({verdict:'approve',summary:'looks good',findings:[],next_steps:[]}) + '\\n\`\`\`');
 `;
@@ -407,6 +450,29 @@ test("runWithFallback falls back to another worker when the first is rate-limite
   assert.equal(res.fellBackFrom[0].worker, "agy");
   assert.equal(res.fellBackFrom[0].failureKind, "rate-limit");
   assert.match(res.note, /agy/);
+
+  delete process.env.AGENT_COLLAB_AGY_BIN;
+  delete process.env.AGENT_COLLAB_CLAUDE_BIN;
+});
+
+test("runWithFallback falls back when a worker exits 0 with empty output", () => {
+  isolateStateRoot();
+  const repo = makeRepo();
+  process.env.AGENT_COLLAB_AGY_BIN = stubBin(`if (process.argv.includes('models')) process.exit(0); process.exit(0);`);
+  process.env.AGENT_COLLAB_CLAUDE_BIN = stubBin(CLAUDE_SUCCESS_STUB);
+
+  const res = runWithFallback(repo, {
+    driver: "codex",
+    worker: "agy",
+    role: "worker",
+    brief: "x",
+    available: ["agy", "claude"],
+    maxAttempts: 1
+  });
+
+  assert.equal(res.status, "completed");
+  assert.equal(res.worker, "claude");
+  assert.equal(res.fellBackFrom[0].failureKind, "empty-output");
 
   delete process.env.AGENT_COLLAB_AGY_BIN;
   delete process.env.AGENT_COLLAB_CLAUDE_BIN;

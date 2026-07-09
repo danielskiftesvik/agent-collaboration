@@ -4,6 +4,7 @@ import { fileURLToPath } from "node:url";
 
 import { makeRepo, isolateStateRoot, stubBin } from "./helpers.mjs";
 import { run } from "../core/process.mjs";
+import { appendJob } from "../core/state.mjs";
 
 const CLI = fileURLToPath(new URL("../scripts/agent-companion.mjs", import.meta.url));
 
@@ -16,6 +17,17 @@ test("setup --json lists the four adapters", () => {
   assert.equal(r.status, 0, r.stderr);
   const rows = JSON.parse(r.stdout);
   assert.deepEqual(rows.map((x) => x.name).sort(), ["agy", "claude", "codex", "qwen"]);
+});
+
+test("version --json reports runtime path and state dir", () => {
+  const dataDir = isolateStateRoot();
+  const repo = makeRepo();
+  const r = cli(["version", "--json"], { cwd: repo, env: { AGENT_COLLAB_DATA: dataDir } });
+  assert.equal(r.status, 0, r.stderr);
+  const v = JSON.parse(r.stdout);
+  assert.equal(v.name, "agent-collaboration");
+  assert.match(v.runtimePath, /agent-companion\.mjs$/);
+  assert.ok(v.stateDir.startsWith(dataDir), v.stateDir);
 });
 
 test("setup (human) prints a sandboxed-driver hint; --json stays pure JSON", () => {
@@ -144,6 +156,23 @@ test("delegate --background returns immediately; status --wait blocks to complet
   assert.equal(waited.status, 0, waited.stderr);
   const j = JSON.parse(waited.stdout);
   assert.equal(j.status, "completed");
+});
+
+test("status supports --active and --recent filters", () => {
+  const dataDir = isolateStateRoot();
+  const repo = makeRepo();
+  const base = { worker: "claude", role: "reviewer", driver: "codex", artifactDir: dataDir };
+  appendJob(repo, { ...base, id: "done", status: "completed" });
+  appendJob(repo, { ...base, id: "run1", status: "running" });
+  appendJob(repo, { ...base, id: "run2", status: "running" });
+
+  const active = cli(["status", "--active", "--json"], { cwd: repo, env: { AGENT_COLLAB_DATA: dataDir } });
+  assert.equal(active.status, 0, active.stderr);
+  assert.deepEqual(new Set(JSON.parse(active.stdout).map((j) => j.id)), new Set(["run1", "run2"]));
+
+  const recent = cli(["status", "--recent", "1", "--json"], { cwd: repo, env: { AGENT_COLLAB_DATA: dataDir } });
+  assert.equal(recent.status, 0, recent.stderr);
+  assert.equal(JSON.parse(recent.stdout).length, 1);
 });
 
 test("delegate cross-harness reviewer runs and result prints the artifact", () => {

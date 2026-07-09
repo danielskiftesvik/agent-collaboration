@@ -4,17 +4,18 @@
 // dispatcher. Slash commands are thin wrappers over these subcommands.
 import fs from "node:fs";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 
 import { decideRoute, resolveDriver, isAuthoritativeDriver, runSetup, runWorkerSync, runWithFallback, resolveFallbackKinds, launchBackground, runJob, waitForJob, refreshJobStatus, applyResult, recommendWorker } from "../core/dispatch.mjs";
 import { runDoctor } from "../core/doctor.mjs";
 import { version } from "../core/version.mjs";
-import { listJobs, getJob, updateJob, sortJobsNewestFirst, loadState, saveState } from "../core/state.mjs";
+import { listJobs, getJob, updateJob, sortJobsNewestFirst, loadState, saveState, resolveStateDir, isTerminalStatus } from "../core/state.mjs";
 import { isPidAlive } from "../core/heartbeat.mjs";
 import { renderSetup, renderJob, renderJobList, renderRecommendation, renderProfiles } from "../core/render.mjs";
 import { MODEL_PROFILES } from "../core/model-profiles.mjs";
 
-const VALUE_FLAGS = new Set(["worker", "workers", "role", "driver", "base", "timeout", "gate", "sandbox", "focus", "task", "job"]);
-const BOOL_FLAGS = new Set(["json", "apply", "wait", "background", "profiles", "no-fallback", "live"]);
+const VALUE_FLAGS = new Set(["worker", "workers", "role", "driver", "base", "timeout", "gate", "sandbox", "focus", "task", "job", "recent"]);
+const BOOL_FLAGS = new Set(["json", "apply", "wait", "background", "profiles", "no-fallback", "live", "active"]);
 
 function parseArgs(tokens) {
   const options = {};
@@ -53,7 +54,8 @@ const cwd = process.cwd();
 
 // `version` / `--version` — confirm which build is actually running.
 if (subcommand === "version" || subcommand === "--version" || options.version) {
-  out({ name: "agent-collaboration", version: version() }, options, `agent-collaboration v${version()}`);
+  const info = { name: "agent-collaboration", version: version(), runtimePath: fileURLToPath(import.meta.url), stateDir: resolveStateDir(cwd) };
+  out(info, options, `agent-collaboration v${version()}\nruntime ${info.runtimePath}\nstate   ${info.stateDir}`);
   process.exit(0);
 }
 
@@ -177,7 +179,9 @@ switch (subcommand) {
         : refreshJobStatus(cwd, id);
       out(job ?? { error: "unknown job" }, options, renderJob(job));
     } else {
-      const jobs = sortJobsNewestFirst(listJobs(cwd).map((j) => refreshJobStatus(cwd, j))).slice(0, 8);
+      let jobs = sortJobsNewestFirst(listJobs(cwd).map((j) => refreshJobStatus(cwd, j)));
+      if (options.active) jobs = jobs.filter((j) => !isTerminalStatus(j.status));
+      jobs = jobs.slice(0, options.recent ? Math.max(0, Number(options.recent) || 0) : 8);
       out(jobs, options, renderJobList(jobs));
     }
     break;
@@ -258,7 +262,7 @@ switch (subcommand) {
         "  delegate --worker <name> [--driver <name>] [--role worker|reviewer] [--background] [--apply] [--timeout s] <brief>",
         "  review  --worker <name> [--driver <name>] [--focus <text>] [--background] <diff/context>",
         "  adversarial-review --worker <name> [--focus <text>] [--background] <diff/context>",
-        "  status [jobId] [--wait] [--timeout s] [--json]",
+        "  status [jobId] [--wait] [--timeout s] [--active] [--recent n] [--json]",
         "  result <jobId> [--json]",
         "  apply  <jobId>",
         "  cancel <jobId>"

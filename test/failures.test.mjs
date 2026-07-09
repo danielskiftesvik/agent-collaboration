@@ -56,6 +56,11 @@ test("an ordinary error is classified as other", () => {
   assert.equal(c.resetAt, null);
 });
 
+test("empty output is its own fallback-eligible failure kind", () => {
+  const c = classifyFailure({ stdout: "", stderr: "", exitCode: 0, worker: "agy" });
+  assert.equal(c.kind, "empty-output");
+});
+
 test("rate-limit dominates when both rate-limit and auth words appear", () => {
   const c = classifyFailure({ stderr: "429 rate limit; also check your login", exitCode: 1, worker: "codex" });
   assert.equal(c.kind, "rate-limit");
@@ -68,6 +73,7 @@ test("default fallback kinds are transient-only; auth is surfaced", () => {
   assert.equal(isFallbackKind("auth"), false);
   assert.equal(isFallbackKind("timeout"), true);
   assert.equal(isFallbackKind("frozen"), true);
+  assert.equal(isFallbackKind("empty-output"), true);
   assert.equal(isFallbackKind("other"), false);
   assert.equal(isFallbackKind(undefined), false);
 });

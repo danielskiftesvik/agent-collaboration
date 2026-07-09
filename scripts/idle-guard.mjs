@@ -17,11 +17,13 @@ import path from "node:path";
 const argv = process.argv.slice(2);
 let idleMs = 0;
 let hardMs = 0;
+let progressFile = "";
 const watchDirs = [];
 let i = 0;
 for (; i < argv.length; i++) {
   if (argv[i] === "--idle") idleMs = Number(argv[++i]) || 0;
   else if (argv[i] === "--timeout") hardMs = Number(argv[++i]) || 0;
+  else if (argv[i] === "--progress-file") progressFile = argv[++i];
   else if (argv[i] === "--watch") watchDirs.push(argv[++i]);
   else if (argv[i] === "--") {
     i++;
@@ -41,16 +43,23 @@ let last = Date.now();
 const start = Date.now();
 let reason = null;
 
-const bump = () => {
+const bump = (kind = "activity") => {
   last = Date.now();
+  if (!progressFile) return;
+  try {
+    fs.mkdirSync(path.dirname(progressFile), { recursive: true });
+    fs.writeFileSync(progressFile, JSON.stringify({ at: new Date(last).toISOString(), kind }) + "\n");
+  } catch {
+    /* best-effort only */
+  }
 };
 child.stdout.on("data", (d) => {
   process.stdout.write(d);
-  bump();
+  bump("stdout");
 });
 child.stderr.on("data", (d) => {
   process.stderr.write(d);
-  bump();
+  bump("stderr");
 });
 
 // File activity under the worktree (and, for agy, its own log dir) ALSO counts as
@@ -92,11 +101,11 @@ const addWatcher = (w) => {
 for (const dir of watchDirs) {
   try {
     watchMtimes.set(dir, fs.statSync(dir).mtimeMs);
-    addWatcher(fs.watch(dir, { recursive: true }, bump));
+    addWatcher(fs.watch(dir, { recursive: true }, () => bump("file")));
   } catch {
     try {
       watchMtimes.set(dir, treeMtimeMs(dir));
-      addWatcher(fs.watch(dir, bump)); // recursive unsupported (older Linux) → top-level only
+      addWatcher(fs.watch(dir, () => bump("file"))); // recursive unsupported (older Linux) → top-level only
     } catch {
       const mtime = treeMtimeMs(dir);
       if (mtime) watchMtimes.set(dir, mtime);
@@ -132,7 +141,7 @@ const timer = setInterval(() => {
       const mtime = treeMtimeMs(dir);
       if (mtime > prev) {
         watchMtimes.set(dir, mtime);
-        bump();
+        bump("file");
       }
     } catch {
       // best-effort only

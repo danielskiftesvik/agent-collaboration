@@ -1,5 +1,10 @@
 // Human-readable rendering for CLI output (the --json paths bypass this).
 
+function secondsLeft(fromIso, ms) {
+  if (!fromIso || !ms) return null;
+  return Math.max(0, Math.ceil((new Date(fromIso).getTime() + ms - Date.now()) / 1000));
+}
+
 export function renderSetup(rows) {
   return rows
     .map((r) => {
@@ -12,12 +17,20 @@ export function renderSetup(rows) {
 
 export function renderJob(job) {
   if (!job) return "no such job";
+  const running = job.status === "running" || job.status === "queued";
+  const idleLeft = running ? secondsLeft(job.lastProgressAt || job.heartbeatAt, job.idleMs) : null;
+  const hardLeft = running ? secondsLeft(job.startedAt || job.createdAt, job.timeoutMs) : null;
   return [
     `job      ${job.id}`,
     `route    ${job.driver} → ${job.worker} (${job.role})`,
     `status   ${job.status}${job.valid === false ? " (invalid output)" : ""}`,
+    running && job.pid ? `pid      ${job.pid}` : null,
+    running ? `progress ${job.lastProgressAt || job.heartbeatAt || "unknown"}${job.lastProgressKind ? ` (${job.lastProgressKind})` : ""}` : null,
+    idleLeft != null ? `idle     kill in ${idleLeft}s` : null,
+    hardLeft != null ? `timeout  kill in ${hardLeft}s` : null,
     `updated  ${job.updatedAt}`,
-    job.artifactDir ? `artifacts ${job.artifactDir}` : null
+    job.artifactDir ? `artifacts ${job.artifactDir}` : null,
+    job.logs?.run ? `logs     ${job.logs.run}` : null
   ]
     .filter(Boolean)
     .join("\n");

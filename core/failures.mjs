@@ -51,10 +51,13 @@ function extractResetAt(text) {
 
 /**
  * Classify a failed run from its captured output.
- * @returns {{kind: "rate-limit"|"auth"|"other", resetAt: string|null, worker?: string}}
+ * @returns {{kind: "rate-limit"|"auth"|"empty-output"|"other", resetAt: string|null, worker?: string}}
  */
 export function classifyFailure({ stdout = "", stderr = "", exitCode, worker } = {}) {
   const text = `${stdout}\n${stderr}`;
+  if (!String(stdout).trim() && !String(stderr).trim()) {
+    return { kind: "empty-output", resetAt: null, worker };
+  }
   // Rate-limit is checked first: it's the focus, and quota/limit messages
   // sometimes also mention "login"/auth, but the right action is to back off.
   if (RATE_LIMIT_PATTERNS.some((re) => re.test(text))) {
@@ -68,7 +71,7 @@ export function classifyFailure({ stdout = "", stderr = "", exitCode, worker } =
 
 // Default auto-fallback policy: transient capacity/runtime failures only. Auth is
 // surfaced by default because another worker cannot fix this worker's login/config.
-export const FALLBACK_KINDS = new Set(["rate-limit", "timeout", "frozen"]);
+export const FALLBACK_KINDS = new Set(["rate-limit", "timeout", "frozen", "empty-output"]);
 
 export function isFallbackKind(kind) {
   return FALLBACK_KINDS.has(kind);

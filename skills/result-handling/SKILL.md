@@ -82,12 +82,15 @@ A failed result is **classified** so you don't have to guess. Read these fields:
   *config*) — point the user at `/agent-collab:setup` or the harness's own `login`.
 - `failureKind: "stalled"` — a background job's process died without writing a
   terminal result. Surface it and inspect `run.log` / artifacts; retry as a fresh job.
+- `failureKind: "empty-output"` — the worker exited without stdout/stderr and no
+  artifact could be parsed. Auto-falls-back by default; inspect `logs/run.jsonl`
+  plus `<worker>.stdout.log` / `<worker>.stderr.log` before blaming auth or Claude.
 - `failureKind: "other"` — an ordinary task failure. Surface it; do **not** treat
   it as a limit.
 
 **What the runtime already did:** by default it **auto-falls-back to the next
 worker-ready harness** (never the driver) on a **transient** failure —
-`rate-limit`, `timeout`, or `frozen` (auth is surfaced instead; tune with
+`rate-limit`, `timeout`, `frozen`, or `empty-output` (auth is surfaced instead; tune with
 `AGENT_COLLAB_FALLBACK=off|on|<kinds>`). The result then carries:
 
 - `note` — a human sentence describing the fallback ("Auto-fell back to claude
@@ -97,6 +100,10 @@ worker-ready harness** (never the driver) on a **transient** failure —
 - `allWorkersLimited: true` — **every** worker-ready harness failed in a
   fall-back-eligible way. Nothing succeeded. Surface it, give the soonest
   `resetAt`, and ask whether to wait, switch accounts, or proceed differently.
+- `logs` / `artifactDir/logs/` — raw stdout/stderr and redacted command metadata
+  for every attempt. Use these before declaring a worker unavailable.
+- `reviewContext` — for reviews, proves the `baseRef`, dirty checkout paths at
+  launch, and whether the diff was staged into the reviewer worktree.
 
 **The one hard rule:** auto-fallback only ever moves to **another worker
 harness**. It must **never** become "the driver quietly does it single-party."

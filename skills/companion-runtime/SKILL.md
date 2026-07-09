@@ -19,7 +19,7 @@ doctor [--live] [--workers a,b] [--json]
 delegate --worker <agy|codex|claude> [--driver <name>] [--role worker|reviewer] [--background] [--apply] [--timeout <s>] [--no-fallback] <brief>
 review  --worker <name> [--focus <text>] [--background] [--no-fallback] [--json] <diff/context>
 adversarial-review --worker <name> [--focus <text>] [--background] [--no-fallback] [--json] <diff/context>
-status [jobId] [--wait] [--timeout <s>] [--json]
+status [jobId] [--wait] [--timeout <s>] [--active] [--recent <n>] [--json]
 result <jobId> [--json]
 apply  <jobId>
 cancel <jobId>
@@ -69,7 +69,8 @@ auto-detect, so `--driver`/`AGENT_COLLAB_DRIVER` is only an override:
 ## --json result fields
 
 `{ jobId, worker, status, resultValid, changed, patchApplies, attempts, artifact,
-artifactDir, patchPath, breach, escapedPaths, breachWarning, report, errors }`. `status` is one of
+artifactDir, patchPath, breach, escapedPaths, breachWarning, report, logs,
+reviewContext, errors }`. `status` is one of
 `completed | no-changes | conflicted | breach | blocked | failed`. A worker is
 `completed` on a clean non-empty patch even if `resultValid` is false (the patch
 is the deliverable); a valid self-report with **no** patch is `no-changes`, never
@@ -81,9 +82,12 @@ for reviewers (no patch). A reviewer can be `completed` with `resultValid:false`
 and `report:true`: read the prose report in `reports/<worker>.md`. Apply a worker
 patch only via `apply` / `--apply`, after inspection. `worker` is the harness that
 actually ran (may differ from the one you asked for — see auto-fallback).
+`logs` points at durable stdout/stderr/attempt metadata under `artifactDir/logs/`.
+For review jobs, `reviewContext` records `baseRef`, dirty real-checkout paths at
+launch, and whether the supplied diff was staged into the reviewer worktree.
 
 On a **failed** run, two more fields explain why: `failureKind`
-(`rate-limit` | `auth` | `timeout` | `frozen` | `stalled` | `other`) and `resetAt`
+(`rate-limit` | `auth` | `timeout` | `frozen` | `stalled` | `empty-output` | `other`) and `resetAt`
 (best-effort reset hint for a limit). See the `result-handling` skill for how to
 present these.
 
@@ -91,9 +95,10 @@ present these.
 
 `delegate`/`review`/`adversarial-review` auto-fall-back to the next worker-ready
 harness when the chosen worker hits a **transient** failure. Default policy:
-`rate-limit` + `timeout` + `frozen` (another worker can do it now); **`auth` is surfaced**, not
-routed around (it's a config fix); `other` and `stalled` never trigger it. Tune with
-`AGENT_COLLAB_FALLBACK`: `off` (none), `on` (rate-limit+auth+timeout+frozen), or a
+`rate-limit` + `timeout` + `frozen` + `empty-output` (another worker can do it now);
+**`auth` is surfaced**, not routed around (it's a config fix); `other` and `stalled`
+never trigger it. Tune with
+`AGENT_COLLAB_FALLBACK`: `off` (none), `on` (rate-limit+auth+timeout+frozen+empty-output), or a
 comma-list of kinds; `--no-fallback` forces a single worker. The result carries
 `note`, `fellBackFrom[]` (`{worker, failureKind, resetAt}`), and — if every worker
 failed eligibly — `allWorkersLimited: true`. Fallback only ever moves to another
@@ -107,6 +112,7 @@ worker and returns `{jobId, status:"running", background:true}` immediately — 
 survives a driver crash. Then:
 - `status <jobId>` — poll once; `status <jobId> --wait [--timeout <s>]` — block until
   the job reaches a terminal status (or the process dies → `failureKind:"stalled"`).
+- `status --active` — show only non-terminal jobs; `status --recent <n>` — limit list output.
 - `result <jobId>` — the report + structured output once terminal.
 - `cancel <jobId>` — kills the detached worker's whole process group.
 
@@ -123,6 +129,8 @@ NO-progress for `AGENT_COLLAB_IDLE_TIMEOUT` (default 600s; `0` disables) trips i
 → killed, surfaced as `failureKind: "frozen"`, and fallback-eligible. Codex and
 qwen also have wider profile idle budgets for quiet long-running work. Separate
 from the hard timeout below.
+For post-mortems, every attempt writes raw stdout/stderr and redacted command
+metadata to `artifactDir/logs/`; `status <jobId>` points at those logs.
 
 ## Timeouts (avoid the "no JSON found" no-output)
 
@@ -163,7 +171,7 @@ read `tasks/<jobId>/reports/<worker>.md`.
   default** (confine writes to the work area + temp + harness state; blocks /tmp, other
   volumes, real repos). Default profile only blocks `$HOME`. Linux bwrap is already strict.
   Validate against your worker with `doctor --live` before relying on it.
-- `AGENT_COLLAB_FALLBACK` — fallback policy: `off` | `on` (rate-limit+auth+timeout+frozen) | comma-list. Default: `rate-limit,timeout,frozen` (auth surfaces).
+- `AGENT_COLLAB_FALLBACK` — fallback policy: `off` | `on` (rate-limit+auth+timeout+frozen+empty-output) | comma-list. Default: `rate-limit,timeout,frozen,empty-output` (auth surfaces).
 - `AGENT_COLLAB_TIMEOUT=<s>` — per-attempt worker HARD timeout in seconds (default 1200 = 20 min).
 - `AGENT_COLLAB_IDLE_TIMEOUT=<s>` — inactivity timeout in seconds (default 600; 0 = off): no progress (output OR file activity) for this long → killed as `frozen`.
 - `AGENT_COLLAB_BREACH_EXEMPT_PATHS=a,b` — comma-separated real-checkout paths that should be warnings, not hard breaches (for intentional reports/scratch output).

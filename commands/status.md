@@ -1,6 +1,6 @@
 ---
-description: Show recent cross-harness collaboration jobs for this workspace
-argument-hint: '[jobId]'
+description: Show cross-harness collaboration jobs, including active-job liveness and artifact/log paths
+argument-hint: '[jobId] [--wait] [--timeout s] [--active] [--recent n]'
 disable-model-invocation: true
 allowed-tools: Bash(node:*)
 ---

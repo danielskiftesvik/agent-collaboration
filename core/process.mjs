@@ -141,6 +141,7 @@ export function run(command, args = [], opts = {}) {
   delete spawnOpts.sandboxStrict;
   delete spawnOpts.idleMs;
   delete spawnOpts.watchDirs;
+  delete spawnOpts.progressFile;
 
   // Inactivity watchdog: wrap the (possibly sandboxed) command in idle-guard so a
   // FROZEN run is killed after `idleMs` with no progress, instead of blocking to
@@ -155,7 +156,8 @@ export function run(command, args = [], opts = {}) {
     for (const d of opts.watchDirs ?? []) {
       if (d) watchArgs.push("--watch", d);
     }
-    finalArgs = [IDLE_GUARD, "--idle", String(idleMs), "--timeout", String(hardMs), ...watchArgs, "--", finalCommand, ...finalArgs];
+    const progressArgs = opts.progressFile ? ["--progress-file", opts.progressFile] : [];
+    finalArgs = [IDLE_GUARD, "--idle", String(idleMs), "--timeout", String(hardMs), ...progressArgs, ...watchArgs, "--", finalCommand, ...finalArgs];
     finalCommand = process.execPath;
     spawnOpts.timeout = hardMs ? hardMs + 30000 : undefined;
   }

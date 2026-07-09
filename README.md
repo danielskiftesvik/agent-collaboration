@@ -80,7 +80,7 @@ Two delegation paths, chosen automatically:
 | `/agent-collab:delegate --worker <agy\|claude\|codex> [--background] [--apply] <brief>` | Run a cross-harness **worker** task (produces a patch); `--background` detaches and returns a jobId |
 | `/agent-collab:review --worker <name> [--focus <text>] <diff>` | Read-only cross-harness **review** |
 | `/agent-collab:adversarial-review --worker <name> <diff>` | "Try to break it" review |
-| `/agent-collab:status [jobId] [--wait]` | List / inspect jobs; `--wait` blocks until a job finishes |
+| `/agent-collab:status [jobId] [--wait] [--active] [--recent n]` | List / inspect jobs; `--wait` blocks until a job finishes |
 | `/agent-collab:result <jobId>` | Show a job's report + structured output |
 | `/agent-collab:apply <jobId>` | Apply a worker's patch (3-way) to the working tree |
 | `/agent-collab:cancel <jobId>` | Cancel a running job |
@@ -127,6 +127,12 @@ driver, `AGENTS.md` for Codex/agy drivers).
   is missing (the patch is the deliverable).
 - **Stall detection:** jobs carry a heartbeat; a job whose heartbeat is stale **and** whose
   process is gone is treated as stalled.
+- **Diagnostics:** every attempt persists raw stdout/stderr plus redacted command
+  metadata in `artifactDir/logs/`. `version --json` reports the runtime path and
+  state dir, and `status --active` / `status --recent <n>` keep current jobs visible.
+- **Review provenance:** review jobs record `reviewContext` (`baseRef`, dirty paths
+  at launch, and whether the supplied diff was staged into the reviewer worktree)
+  so you can prove what code the reviewer saw.
 - **Freeze detection:** every worker runs under an inactivity watchdog (`idle-guard`). Progress
   = stdout/stderr **or** file activity (worktree, agy's log dir, and codex's `.codex` log/session dirs) — workers often log/write
   files rather than streaming to the pipe (claude is run in streaming mode to provide a
@@ -134,8 +140,8 @@ driver, `AGENTS.md` for Codex/agy drivers).
   is killed as `failureKind: "frozen"` (and falls back), so a real hang surfaces before the
   20-min hard ceiling without false-killing a slow-but-working run.
 - **Limit & timeout handling:** a failed run is classified (`failureKind` = `rate-limit` |
-  `auth` | `timeout` | `frozen` | `stalled` | `other` + a best-effort `resetAt`). On a **transient** failure
-  (`rate-limit`/`timeout`/`frozen` by default) the runtime **auto-falls-back to the next worker-ready
+  `auth` | `timeout` | `frozen` | `empty-output` | `stalled` | `other` + a best-effort `resetAt`). On a **transient** failure
+  (`rate-limit`/`timeout`/`frozen`/`empty-output` by default) the runtime **auto-falls-back to the next worker-ready
   harness** (never the driver), tagging the result with a `note` + `fellBackFrom[]`; **`auth`
   is surfaced** (a config fix), not routed around. Tune via `AGENT_COLLAB_FALLBACK`
   (`off`/`on`/comma-list) or `--no-fallback`. The default per-attempt budget is 20 min so deep
@@ -182,7 +188,7 @@ node /path/to/agent-collaboration/scripts/agent-companion.mjs \
 | `AGENT_COLLAB_DRIVER` | Override which harness is driving (`codex`/`agy`/`claude`). Normally auto-detected (Codex `CODEX_THREAD_ID`, agy `ANTIGRAVITY_*`, Claude Code `CLAUDECODE`); set only if detection misses |
 | `AGENT_COLLAB_SANDBOX` | OS sandbox: `on` (all non-codex) \| `off`. Default: opt-in for non-codex workers, **never codex** (it self-sandboxes). Degrades to unsandboxed if it can't be applied |
 | `AGENT_COLLAB_SANDBOX_STRICT=on` | Tighten the macOS profile to deny file-write by default (confine writes to work area + temp + harness state; blocks /tmp & other volumes). Default profile only blocks `$HOME`; Linux bwrap is already strict |
-| `AGENT_COLLAB_FALLBACK` | Auto-fallback policy: `off` \| `on` (rate-limit+auth+timeout+frozen) \| comma-list of kinds. Default `rate-limit,timeout,frozen` (transient; **auth is surfaced**, not routed around) |
+| `AGENT_COLLAB_FALLBACK` | Auto-fallback policy: `off` \| `on` (rate-limit+auth+timeout+frozen+empty-output) \| comma-list of kinds. Default `rate-limit,timeout,frozen,empty-output` (transient; **auth is surfaced**, not routed around) |
 | `AGENT_COLLAB_TIMEOUT` | Per-attempt worker **hard** timeout in **seconds** (default 1200 = 20 min). Deep reasoners on big diffs need a generous budget — too short kills the run mid-flight |
 | `AGENT_COLLAB_IDLE_TIMEOUT` | **Inactivity** timeout in **seconds** (default 600 = 10 min; `0` disables). If a worker makes **no progress** — neither stdout/stderr **nor file activity** (worktree, agy's log dir, codex log/session dirs) — for this long it's killed as `frozen`. Generous so a slow-but-working worker isn't false-killed. **codex and qwen have more generous built-in defaults (30 min via `MODEL_PROFILES.<worker>.idleMsOverride`) that take precedence over this env var** |
 | `AGENT_COLLAB_BREACH_EXEMPT_PATHS` | Comma-separated real-checkout paths that become `breachWarning` instead of hard `breach` (for intentional report/scratch output) |

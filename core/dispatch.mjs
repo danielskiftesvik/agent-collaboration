@@ -105,10 +105,15 @@ export function refreshJobStatus(cwd, jobOrId) {
   if (!job || isTerminalStatus(job.status)) return job;
   const fresh = getJob(cwd, job.id) ?? job;
   if (!fresh || isTerminalStatus(fresh.status)) return fresh;
-  if (fresh.pid && (isStalled(fresh, { staleMs: 0 }) || !isPidAlive(fresh.pid))) {
-    return updateJob(cwd, fresh.id, stalledUpdate());
+  let current = fresh;
+  const progress = readProgress(current.progressFile);
+  if (progress?.at && progress.at !== current.lastProgressAt) {
+    current = updateJob(cwd, current.id, { lastProgressAt: progress.at, lastProgressKind: progress.kind });
   }
-  return fresh;
+  if (current.pid && (isStalled(current, { staleMs: 0 }) || !isPidAlive(current.pid))) {
+    return updateJob(cwd, current.id, stalledUpdate());
+  }
+  return current;
 }
 
 /**
@@ -305,8 +310,55 @@ export function runSetup(adapters = listAdapters()) {
 }
 
 function ensureDirs(base, role) {
-  const dirs = ["reports", "outputs"].concat(role === "worker" ? ["patches", "checks"] : []);
+  const dirs = ["reports", "outputs", "logs"].concat(role === "worker" ? ["patches", "checks"] : []);
   for (const d of dirs) fs.mkdirSync(path.join(base, d), { recursive: true });
+}
+
+function dirtyPathsFromStatus(status) {
+  return newStatusPaths(new Set(), status ?? []);
+}
+
+function redactArgs(args = []) {
+  return args.map((arg, i) => {
+    const s = String(arg);
+    if (args[i - 1] === "-p" || args[i - 1] === "--prompt") return `<redacted:${s.length} chars>`;
+    if (s.includes("\n") || s.length > 120) return `<redacted:${s.length} chars>`;
+    return s;
+  });
+}
+
+function appendAttemptDiagnostics(artifactDir, worker, attempt, cmd, proc, meta = {}) {
+  const logsDir = path.join(artifactDir, "logs");
+  fs.mkdirSync(logsDir, { recursive: true });
+  const stdout = proc.stdout ?? "";
+  const stderr = proc.stderr ?? "";
+  fs.appendFileSync(path.join(logsDir, `${worker}.stdout.log`), stdout);
+  fs.appendFileSync(path.join(logsDir, `${worker}.stderr.log`), stderr);
+  fs.appendFileSync(
+    path.join(logsDir, "run.jsonl"),
+    JSON.stringify({
+      at: new Date().toISOString(),
+      worker,
+      attempt,
+      command: cmd.command,
+      args: redactArgs(cmd.args ?? []),
+      cwd: meta.cwd,
+      exitCode: proc.status,
+      stdoutBytes: Buffer.byteLength(stdout),
+      stderrBytes: Buffer.byteLength(stderr),
+      sandboxRequested: meta.sandboxRequested,
+      sandboxApplied: proc.sandboxApplied
+    }) + "\n"
+  );
+}
+
+function readProgress(progressFile) {
+  if (!progressFile) return null;
+  try {
+    return JSON.parse(fs.readFileSync(progressFile, "utf8"));
+  } catch {
+    return null;
+  }
 }
 
 /**
@@ -325,6 +377,12 @@ export function runWorkerSync(cwd, opts) {
   const artifactDir = path.join(resolveStateDir(cwd), "tasks", jobId);
   ensureDirs(artifactDir, role);
   fs.writeFileSync(path.join(artifactDir, "brief.md"), brief ?? "");
+  const logs = {
+    stdout: path.join(artifactDir, "logs", `${worker}.stdout.log`),
+    stderr: path.join(artifactDir, "logs", `${worker}.stderr.log`),
+    run: path.join(artifactDir, "logs", "run.jsonl"),
+    progress: path.join(artifactDir, "logs", "progress.json")
+  };
 
   // Write the initial record idempotently: appendJob for a brand-new job, updateJob
   // when the parent (background launch) already created it.
@@ -341,7 +399,7 @@ export function runWorkerSync(cwd, opts) {
     const errors = [reason];
     writeInitial({
       id: jobId, driver, worker, role, status: "blocked", pid: process.pid,
-      baseRef: null, workspace: cwd, artifactDir, heartbeatAt: new Date().toISOString()
+      baseRef: null, workspace: cwd, artifactDir, logs, heartbeatAt: new Date().toISOString()
     });
     updateJob(cwd, jobId, { errors, failureKind });
     return {
@@ -403,6 +461,8 @@ export function runWorkerSync(cwd, opts) {
       ? new Set(opts.breachBefore)
       : workingTreeStatus(cwd)
     : null;
+  const mainDirtyPathsAtLaunch = dirtyPathsFromStatus(breachBefore);
+  const startedAt = new Date().toISOString();
 
   writeInitial({
     id: jobId,
@@ -414,7 +474,14 @@ export function runWorkerSync(cwd, opts) {
     baseRef,
     workspace,
     artifactDir,
-    heartbeatAt: new Date().toISOString()
+    logs,
+    progressFile: logs.progress,
+    startedAt,
+    timeoutMs,
+    idleMs,
+    heartbeatAt: startedAt,
+    lastProgressAt: startedAt,
+    lastProgressKind: "launch"
   });
 
   let answerText = "";
@@ -439,8 +506,24 @@ export function runWorkerSync(cwd, opts) {
   // included for small changes. Falls back to pasted-text when it isn't a diff or
   // doesn't apply.
   let reviewInput = brief ?? "";
+  let reviewContext = role === "reviewer"
+    ? {
+        baseRef,
+        workspace,
+        mainDirtyPathsAtLaunch,
+        inputBytes: Buffer.byteLength(brief ?? ""),
+        stagedIntoWorktree: false,
+        stageReason: TEMPLATE_KINDS.has(kind) ? null : "no review diff staging for this command",
+        stagedStat: ""
+      }
+    : undefined;
   if (TEMPLATE_KINDS.has(kind) && worktree) {
     const staged = stageDiffIntoWorktree(workspace, brief ?? "");
+    if (reviewContext) {
+      reviewContext.stagedIntoWorktree = staged.staged;
+      reviewContext.stageReason = staged.staged ? null : staged.reason;
+      reviewContext.stagedStat = staged.stat || "";
+    }
     if (staged.staged) {
       reviewInput =
         "The change under review has been APPLIED to your working tree. Read the affected files " +
@@ -486,7 +569,8 @@ export function runWorkerSync(cwd, opts) {
       sandbox,
       sandboxStrict: wantStrict,
       sandboxWorkspace: workspace,
-      sandboxArtifactDir: artifactDir
+      sandboxArtifactDir: artifactDir,
+      progressFile: logs.progress
     });
   // Run with the sandbox; degrade to unsandboxed if it couldn't be applied
   // (e.g. no bwrap → run() reports sandboxApplied:false and has already run
@@ -518,8 +602,10 @@ export function runWorkerSync(cwd, opts) {
     attempts += 1;
     touchHeartbeat(cwd, jobId);
     let proc;
+    let cmd;
     if (attempts === 1) {
-      proc = execGuarded(adapter.buildCommand({ role, brief: basePrompt, workspace, timeoutMs }));
+      cmd = adapter.buildCommand({ role, brief: basePrompt, workspace, timeoutMs });
+      proc = execGuarded(cmd);
     } else {
       // Repair attempt: prefer RESUMING the worker's thread (cheap continuation,
       // faithful to the reference) when the adapter supports it; if the thread
@@ -531,14 +617,21 @@ export function runWorkerSync(cwd, opts) {
         ? adapter.buildRetryCommand({ role, repairBrief: resumeRepair, workspace, timeoutMs })
         : null;
       if (retryCmd) {
-        proc = execGuarded(retryCmd);
+        cmd = retryCmd;
+        proc = execGuarded(cmd);
         if (adapter.isResumeMiss && adapter.isResumeMiss(proc)) {
-          proc = execGuarded(adapter.buildCommand({ role, brief: freshRepair, workspace, timeoutMs }));
+          cmd = adapter.buildCommand({ role, brief: freshRepair, workspace, timeoutMs });
+          proc = execGuarded(cmd);
         }
       } else {
-        proc = execGuarded(adapter.buildCommand({ role, brief: freshRepair, workspace, timeoutMs }));
+        cmd = adapter.buildCommand({ role, brief: freshRepair, workspace, timeoutMs });
+        proc = execGuarded(cmd);
       }
     }
+    appendAttemptDiagnostics(artifactDir, worker, attempts, cmd, proc, {
+      cwd: workspace,
+      sandboxRequested: wantSandbox
+    });
     exitCode = proc.status;
     lastStdout = proc.stdout ?? "";
     lastStderr = proc.stderr ?? "";
@@ -696,6 +789,11 @@ export function runWorkerSync(cwd, opts) {
     note = (note ? note + " " : "") +
       `Real checkout changed during the worker run (${breachWarning.escapedPaths.join(", ")}); recorded as breachWarning, not a hard breach.`;
   }
+  if (role === "reviewer" && reviewContext?.mainDirtyPathsAtLaunch?.length && !reviewContext.stagedIntoWorktree) {
+    note = (note ? note + " " : "") +
+      `Main checkout had uncommitted changes at launch (${reviewContext.mainDirtyPathsAtLaunch.join(", ")}), ` +
+      "but no unified diff was staged into the reviewer worktree; reviewer saw HEAD only plus the brief.";
+  }
   const sandboxed = wantSandbox && !sandboxDegraded;
 
   const breach = escapedPaths.length > 0;
@@ -713,6 +811,9 @@ export function runWorkerSync(cwd, opts) {
     escapedPaths: breach ? escapedPaths : undefined,
     breachWarning,
     report: role === "reviewer" && answerText.trim().length > 0,
+    logs,
+    progressFile: logs.progress,
+    reviewContext,
     sandboxed,
     note,
     errors
@@ -736,6 +837,8 @@ export function runWorkerSync(cwd, opts) {
     escapedPaths: breach ? escapedPaths : undefined,
     breachWarning,
     report: role === "reviewer" && answerText.trim().length > 0,
+    logs,
+    reviewContext,
     sandboxed,
     note,
     errors
@@ -757,15 +860,16 @@ export function runWorkerSync(cwd, opts) {
  */
 /**
  * Which failure kinds auto-trigger fallback. Policy via AGENT_COLLAB_FALLBACK:
- *   off  -> none;  on -> rate-limit+auth+timeout;  "a,b" -> exactly those kinds.
- * DEFAULT = rate-limit + timeout: fall back on TRANSIENT capacity problems (another
- * worker can do it right now), but SURFACE auth — it's a persistent config issue, so
- * routing around the worker the user chose would just hide a login they must fix.
+ *   off  -> none;  on -> rate-limit+auth+timeout+frozen+empty-output;  "a,b" -> exactly those kinds.
+ * DEFAULT = rate-limit + timeout + frozen + empty-output: fall back on TRANSIENT
+ * capacity/runtime problems (another worker can do it right now), but SURFACE auth —
+ * it's a persistent config issue, so routing around the worker the user chose would
+ * just hide a login they must fix.
  */
 export function resolveFallbackKinds(env = process.env) {
   const v = env.AGENT_COLLAB_FALLBACK;
   if (v === "off") return new Set();
-  if (v === "on") return new Set(["rate-limit", "auth", "timeout", "frozen"]);
+  if (v === "on") return new Set(["rate-limit", "auth", "timeout", "frozen", "empty-output"]);
   if (v) return new Set(v.split(",").map((s) => s.trim().toLowerCase()).filter(Boolean));
   return new Set(FALLBACK_KINDS);
 }
