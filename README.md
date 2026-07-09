@@ -77,7 +77,7 @@ Two delegation paths, chosen automatically:
 | `/agent-collab:setup [--gate on\|off] [--sandbox on\|off]` | Detect worker-ready harnesses; toggle the stop-time review gate and the OS sandbox |
 | `/agent-collab:doctor [--live] [--workers a,b]` | Self-check: config + readiness, and (with `--live`) a review-cycle + worktree-isolation smoke per worker against a throwaway repo |
 | `/agent-collab:recommend --task <type> --driver <self>` (or `--profiles`) | Pick the strongest available worker for a task by underlying-model strength |
-| `/agent-collab:delegate --worker <agy\|claude> [--background] [--apply] <brief>` | Run a cross-harness **worker** task (produces a patch); `--background` detaches and returns a jobId |
+| `/agent-collab:delegate --worker <agy\|claude\|codex> [--background] [--apply] <brief>` | Run a cross-harness **worker** task (produces a patch); `--background` detaches and returns a jobId |
 | `/agent-collab:review --worker <name> [--focus <text>] <diff>` | Read-only cross-harness **review** |
 | `/agent-collab:adversarial-review --worker <name> <diff>` | "Try to break it" review |
 | `/agent-collab:status [jobId] [--wait]` | List / inspect jobs; `--wait` blocks until a job finishes |
@@ -155,7 +155,7 @@ driver, `AGENTS.md` for Codex/agy drivers).
 
 | Harness | Reviewer | Worker | Notes |
 |---|---|---|---|
-| **codex** | ✓ | no | Deepest review reasoning; prefers XML-block prompts. Slower and often quiet — it has a wider idle budget and `.codex` log/session activity counts as progress |
+| **codex** | ✓ | ✓ | Deepest review reasoning and hard-debug implementation; prefers XML-block prompts. Slower and often quiet — it has a wider idle budget and `.codex` log/session activity counts as progress |
 | **claude** | ✓ | ✓ | Use the native `Agent` tool when Claude Code is also the driver |
 | **agy** (Gemini) | ✓ | ✓ | Fast reviewer and implementer (Flash by default; `AGENT_COLLAB_AGY_CLASS=Pro` for depth). The adapter pins model flags before the prompt and harvests patches from agy's internal worktree when needed |
 | **qwen** (local) | ✓ (local-only tasks) | ✓ (plan-execution only) | Local-only, via a local LM Studio server. **Always explicit** — never in `recommend`'s default rotation, never a fallback target, never falls back away from itself on failure. Two routes only: `local-only` (sensitive-data review) and `plan-execution` (implementing a pre-written plan). See [Configuration](#configuration) for the `AGENT_COLLAB_QWEN_*` env vars. Local-only means the *worker run* stays local — compose briefs as file paths, not pasted content, and see the harness-prompting qwen guide for the full privacy boundary |

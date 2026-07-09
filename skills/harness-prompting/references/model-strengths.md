@@ -21,13 +21,13 @@ Which underlying model is strongest at what, and how that maps to worker choice.
 - **Weaker at:** some hardest adversarial reviews benefit from a second codex pass;
   raw speed/cost vs Gemini Flash.
 
-### Codex (OpenAI) — reasoner / analyst
+### Codex (OpenAI) — reasoner / writer
 - **Stronger at:** hardest contamination-resistant debugging & reasoning, algorithms, math,
   subtle bug-finding, adversarial analysis.
 - **Evidence:** strongest observed value here is high-signal adversarial review and
   subtle-failure analysis.
-- **Weaker at:** disabled as a write-worker in this runtime; sandbox friction when used
-  as an implementer or driver.
+- **Weaker at:** slower and sometimes quieter than other write-workers on large
+  patches; sandbox friction when used as an implementer or driver.
 
 ### Gemini 3.x (Google — Pro / Flash) — fast, wide, multimodal
 - **Stronger at:** speed & low cost (Flash tier) for high-throughput edits; multimodal input;
@@ -46,11 +46,11 @@ worker (excluding the driver) + the model's profile + a reason. The mapping:
 | Task type | Preferred | Basis |
 |---|---|---|
 | `second-opinion` | other of codex/claude | independence + deep reasoning |
-| `hard-bug`, `architecture`, `design-tradeoff` | claude, agy | write-capable implementers; use codex for review/second opinion |
-| `refactor`, `general-swe` | claude, agy | Claude for careful implementation; agy as fast fallback |
+| `hard-bug`, `architecture`, `design-tradeoff` | claude, codex, agy | Claude for disciplined edits; codex for hard reasoning; agy as fast fallback |
+| `refactor`, `general-swe` | claude, agy, codex | Claude for careful implementation; agy as fast fallback; codex available for harder cases |
 | `plan` | claude, codex | planning and deep analysis |
 | `review`, `adversarial-review` | codex, claude, agy | **under-benchmarked** — default to a strong reasoner |
-| `mechanical`, `bulk-edit`, `quick-fix` | agy, claude | Gemini Flash speed/cost — **not** benchmark-confirmed |
+| `mechanical`, `bulk-edit`, `quick-fix` | agy, claude, codex | Gemini Flash speed/cost first; Claude/codex remain available |
 | `large-context`, `broad-scan` | agy, codex | Gemini on cost — context-size advantage **unconfirmed** |
 | `visual`, `multimodal` | agy | Gemini multimodal strengths |
 

@@ -113,8 +113,9 @@ set `AGENT_COLLAB_FALLBACK=off`); then the limit just surfaces for you to relay.
 - **agy** — usable as reviewer and write-worker (default **Gemini Flash**;
   `AGENT_COLLAB_AGY_CLASS=Pro` for deeper passes). Its adapter pins model flags before
   the prompt and harvests patches from agy's internal worktree when needed.
-- **codex** — reviewer/analyst only through this runtime (`canWrite:false`); use it
-  for hard reasoning and adversarial review, not implementation patches.
+- **codex** — usable as reviewer and write-worker; strongest fit is hard reasoning,
+  subtle bug analysis, and adversarial review. It can be slower and quiet for long
+  stretches, so the runtime gives it a wider idle budget.
 - **claude** — usable as a write-worker; when Claude Code is also the driver, use the
   native Agent tool.
 

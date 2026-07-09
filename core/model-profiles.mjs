@@ -31,7 +31,7 @@ export const MODEL_PROFILES = {
     harness: "codex",
     model: "Codex / GPT-5.x (OpenAI, current)",
     vendor: "OpenAI",
-    canWrite: false,
+    canWrite: true,
     idleMsOverride: 1800000,
     strongerAt: [
       "hardest contamination-resistant debugging & reasoning",
@@ -39,7 +39,7 @@ export const MODEL_PROFILES = {
       "subtle bug-finding & adversarial/critical analysis"
     ],
     weakerAt: [
-      "write-worker path is currently disabled in this runtime; use it as reviewer/analyst",
+      "slower and sometimes quieter than other write-workers on large patches",
       "sandbox friction when used as an implementer or driver"
     ]
   },
@@ -101,15 +101,15 @@ export const TASK_ROUTING = {
   "second-opinion": { workers: ["codex", "claude"], why: "independent second opinion from the other strong reasoner" },
   "adversarial-review": { workers: ["codex", "claude", "agy"], why: "adversarial review — default to a strong reasoner (structured-review routing is under-benchmarked)" },
   review: { workers: ["codex", "claude", "agy"], why: "code review — default to a strong reasoner (under-benchmarked)" },
-  "hard-bug": { workers: ["claude", "agy"], why: "implementation should use write-capable workers; use codex for review/second opinion" },
-  architecture: { workers: ["claude", "agy"], why: "implementation planning with write-capable workers; use codex for review/second opinion" },
-  "design-tradeoff": { workers: ["claude", "agy"], why: "design work with write-capable workers; use codex for review/second opinion" },
-  refactor: { workers: ["claude", "agy"], why: "Claude for careful implementation; agy as fast write-capable fallback" },
+  "hard-bug": { workers: ["claude", "codex", "agy"], why: "deep implementation debugging — Claude for disciplined edits, codex for hard reasoning, agy as fast fallback" },
+  architecture: { workers: ["claude", "codex", "agy"], why: "implementation planning — Claude for scope discipline, codex for deep analysis, agy as fast fallback" },
+  "design-tradeoff": { workers: ["claude", "codex", "agy"], why: "design work — Claude for scope discipline, codex for deep analysis, agy as fast fallback" },
+  refactor: { workers: ["claude", "agy", "codex"], why: "Claude for careful implementation; agy as fast fallback; codex remains available for harder cases" },
   plan: { workers: ["claude", "codex"], why: "Claude's planning + scope discipline" },
-  "general-swe": { workers: ["claude", "agy"], why: "Claude for implementation; agy as fast write-capable fallback" },
-  mechanical: { workers: ["agy", "claude"], why: "fast mechanical edits — agy can deliver patches through the runtime" },
-  "bulk-edit": { workers: ["agy", "claude"], why: "high-throughput edits — agy speed/cost is a good fit" },
-  "quick-fix": { workers: ["agy", "claude"], why: "quick fix — agy is the fastest write-capable worker" },
+  "general-swe": { workers: ["claude", "agy", "codex"], why: "Claude for implementation; agy as fast fallback; codex remains available for harder cases" },
+  mechanical: { workers: ["agy", "claude", "codex"], why: "fast mechanical edits — agy first, with Claude/codex available as write-workers" },
+  "bulk-edit": { workers: ["agy", "claude", "codex"], why: "high-throughput edits — agy speed/cost first, with Claude/codex available as write-workers" },
+  "quick-fix": { workers: ["agy", "claude", "codex"], why: "quick fix — agy first, with Claude/codex available as write-workers" },
   "large-context": { workers: ["agy", "codex"], why: "Gemini for big scans on cost; context-size advantage unconfirmed" },
   "broad-scan": { workers: ["agy", "codex"], why: "Gemini for big scans on cost; context-size advantage unconfirmed" },
   visual: { workers: ["agy"], why: "Gemini is the multimodal/visual specialist" },

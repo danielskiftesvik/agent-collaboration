@@ -23,7 +23,7 @@ node scripts/agent-companion.mjs recommend --task <type> --driver <self> --json
 
 Rough guide (full matrix + model profiles: [`harness-prompting/references/model-strengths.md`](../harness-prompting/references/model-strengths.md), or `recommend --profiles`):
 
-- **Hard reasoning / subtle bugs / adversarial review** → **codex** (reviewer/analyst only).
+- **Hard reasoning / subtle bugs / adversarial review** → **codex** (reviewer or writer).
 - **Careful refactor / planning / general SWE** → **claude**.
 - **Fast/mechanical/bulk edits, visual/multimodal work, large-context or whole-repo scans** → **agy** (Gemini Flash speed/cost; use Claude/codex review for high-risk changes).
 - **Independent second opinion** → the *other* reasoner (codex↔claude); see the
@@ -33,7 +33,7 @@ Rough guide (full matrix + model profiles: [`harness-prompting/references/model-
 
 ### Claude Code
 Use the custom slash commands:
-- `/agent-collab:delegate --worker <agy|claude> "<task_brief>"`
+- `/agent-collab:delegate --worker <agy|claude|codex> "<task_brief>"`
 - `/agent-collab:review --worker <codex|agy> "<review_brief>"`
 - `/agent-collab:apply <jobId>`
 

@@ -19,7 +19,7 @@ node "${CLAUDE_PLUGIN_ROOT}/scripts/agent-collaboration/scripts/agent-companion.
 (or just reason from the guide below). Then run `/agent-collab:delegate` or
 `/agent-collab:review` with the returned `--worker`.
 
-- **Hard reasoning / subtle bugs / adversarial review →** `codex` (reviewer/analyst only).
+- **Hard reasoning / subtle bugs / adversarial review →** `codex` (reviewer or writer).
 - **Careful refactor / planning / general SWE →** `claude` (use the native `Agent` tool — same harness).
 - **Fast/mechanical/bulk edits, or large-context / whole-repo scans →** `agy` (Gemini: speed + big context).
 - Full matrix + model profiles: `agent-companion.mjs recommend --profiles`.

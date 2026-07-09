@@ -65,6 +65,7 @@ test("runWorkerSync blocks write-workers whose profile cannot deliver patches", 
   isolateStateRoot();
   const repo = makeRepo();
   const old = MODEL_PROFILES.agy.canWrite;
+  const oldAllow = process.env.AGENT_COLLAB_ALLOW_NONWRITER;
   MODEL_PROFILES.agy.canWrite = false;
   delete process.env.AGENT_COLLAB_ALLOW_NONWRITER;
   process.env.AGENT_COLLAB_AGY_BIN = stubBin(WRITE_STUB);
@@ -77,8 +78,35 @@ test("runWorkerSync blocks write-workers whose profile cannot deliver patches", 
   assert.equal(fs.existsSync(path.join(repo, "worker-was-here.txt")), false);
 
   MODEL_PROFILES.agy.canWrite = old;
-  process.env.AGENT_COLLAB_ALLOW_NONWRITER = "on";
+  if (oldAllow === undefined) delete process.env.AGENT_COLLAB_ALLOW_NONWRITER;
+  else process.env.AGENT_COLLAB_ALLOW_NONWRITER = oldAllow;
   delete process.env.AGENT_COLLAB_AGY_BIN;
+});
+
+test("runWorkerSync lets codex run as a write-worker and captures its patch", () => {
+  isolateStateRoot();
+  const repo = makeRepo();
+  const oldAllow = process.env.AGENT_COLLAB_ALLOW_NONWRITER;
+  delete process.env.AGENT_COLLAB_ALLOW_NONWRITER;
+  process.env.AGENT_COLLAB_CODEX_COMPANION = codexCompanionStub(`
+    import fs from 'node:fs';
+    fs.writeFileSync('codex-wrote.txt', 'hi from codex\\n');
+    const result = JSON.stringify({status:'completed',summary:'codex wrote a file',changed:true});
+    process.stdout.write(JSON.stringify({ status: 0, rawOutput: '\`\`\`json\\n' + result + '\\n\`\`\`' }));
+  `);
+
+  const res = runWorkerSync(repo, { driver: "claude", worker: "codex", role: "worker", brief: "make a file", maxAttempts: 1, noResume: true });
+
+  assert.equal(res.status, "completed");
+  assert.equal(res.valid, true);
+  assert.equal(res.artifact.summary, "codex wrote a file");
+
+  const diff = fs.readFileSync(path.join(res.artifactDir, "patches", "codex.diff"), "utf8");
+  assert.match(diff, /codex-wrote\.txt/);
+
+  delete process.env.AGENT_COLLAB_CODEX_COMPANION;
+  if (oldAllow === undefined) delete process.env.AGENT_COLLAB_ALLOW_NONWRITER;
+  else process.env.AGENT_COLLAB_ALLOW_NONWRITER = oldAllow;
 });
 
 test("runWorkerSync (worker) writes a valid result and a captured patch", () => {
@@ -388,6 +416,7 @@ test("runWithFallback skips non-writer fallback candidates for write roles", () 
   isolateStateRoot();
   const repo = makeRepo();
   const old = MODEL_PROFILES.agy.canWrite;
+  const oldAllow = process.env.AGENT_COLLAB_ALLOW_NONWRITER;
   MODEL_PROFILES.agy.canWrite = false;
   delete process.env.AGENT_COLLAB_ALLOW_NONWRITER;
   process.env.AGENT_COLLAB_AGY_BIN = stubBin(WRITE_STUB);
@@ -407,7 +436,8 @@ test("runWithFallback skips non-writer fallback candidates for write roles", () 
   assert.deepEqual(res.fellBackFrom.map((f) => f.worker), ["claude"]);
 
   MODEL_PROFILES.agy.canWrite = old;
-  process.env.AGENT_COLLAB_ALLOW_NONWRITER = "on";
+  if (oldAllow === undefined) delete process.env.AGENT_COLLAB_ALLOW_NONWRITER;
+  else process.env.AGENT_COLLAB_ALLOW_NONWRITER = oldAllow;
   delete process.env.AGENT_COLLAB_AGY_BIN;
   delete process.env.AGENT_COLLAB_CLAUDE_BIN;
 });

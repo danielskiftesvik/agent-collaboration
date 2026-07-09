@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.5.4 - 2026-07-09
+
+- Re-enable codex as a write-worker, keep it eligible in write-task routing, and document its slower/quiet-run caveats instead of treating it as reviewer-only.
+
 ## 0.5.3 - 2026-07-08
 
 - Keep non-exempt real-checkout writes as hard `breach` by default; ambiguous concurrent-edit downgrade now requires explicit opt-in.
