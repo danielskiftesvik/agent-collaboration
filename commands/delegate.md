@@ -27,4 +27,5 @@ node "${CLAUDE_PLUGIN_ROOT}/scripts/agent-companion.mjs" delegate $ARGUMENTS --d
 Then:
 - If the output has `"mode": "native"`, the requested worker is this same harness. Do NOT use the companion — instead spawn a native Claude Code subagent (the `Agent` tool) to do the work, as the instruction says.
 - Otherwise, report the returned `status`, `jobId`, and `artifactDir`. If `valid` is false, show the `errors` and do not apply.
+- If terminal output is empty or lost, do not retry yet. Recover with `status --latest --role <role> [--worker <name>]`, then read `result --latest` with the same filters.
 - To apply a successful worker patch to the working tree, run `/agent-collab:apply <jobId>` (or re-run with `--apply`). Review the patch first.

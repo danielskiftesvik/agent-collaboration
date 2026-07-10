@@ -15,7 +15,7 @@ import { renderSetup, renderJob, renderJobList, renderRecommendation, renderProf
 import { MODEL_PROFILES } from "../core/model-profiles.mjs";
 
 const VALUE_FLAGS = new Set(["worker", "workers", "role", "driver", "base", "timeout", "gate", "sandbox", "focus", "task", "job", "recent"]);
-const BOOL_FLAGS = new Set(["json", "apply", "wait", "background", "profiles", "no-fallback", "live", "active"]);
+const BOOL_FLAGS = new Set(["json", "apply", "wait", "background", "profiles", "no-fallback", "live", "active", "latest", "refresh"]);
 
 function parseArgs(tokens) {
   const options = {};
@@ -46,6 +46,22 @@ function renderDefault(json) {
 function fail(message) {
   process.stderr.write(message + "\n");
   process.exit(1);
+}
+
+function filterJobs(jobs, options) {
+  return jobs.filter((job) =>
+    (!options.worker || job.worker === options.worker) &&
+    (!options.role || job.role === options.role) &&
+    (!options.active || !isTerminalStatus(job.status))
+  );
+}
+
+function latestCreatedJob(jobs) {
+  return jobs.reduce(
+    (latest, job) =>
+      !latest || String(job.createdAt ?? "").localeCompare(String(latest.createdAt ?? "")) >= 0 ? job : latest,
+    null
+  );
 }
 
 const [subcommand, ...rest] = process.argv.slice(2);
@@ -173,15 +189,20 @@ switch (subcommand) {
 
   case "status": {
     const id = positionals[0];
-    if (id) {
+    if (id && options.latest) fail("status: pass a job id or --latest, not both");
+    if (id || options.latest) {
+      const selected = id ? getJob(cwd, id) : latestCreatedJob(filterJobs(listJobs(cwd), options));
+      if (!selected) fail(`status: ${id ? "unknown job" : "no matching jobs"}`);
       const job = options.wait
-        ? waitForJob(cwd, id, { timeoutMs: options.timeout ? Number(options.timeout) * 1000 : undefined })
-        : refreshJobStatus(cwd, id);
-      out(job ?? { error: "unknown job" }, options, renderJob(job));
+        ? waitForJob(cwd, selected.id, { timeoutMs: options.timeout ? Number(options.timeout) * 1000 : undefined })
+        : options.refresh
+          ? refreshJobStatus(cwd, selected.id)
+          : selected;
+      out(job, options, renderJob(job));
     } else {
-      let jobs = sortJobsNewestFirst(listJobs(cwd).map((j) => refreshJobStatus(cwd, j)));
-      if (options.active) jobs = jobs.filter((j) => !isTerminalStatus(j.status));
+      let jobs = sortJobsNewestFirst(filterJobs(listJobs(cwd), options));
       jobs = jobs.slice(0, options.recent ? Math.max(0, Number(options.recent) || 0) : 8);
+      if (options.refresh) jobs = jobs.map((job) => refreshJobStatus(cwd, job.id));
       out(jobs, options, renderJobList(jobs));
     }
     break;
@@ -189,9 +210,11 @@ switch (subcommand) {
 
   case "result": {
     const id = positionals[0];
-    if (!id) fail("result: a job id is required");
-    const job = refreshJobStatus(cwd, id);
-    if (!job) fail("result: unknown job");
+    if (id && options.latest) fail("result: pass a job id or --latest, not both");
+    if (!id && !options.latest) fail("result: a job id or --latest is required");
+    const selected = id ? getJob(cwd, id) : latestCreatedJob(filterJobs(listJobs(cwd), options));
+    if (!selected) fail(`result: ${id ? "unknown job" : "no matching jobs"}`);
+    const job = options.refresh ? refreshJobStatus(cwd, selected.id) : selected;
     const outputFile = path.join(job.artifactDir, "outputs", `${job.worker}.json`);
     const artifact = fs.existsSync(outputFile)
       ? JSON.parse(fs.readFileSync(outputFile, "utf8"))
@@ -262,8 +285,8 @@ switch (subcommand) {
         "  delegate --worker <name> [--driver <name>] [--role worker|reviewer] [--background] [--apply] [--timeout s] <brief>",
         "  review  --worker <name> [--driver <name>] [--focus <text>] [--background] <diff/context>",
         "  adversarial-review --worker <name> [--focus <text>] [--background] <diff/context>",
-        "  status [jobId] [--wait] [--timeout s] [--active] [--recent n] [--json]",
-        "  result <jobId> [--json]",
+        "  status [jobId|--latest] [--worker name] [--role role] [--refresh|--wait] [--timeout s] [--active] [--recent n] [--json]",
+        "  result <jobId|--latest> [--worker name] [--role role] [--refresh] [--json]",
         "  apply  <jobId>",
         "  cancel <jobId>"
       ].join("\n")

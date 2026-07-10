@@ -19,8 +19,8 @@ doctor [--live] [--workers a,b] [--json]
 delegate --worker <agy|codex|claude> [--driver <name>] [--role worker|reviewer] [--background] [--apply] [--timeout <s>] [--no-fallback] <brief>
 review  --worker <name> [--focus <text>] [--background] [--no-fallback] [--json] <diff/context>
 adversarial-review --worker <name> [--focus <text>] [--background] [--no-fallback] [--json] <diff/context>
-status [jobId] [--wait] [--timeout <s>] [--active] [--recent <n>] [--json]
-result <jobId> [--json]
+status [jobId|--latest] [--worker <name>] [--role <role>] [--refresh|--wait] [--timeout <s>] [--active] [--recent <n>] [--json]
+result <jobId|--latest> [--worker <name>] [--role <role>] [--refresh] [--json]
 apply  <jobId>
 cancel <jobId>
 ```
@@ -116,6 +116,12 @@ survives a driver crash. Then:
 - `result <jobId>` — the report + structured output once terminal.
 - `cancel <jobId>` — kills the detached worker's whole process group.
 
+Plain `status` and `result` calls are read-only and do not acquire the state write
+lock. Use `status --refresh` to update liveness or `status --wait` to block. If a
+sync caller loses its terminal envelope, recover by creation time with
+`status --latest --role reviewer [--worker claude]`, then run `result --latest`
+with the same filters. Check the recovered artifacts before launching a retry.
+
 Background runs a **single worker** (no auto-fallback — that's the synchronous path).
 This is the brokerless version of the reference's async model (no app-server broker).
 
@@ -209,15 +215,18 @@ Do **not** obfuscate the payload to slip past the check — it exists to gate th
 
 ## status vs result vs apply
 
-- `status <jobId>` → the **runtime's job metadata** (status, breach, escapedPaths,
-  attempts, failureKind, note, pid…). `--wait` blocks until terminal.
-- `result <jobId>` → the **worker's deliverable**: its report (`reports/<worker>.md`)
+- `status <jobId|--latest>` → the **runtime's job metadata** (status, breach,
+  escapedPaths, attempts, failureKind, note, pid…). `--latest` selects by
+  `createdAt`, optionally filtered by `--worker`/`--role`; `--refresh` updates
+  liveness and `--wait` blocks until terminal.
+- `result <jobId|--latest>` → the **worker's deliverable**: its report (`reports/<worker>.md`)
   + structured self-report (`outputs/<worker>.json`). Self-report can disagree with
   the runtime (e.g. worker claims `changed:true` but the runtime captured nothing →
-  `status` says `no-changes` with a `note`). Trust the runtime's captured state.
+  `status` says `no-changes` with a `note`). `result --json` remains the bare
+  structured artifact for compatibility. Trust the runtime's captured state.
 - `apply <jobId>` → lands the patch in the **working tree, unstaged** (clean index)
   so you inspect with `git diff` then commit; if you had pre-existing staged work it
-  stays **staged**. Never auto-applies.
+  stays **staged**. It never accepts `--latest`; never auto-applies.
 
 ## Rules
 

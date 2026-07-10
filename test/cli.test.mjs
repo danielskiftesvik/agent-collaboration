@@ -1,10 +1,12 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import fs from "node:fs";
+import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { makeRepo, isolateStateRoot, stubBin } from "./helpers.mjs";
 import { run } from "../core/process.mjs";
-import { appendJob } from "../core/state.mjs";
+import { appendJob, getJob, resolveStateDir, updateJob } from "../core/state.mjs";
 
 const CLI = fileURLToPath(new URL("../scripts/agent-companion.mjs", import.meta.url));
 
@@ -173,6 +175,104 @@ test("status supports --active and --recent filters", () => {
   const recent = cli(["status", "--recent", "1", "--json"], { cwd: repo, env: { AGENT_COLLAB_DATA: dataDir } });
   assert.equal(recent.status, 0, recent.stderr);
   assert.equal(JSON.parse(recent.stdout).length, 1);
+});
+
+test("status/result --latest recover by createdAt with worker and role filters", () => {
+  const dataDir = isolateStateRoot();
+  const repo = makeRepo();
+  const env = { AGENT_COLLAB_DATA: dataDir };
+  const addReview = ({ id, worker, role = "reviewer", createdAt, summary }) => {
+    const artifactDir = path.join(dataDir, "artifacts", id);
+    fs.mkdirSync(path.join(artifactDir, "outputs"), { recursive: true });
+    fs.mkdirSync(path.join(artifactDir, "reports"), { recursive: true });
+    fs.writeFileSync(path.join(artifactDir, "outputs", `${worker}.json`), JSON.stringify({ verdict: "approve", summary, findings: [] }));
+    fs.writeFileSync(path.join(artifactDir, "reports", `${worker}.md`), summary);
+    appendJob(repo, { id, worker, role, driver: "codex", status: "completed", artifactDir, createdAt, updatedAt: createdAt });
+  };
+
+  addReview({ id: "old-claude", worker: "claude", createdAt: "2026-07-10T08:00:00.000Z", summary: "old" });
+  addReview({ id: "new-claude", worker: "claude", createdAt: "2026-07-10T09:00:00.000Z", summary: "new" });
+  addReview({ id: "newer-agy", worker: "agy", createdAt: "2026-07-10T10:00:00.000Z", summary: "agy" });
+  updateJob(repo, "old-claude", { note: "updated later" });
+
+  const status = cli(["status", "--latest", "--worker", "claude", "--role", "reviewer", "--json"], { cwd: repo, env });
+  assert.equal(status.status, 0, status.stderr);
+  assert.equal(JSON.parse(status.stdout).id, "new-claude", "updatedAt must not make an old job latest");
+
+  const result = cli(["result", "--latest", "--worker", "claude", "--role", "reviewer", "--json"], { cwd: repo, env });
+  assert.equal(result.status, 0, result.stderr);
+  assert.deepEqual(JSON.parse(result.stdout), { verdict: "approve", summary: "new", findings: [] });
+});
+
+test("status and result are lock-free reads; --refresh explicitly updates liveness", () => {
+  const dataDir = isolateStateRoot();
+  const repo = makeRepo();
+  const artifactDir = path.join(dataDir, "artifacts", "dead");
+  fs.mkdirSync(path.join(artifactDir, "outputs"), { recursive: true });
+  fs.mkdirSync(path.join(artifactDir, "reports"), { recursive: true });
+  fs.writeFileSync(path.join(artifactDir, "outputs", "claude.json"), JSON.stringify({ verdict: "approve", summary: "saved", findings: [] }));
+  fs.writeFileSync(path.join(artifactDir, "reports", "claude.md"), "saved");
+  appendJob(repo, {
+    id: "dead",
+    worker: "claude",
+    role: "reviewer",
+    driver: "codex",
+    status: "running",
+    pid: 2147483600,
+    artifactDir
+  });
+  const env = { AGENT_COLLAB_DATA: dataDir, AGENT_COLLAB_LOCK_TIMEOUT_MS: "30" };
+  const lock = path.join(resolveStateDir(repo), ".lock");
+  fs.writeFileSync(lock, "held");
+
+  const status = cli(["status", "dead", "--json"], { cwd: repo, env });
+  assert.equal(status.status, 0, status.stderr);
+  assert.equal(JSON.parse(status.stdout).status, "running");
+  const result = cli(["result", "--latest", "--worker", "claude", "--json"], { cwd: repo, env });
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(JSON.parse(result.stdout).summary, "saved");
+  assert.equal(getJob(repo, "dead").status, "running", "read-only commands must not reap jobs");
+
+  fs.unlinkSync(lock);
+  const refreshed = cli(["status", "dead", "--refresh", "--json"], { cwd: repo, env });
+  assert.equal(refreshed.status, 0, refreshed.stderr);
+  assert.equal(JSON.parse(refreshed.stdout).failureKind, "stalled");
+});
+
+test("status --refresh only refreshes jobs selected by --recent", () => {
+  const dataDir = isolateStateRoot();
+  const repo = makeRepo();
+  const base = { worker: "claude", role: "reviewer", driver: "codex", artifactDir: dataDir };
+  appendJob(repo, {
+    ...base,
+    id: "old-running",
+    status: "running",
+    pid: 2147483600,
+    createdAt: "2026-07-10T08:00:00.000Z",
+    updatedAt: "2026-07-10T08:00:00.000Z"
+  });
+  appendJob(repo, {
+    ...base,
+    id: "new-completed",
+    status: "completed",
+    createdAt: "2026-07-10T09:00:00.000Z",
+    updatedAt: "2026-07-10T09:00:00.000Z"
+  });
+
+  const r = cli(["status", "--recent", "1", "--refresh", "--json"], {
+    cwd: repo,
+    env: { AGENT_COLLAB_DATA: dataDir }
+  });
+  assert.equal(r.status, 0, r.stderr);
+  assert.deepEqual(JSON.parse(r.stdout).map((job) => job.id), ["new-completed"]);
+  assert.equal(getJob(repo, "old-running").status, "running");
+});
+
+test("apply never accepts --latest", () => {
+  const repo = makeRepo();
+  const r = cli(["apply", "--latest", "--json"], { cwd: repo, env: { AGENT_COLLAB_DATA: isolateStateRoot() } });
+  assert.equal(r.status, 1);
+  assert.match(r.stderr, /job id is required/i);
 });
 
 test("delegate cross-harness reviewer runs and result prints the artifact", () => {

@@ -49,3 +49,6 @@ node scripts/agent-companion.mjs apply <jobId>
 1. The driver harness holds the authority of the main branch.
 2. The worker harness only produces artifact files (patch, report, results).
 3. Do not apply patches automatically without checking their contents.
+4. Empty or lost companion output is not a failed review. Recover with
+   `status --latest --role reviewer [--worker <name>]`, read `result --latest`
+   with the same filters, and inspect the saved report before retrying.

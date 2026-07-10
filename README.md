@@ -80,8 +80,8 @@ Two delegation paths, chosen automatically:
 | `/agent-collab:delegate --worker <agy\|claude\|codex> [--background] [--apply] <brief>` | Run a cross-harness **worker** task (produces a patch); `--background` detaches and returns a jobId |
 | `/agent-collab:review --worker <name> [--focus <text>] <diff>` | Read-only cross-harness **review** |
 | `/agent-collab:adversarial-review --worker <name> <diff>` | "Try to break it" review |
-| `/agent-collab:status [jobId] [--wait] [--active] [--recent n]` | List / inspect jobs; `--wait` blocks until a job finishes |
-| `/agent-collab:result <jobId>` | Show a job's report + structured output |
+| `/agent-collab:status [jobId\|--latest] [--worker name] [--role role] [--refresh\|--wait] [--active] [--recent n]` | List / inspect jobs; reads are lock-free unless explicitly refreshed or waited |
+| `/agent-collab:result <jobId\|--latest> [--worker name] [--role role]` | Show a job's report + structured output without mutating state |
 | `/agent-collab:apply <jobId>` | Apply a worker's patch (3-way) to the working tree |
 | `/agent-collab:cancel <jobId>` | Cancel a running job |
 
@@ -130,6 +130,9 @@ driver, `AGENTS.md` for Codex/agy drivers).
 - **Diagnostics:** every attempt persists raw stdout/stderr plus redacted command
   metadata in `artifactDir/logs/`. `version --json` reports the runtime path and
   state dir, and `status --active` / `status --recent <n>` keep current jobs visible.
+  If a caller loses the terminal envelope, recover it with
+  `status --latest --role reviewer [--worker claude]`, then read the deliverable with
+  `result --latest` using the same filters. Do this before retrying a review.
 - **Review provenance:** review jobs record `reviewContext` (`baseRef`, dirty paths
   at launch, and whether the supplied diff was staged into the reviewer worktree)
   so you can prove what code the reviewer saw.

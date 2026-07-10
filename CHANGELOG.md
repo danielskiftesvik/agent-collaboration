@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.5.6 - 2026-07-10
+
+- Recover lost collaboration envelopes with lock-free `status/result --latest`, filterable by worker and role.
+- Make status/result reads non-mutating by default; liveness updates now require `--refresh` or `--wait` and only touch selected jobs.
+- Require artifact-first recovery in the collaboration skills before retrying a quiet or apparently blank review.
+
 ## 0.5.5 - 2026-07-09
 
 - Persist per-attempt stdout/stderr and redacted command metadata, expose runtime/state paths, and add active/recent status filters for quieter Codex-driven Claude collaboration.

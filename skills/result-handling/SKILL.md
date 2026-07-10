@@ -51,6 +51,23 @@ from a review is forbidden, even when the fix looks obvious.
 
 ## Failures and edge cases
 
+### Artifact recovery before retry
+
+Empty companion stdout, `no-changes`, a non-zero wrapper exit, or invalid structured
+output is not evidence that the worker failed. Before retrying or declaring a review
+unavailable:
+
+1. Run `status --latest --role reviewer [--worker <expected>]` to recover the job id,
+   actual worker, artifact directory, and logs. Latest is selected by `createdAt`;
+   narrow it when concurrent jobs may exist.
+2. Run `result --latest --role reviewer [--worker <actual>]` with the same filters.
+3. Read `reports/<actual-worker>.md`, then `outputs/<actual-worker>.json`, then
+   `logs/run.jsonl` and the worker stdout/stderr logs.
+
+Plain `status`/`result` are lock-free reads. Never launch a duplicate job until this
+artifact check is complete. For read-only reviews, the saved report is authoritative
+even when no patch exists. `apply` still requires an explicit job id.
+
 - If the run **failed or returned invalid output**, surface the worker's actual
   output and the most actionable stderr lines. Do **not** fabricate a result.
 - If a reviewer run is `completed` with `resultValid:false` and `report:true`, the
