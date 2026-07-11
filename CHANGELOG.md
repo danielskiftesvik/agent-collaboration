@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.6.1 - 2026-07-11
+
+- Fix: `review --workers a,b` (dual review) was unreachable — the `--worker`-required guard fired first. Found by the first live dual-review run; the guard now accepts `--workers`, the native-route shortcut applies only to a single named worker, and dual mode rejects `--background` explicitly.
+
 ## 0.6.0 - 2026-07-11
 
 - Named pin profiles: `.agent-collab.json` gains a `profiles` section; select per dispatch with `--profile <name>` on delegate/review/adversarial-review (precedence: env > profile > standing pin > harness default; unknown profiles warn and fall back, never silently).
