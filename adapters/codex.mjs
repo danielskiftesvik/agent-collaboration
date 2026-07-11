@@ -7,26 +7,27 @@ import path from "node:path";
 
 import { defineAdapter } from "./contract.mjs";
 import { extractJson } from "../core/schema.mjs";
+import { resolvePin } from "../core/pins.mjs";
 
-// Per-dispatch model/effort overrides. The base ~/.codex/config.toml remains the
-// default instrument; these envs let a driver escalate a single dispatch (e.g. a
-// boundary review on Sol while the base stays Terra) without hand-editing the
-// user's config. Precedence: the explicit generic var wins (the "this dispatch"
-// lever), then the role-scoped var (a standing default for that role), else no
-// flag at all — unset preserves prior behavior (base config governs).
-function codexModel(role) {
+// Model/effort resolution. Precedence: the explicit generic env wins (the "this
+// dispatch" escalation lever), then the role-scoped env (a standing default for
+// that role), then the repo's tracked `.agent-collab.json` pin (the standing
+// instrument, identical for every driver harness — see core/pins.mjs), else no
+// flag at all — the user's ~/.codex/config.toml governs (which the codex TUI
+// rewrites with the last interactively-used model, so it is drift, not doctrine).
+function codexModel(role, workspace) {
   return (
     process.env.AGENT_COLLAB_CODEX_MODEL ||
     (role === "reviewer" ? process.env.AGENT_COLLAB_CODEX_MODEL_REVIEW : null) ||
-    null
+    resolvePin("codex", role, workspace).model
   );
 }
 
-function codexEffort(role) {
+function codexEffort(role, workspace) {
   return (
     process.env.AGENT_COLLAB_CODEX_EFFORT ||
     (role === "reviewer" ? process.env.AGENT_COLLAB_CODEX_EFFORT_REVIEW : null) ||
-    null
+    resolvePin("codex", role, workspace).effort
   );
 }
 
@@ -50,13 +51,13 @@ export default defineAdapter({
   name: "codex",
   supportsStructuredOutput: true,
   background: true,
-  buildCommand({ role, brief }) {
+  buildCommand({ role, brief, workspace }) {
     const companion = resolveCompanion();
     const args = [companion, "task", "--json"];
     if (role !== "reviewer") args.push("--write");
-    const model = codexModel(role);
+    const model = codexModel(role, workspace);
     if (model) args.push("--model", model);
-    const effort = codexEffort(role);
+    const effort = codexEffort(role, workspace);
     if (effort) args.push("--effort", effort);
     args.push(brief);
     return { command: process.execPath, args };

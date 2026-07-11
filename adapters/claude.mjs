@@ -3,9 +3,15 @@
 // workers may edit via `--permission-mode acceptEdits`.
 import { defineAdapter } from "./contract.mjs";
 import { run } from "../core/process.mjs";
+import { resolvePin } from "../core/pins.mjs";
 
 const bin = () => process.env.AGENT_COLLAB_CLAUDE_BIN || "claude";
-const model = () => process.env.AGENT_COLLAB_CLAUDE_MODEL || "default";
+// Env wins (per-dispatch lever) > repo `.agent-collab.json` role pin > "default"
+// (Claude Code's account-tier recommendation). See core/pins.mjs.
+const model = (role, workspace) =>
+  process.env.AGENT_COLLAB_CLAUDE_MODEL ||
+  resolvePin("claude", role, workspace).model ||
+  "default";
 
 export default defineAdapter({
   name: "claude",
@@ -15,7 +21,7 @@ export default defineAdapter({
     // long implementation emits a continuous stdout heartbeat — otherwise the
     // idle watchdog can't tell "working" from "frozen" (claude is silent until
     // done in plain --output-format json). stream-json needs --verbose headless.
-    const args = ["-p", brief, "--output-format", "stream-json", "--verbose", "--model", model()];
+    const args = ["-p", brief, "--output-format", "stream-json", "--verbose", "--model", model(role, workspace)];
     args.push("--permission-mode", role === "reviewer" ? "plan" : "acceptEdits");
     if (workspace) args.push("--add-dir", workspace);
     return { command: bin(), args };

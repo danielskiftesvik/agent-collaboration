@@ -6,6 +6,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { defineAdapter } from "./contract.mjs";
 import { run } from "../core/process.mjs";
+import { resolvePin } from "../core/pins.mjs";
 
 const bin = () => process.env.AGENT_COLLAB_AGY_BIN || "agy";
 
@@ -46,12 +47,18 @@ function listModels() {
  * bare default is a *shared* setting a separate agy session can change.
  *
  * Overrides: AGENT_COLLAB_AGY_MODEL = an exact label (wins); or
- * AGENT_COLLAB_AGY_CLASS = "Pro" (or any class) to pin the latest in that class.
+ * AGENT_COLLAB_AGY_CLASS = "Pro" (or any class) to pin the latest in that class;
+ * then the repo's tracked `.agent-collab.json` role pin (exact label — see
+ * core/pins.mjs); then the Flash default.
  */
-function resolveModel() {
+function resolveModel(role, workspace) {
   if (process.env.AGENT_COLLAB_AGY_MODEL) return process.env.AGENT_COLLAB_AGY_MODEL;
-  const klass = process.env.AGENT_COLLAB_AGY_CLASS || "Flash";
-  return pickLatestModel(listModels(), klass) || null;
+  if (process.env.AGENT_COLLAB_AGY_CLASS) {
+    return pickLatestModel(listModels(), process.env.AGENT_COLLAB_AGY_CLASS) || null;
+  }
+  const pinned = resolvePin("agy", role, workspace).model;
+  if (pinned) return pinned;
+  return pickLatestModel(listModels(), "Flash") || null;
 }
 
 export default defineAdapter({
@@ -69,7 +76,7 @@ export default defineAdapter({
     // resolveModel), before -p. Robust against the shared default being changed
     // externally; force a class with AGENT_COLLAB_AGY_CLASS=Pro or pin an exact
     // label with AGENT_COLLAB_AGY_MODEL.
-    const model = resolveModel();
+    const model = resolveModel(role, workspace);
     if (model) args.push("--model", model);
 
     if (workspace) {

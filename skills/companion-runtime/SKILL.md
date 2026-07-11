@@ -186,6 +186,27 @@ read `tasks/<jobId>/reports/<worker>.md`.
 - `AGENT_COLLAB_ALLOW_INPLACE=on` — allow an UNISOLATED in-place run when a worktree can't be created (off by default → such a job is `blocked`, never run in the real cwd).
 - `AGENT_COLLAB_<AGY|CLAUDE|CODEX>_BIN` — override a harness binary.
 - `AGENT_COLLAB_AGY_MODEL[_PRO|_FLASH]` — explicit agy model id (default: unset).
+
+## Repo-level model pins (`.agent-collab.json`)
+
+A tracked file at the repo root pins standing models per worker+role, readable by EVERY
+driver harness (claude/codex/agy shells) — unlike env vars, it can't drift with interactive
+sessions (the codex TUI rewrites `~/.codex/config.toml` with the last-used model) and it
+version-controls the pinned reviewer instrument with the repo:
+
+```json
+{
+  "workers": {
+    "codex":  { "reviewer": { "model": "gpt-5.6-terra", "effort": "high" } },
+    "claude": { "worker":   { "model": "sonnet" } }
+  }
+}
+```
+
+Precedence per dispatch: **env vars win** (the per-dispatch escalation lever — e.g.
+`AGENT_COLLAB_CODEX_MODEL=gpt-5.6-sol` for one boundary review), then the file's role pin,
+then the adapter default / harness base config. Roles: `reviewer` | `worker`. A malformed
+file logs a warning and behaves as unpinned (never silently changes the instrument).
 - `AGENT_COLLAB_CODEX_MODEL` / `AGENT_COLLAB_CODEX_EFFORT` — per-dispatch codex model/effort (passed as `--model`/`--effort` to codex-companion). Role-scoped defaults: `AGENT_COLLAB_CODEX_MODEL_REVIEW` / `AGENT_COLLAB_CODEX_EFFORT_REVIEW` apply to reviewers only; the generic var wins when both are set. Unset = no flags, the user's `~/.codex/config.toml` governs (prior behavior). Not re-pinned on thread-resume repair.
 
 ## Driving from a sandboxed harness
