@@ -294,3 +294,25 @@ test("delegate cross-harness reviewer runs and result prints the artifact", () =
   const artifact = JSON.parse(got.stdout);
   assert.equal(artifact.verdict, "approve");
 });
+
+test("review --workers a,b reaches the dual branch (no --worker required)", () => {
+  const dataDir = isolateStateRoot();
+  const repo = makeRepo();
+  // Bogus harness names: the dual branch must be REACHED (failing later on
+  // "unknown adapter"), not rejected up front with "--worker <name> is required".
+  const r = cli(["review", "--workers", "nopeA,nopeB", "--driver", "claude", "--json", "some diff"], {
+    cwd: repo,
+    env: { AGENT_COLLAB_DATA: dataDir }
+  });
+  assert.ok(!/--worker <name> is required/.test(r.stderr), r.stderr);
+  assert.match(r.stderr + r.stdout, /unknown adapter/i, "dual branch dispatched to the (bogus) workers");
+});
+
+test("review --workers rejects --background and single-entry lists explicitly", () => {
+  const dataDir = isolateStateRoot();
+  const repo = makeRepo();
+  const bg = cli(["review", "--workers", "codex,agy", "--background", "--json", "x"], { cwd: repo, env: { AGENT_COLLAB_DATA: dataDir } });
+  assert.match(bg.stderr, /does not support --background/);
+  const one = cli(["review", "--workers", "codex", "--json", "x"], { cwd: repo, env: { AGENT_COLLAB_DATA: dataDir } });
+  assert.match(one.stderr, /needs >=2/);
+});

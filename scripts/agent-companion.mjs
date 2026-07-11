@@ -102,7 +102,10 @@ switch (subcommand) {
   case "adversarial-review": {
     const { driver, source: driverSource } = resolveDriver(options);
     const worker = options.worker;
-    if (!worker) fail(`${subcommand}: --worker <name> is required`);
+    // Dual review (`--workers a,b`) has no single --worker; delegate still requires one.
+    if (!worker && !(options.workers && subcommand !== "delegate")) {
+      fail(`${subcommand}: --worker <name> is required (or --workers a,b for dual review)`);
+    }
     const role = options.role || (subcommand === "delegate" ? "worker" : "reviewer");
     const kind = subcommand === "delegate" ? undefined : subcommand; // review | adversarial-review
     const brief = positionals.join(" ");
@@ -112,8 +115,8 @@ switch (subcommand) {
     // known (explicit --driver or AGENT_COLLAB_DRIVER). A guessed/fallback driver
     // must never turn a real cross-harness delegation into a "use your own
     // subagent" no-op — the Codex/agy raw-CLI footgun.
-    const route = decideRoute({ driver, worker });
-    if (route.mode === "native" && isAuthoritativeDriver(driverSource)) {
+    const route = worker ? decideRoute({ driver, worker }) : null;
+    if (route && route.mode === "native" && isAuthoritativeDriver(driverSource)) {
       out({ mode: "native", harness: route.harness, instruction: route.instruction }, options);
       break;
     }
@@ -126,6 +129,7 @@ switch (subcommand) {
     // cross-family diversity dual review exists for), then merges the artifacts:
     // agreements deduped, unique findings tagged per reviewer, worst-of verdict.
     if (options.workers && kind) {
+      if (options.background) fail(`${subcommand}: --workers (dual review) does not support --background — legs run synchronously`);
       const workers = String(options.workers).split(",").map((s) => s.trim()).filter(Boolean);
       if (workers.length < 2) fail(`${subcommand}: --workers needs >=2 comma-separated harnesses`);
       const legs = workers.map((w) => ({
