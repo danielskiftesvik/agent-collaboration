@@ -16,9 +16,9 @@ generalization of codex-plugin-cc's `codex-cli-runtime` skill.
 ```
 setup [--json] [--gate on|off] [--sandbox on|off]
 doctor [--live] [--workers a,b] [--json]
-delegate --worker <agy|codex|claude> [--driver <name>] [--role worker|reviewer] [--background] [--apply] [--timeout <s>] [--no-fallback] <brief>
-review  --worker <name> [--focus <text>] [--background] [--no-fallback] [--json] <diff/context>
-adversarial-review --worker <name> [--focus <text>] [--background] [--no-fallback] [--json] <diff/context>
+delegate --worker <agy|codex|claude> [--driver <name>] [--role worker|reviewer] [--profile <name>] [--background] [--apply] [--timeout <s>] [--no-fallback] <brief>
+review  --worker <name> | --workers a,b [--focus <text>] [--profile <name>] [--background] [--no-fallback] [--json] <diff/context>
+adversarial-review --worker <name> | --workers a,b [--focus <text>] [--profile <name>] [--background] [--no-fallback] [--json] <diff/context>
 status [jobId|--latest] [--worker <name>] [--role <role>] [--refresh|--wait] [--timeout <s>] [--active] [--recent <n>] [--json]
 result <jobId|--latest> [--worker <name>] [--role <role>] [--refresh] [--json]
 apply  <jobId>
@@ -207,6 +207,14 @@ Precedence per dispatch: **env vars win** (the per-dispatch escalation lever —
 `AGENT_COLLAB_CODEX_MODEL=gpt-5.6-sol` for one boundary review), then the file's role pin,
 then the adapter default / harness base config. Roles: `reviewer` | `worker`. A malformed
 file logs a warning and behaves as unpinned (never silently changes the instrument).
+
+**Profiles** (`pins.profiles.<name>.<worker>`) are named escalation rungs selected per dispatch
+with `--profile <name>` (precedence: env > profile > standing pin > harness default; a missing
+profile warns and falls back — never silently). **Dual review**: `--workers a,b` on
+review/adversarial-review runs each reviewer sequentially without per-leg fallback and returns
+`{dual, legs[], merged}` — merged findings carry `workers[]` + `agreement`, severity mismatches
+are flagged, verdict is worst-of. Read failed legs from `merged.failedLegs`; the surviving leg's
+report is still valid on its own.
 - `AGENT_COLLAB_CODEX_MODEL` / `AGENT_COLLAB_CODEX_EFFORT` — per-dispatch codex model/effort (passed as `--model`/`--effort` to codex-companion). Role-scoped defaults: `AGENT_COLLAB_CODEX_MODEL_REVIEW` / `AGENT_COLLAB_CODEX_EFFORT_REVIEW` apply to reviewers only; the generic var wins when both are set. Unset = no flags, the user's `~/.codex/config.toml` governs (prior behavior). Not re-pinned on thread-resume repair.
 
 ## Driving from a sandboxed harness

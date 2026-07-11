@@ -367,7 +367,7 @@ function readProgress(progressFile) {
  * here (only the driver applies). Returns a summary including the artifact.
  */
 export function runWorkerSync(cwd, opts) {
-  const { driver, worker, role = "worker", brief, kind, focus, targetLabel, timeoutMs = defaultTimeoutMs(), idleMs = MODEL_PROFILES[worker]?.idleMsOverride ?? defaultIdleMs(), maxAttempts = 2, noResume = false } = opts;
+  const { driver, worker, role = "worker", brief, kind, focus, targetLabel, profile, timeoutMs = defaultTimeoutMs(), idleMs = MODEL_PROFILES[worker]?.idleMsOverride ?? defaultIdleMs(), maxAttempts = 2, noResume = false } = opts;
   const adapter = getAdapter(worker);
   const schema = role === "reviewer" ? reviewSchema : resultSchema;
 
@@ -604,7 +604,7 @@ export function runWorkerSync(cwd, opts) {
     let proc;
     let cmd;
     if (attempts === 1) {
-      cmd = adapter.buildCommand({ role, brief: basePrompt, workspace, timeoutMs });
+      cmd = adapter.buildCommand({ role, brief: basePrompt, workspace, timeoutMs, profile });
       proc = execGuarded(cmd);
     } else {
       // Repair attempt: prefer RESUMING the worker's thread (cheap continuation,
@@ -620,11 +620,11 @@ export function runWorkerSync(cwd, opts) {
         cmd = retryCmd;
         proc = execGuarded(cmd);
         if (adapter.isResumeMiss && adapter.isResumeMiss(proc)) {
-          cmd = adapter.buildCommand({ role, brief: freshRepair, workspace, timeoutMs });
+          cmd = adapter.buildCommand({ role, brief: freshRepair, workspace, timeoutMs, profile });
           proc = execGuarded(cmd);
         }
       } else {
-        cmd = adapter.buildCommand({ role, brief: freshRepair, workspace, timeoutMs });
+        cmd = adapter.buildCommand({ role, brief: freshRepair, workspace, timeoutMs, profile });
         proc = execGuarded(cmd);
       }
     }
@@ -960,7 +960,7 @@ const COMPANION = fileURLToPath(new URL("../scripts/agent-companion.mjs", import
  * stays a synchronous-path convenience).
  */
 export function launchBackground(cwd, opts) {
-  const { driver, worker, role = "worker", brief, kind, focus, targetLabel, timeoutMs, maxAttempts } = opts;
+  const { driver, worker, role = "worker", brief, kind, focus, targetLabel, profile, timeoutMs, maxAttempts } = opts;
   const jobId = randomUUID();
   const artifactDir = path.join(resolveStateDir(cwd), "tasks", jobId);
   ensureDirs(artifactDir, role);
@@ -983,7 +983,7 @@ export function launchBackground(cwd, opts) {
     status: "queued",
     background: true,
     artifactDir,
-    request: { driver, worker, role, brief, kind, focus, targetLabel, timeoutMs, maxAttempts, breachHeadBefore, breachBefore },
+    request: { driver, worker, role, brief, kind, focus, targetLabel, profile, timeoutMs, maxAttempts, breachHeadBefore, breachBefore },
     heartbeatAt: new Date().toISOString()
   });
 

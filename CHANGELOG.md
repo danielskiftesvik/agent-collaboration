@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.6.0 - 2026-07-11
+
+- Named pin profiles: `.agent-collab.json` gains a `profiles` section; select per dispatch with `--profile <name>` on delegate/review/adversarial-review (precedence: env > profile > standing pin > harness default; unknown profiles warn and fall back, never silently).
+- Dual cross-family review: `--workers a,b` fans one brief to multiple reviewers (sequential, no per-leg fallback) and merges artifacts — agreements deduped with `workers[]`/`agreement` tags, severity disagreements flagged, worst-of verdict, failed legs reported.
+
 ## 0.5.8 - 2026-07-11
 
 - Repo-level standing model pins: tracked `.agent-collab.json` (per worker+role) now feeds codex (model+effort), claude, and agy model resolution below the env levers and above adapter defaults — the pinned reviewer instrument survives interactive sessions rewriting harness base configs and applies identically from every driver harness. Malformed pin files warn and behave as unpinned.

@@ -221,6 +221,29 @@ AGENT_COLLAB_CODEX_MODEL     tracked in your repo                 e.g. ~/.codex/
   to the harness's own default.
 - A malformed file logs a warning and behaves as unpinned; it never silently changes models.
 
+**Named profiles — declarative escalation.** Add a `"profiles"` section for the escalation
+rungs your process ladder needs, then select one per dispatch with `--profile <name>`:
+
+```json
+{
+  "workers":  { "codex": { "reviewer": { "model": "gpt-5.6-terra", "effort": "high" } } },
+  "profiles": { "deep":  { "codex": { "model": "gpt-5.6-sol",  "effort": "xhigh" } } }
+}
+```
+
+`review --worker codex --profile deep …` runs the deep rung; no `--profile` runs the standing
+pin. Precedence: env > profile > standing pin > harness default. A `--profile` that doesn't
+exist for the chosen worker WARNS and falls back to the standing pin — escalation never fails
+silently.
+
+**Dual review — two families, one report.** `review --workers codex,agy …` (also
+`adversarial-review`) fans the same brief out to each reviewer (sequentially, no auto-fallback
+per leg — a fallback could collapse the family diversity dual review exists for) and merges the
+artifacts: findings both reviewers raised are deduped and tagged `agreement: true` (severity
+mismatches flagged, more severe copy wins), single-reviewer findings stay tagged with their
+source, and the verdict is worst-of. Cross-model reviewers typically agree on only a minority
+of findings — the disagreements are the value, so nothing is dropped.
+
 ## Configuration
 
 | Env var | Effect |

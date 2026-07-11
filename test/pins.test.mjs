@@ -104,3 +104,27 @@ test("agy buildCommand uses the repo pin label when env levers are unset", () =>
   assert.equal(args[args.indexOf("--model") + 1], "Gemini 3.1 Pro (Low)");
   clearEnv();
 });
+
+test("profile pin beats role pin; env beats profile; missing profile warns and falls back", () => {
+  _clearPinCache();
+  clearEnv();
+  process.env.AGENT_COLLAB_CODEX_COMPANION = "/stub/codex-companion.mjs";
+  const dir = repoWith({
+    workers: { codex: { reviewer: { model: "gpt-5.6-terra", effort: "high" } } },
+    profiles: { deep: { codex: { model: "gpt-5.6-sol", effort: "xhigh" } } }
+  });
+  // profile wins over the standing role pin
+  const deep = getAdapter("codex").buildCommand({ role: "reviewer", brief: "x", workspace: dir, profile: "deep" });
+  assert.equal(deep.args[deep.args.indexOf("--model") + 1], "gpt-5.6-sol");
+  assert.equal(deep.args[deep.args.indexOf("--effort") + 1], "xhigh");
+  // env wins over the profile
+  process.env.AGENT_COLLAB_CODEX_MODEL = "gpt-5.5";
+  const env = getAdapter("codex").buildCommand({ role: "reviewer", brief: "x", workspace: dir, profile: "deep" });
+  assert.equal(env.args[env.args.indexOf("--model") + 1], "gpt-5.5");
+  delete process.env.AGENT_COLLAB_CODEX_MODEL;
+  // unknown profile falls back to the standing pin (and warns on stderr)
+  const missing = getAdapter("codex").buildCommand({ role: "reviewer", brief: "x", workspace: dir, profile: "nope" });
+  assert.equal(missing.args[missing.args.indexOf("--model") + 1], "gpt-5.6-terra");
+  clearEnv();
+  delete process.env.AGENT_COLLAB_CODEX_COMPANION;
+});

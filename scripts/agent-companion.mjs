@@ -8,6 +8,7 @@ import { fileURLToPath } from "node:url";
 
 import { decideRoute, resolveDriver, isAuthoritativeDriver, runSetup, runWorkerSync, runWithFallback, resolveFallbackKinds, launchBackground, runJob, waitForJob, refreshJobStatus, applyResult, recommendWorker } from "../core/dispatch.mjs";
 import { runDoctor } from "../core/doctor.mjs";
+import { mergeReviews } from "../core/merge-reviews.mjs";
 import { version } from "../core/version.mjs";
 import { listJobs, getJob, updateJob, sortJobsNewestFirst, loadState, saveState, resolveStateDir, isTerminalStatus } from "../core/state.mjs";
 import { isPidAlive } from "../core/heartbeat.mjs";
@@ -118,12 +119,43 @@ switch (subcommand) {
     }
 
     const timeoutMs = options.timeout ? Number(options.timeout) * 1000 : undefined;
+    const profile = options.profile;
+
+    // Dual/multi review: `--workers a,b` fans the SAME brief out to each worker
+    // (sequentially; NO auto-fallback per leg — a fallback could collapse the
+    // cross-family diversity dual review exists for), then merges the artifacts:
+    // agreements deduped, unique findings tagged per reviewer, worst-of verdict.
+    if (options.workers && kind) {
+      const workers = String(options.workers).split(",").map((s) => s.trim()).filter(Boolean);
+      if (workers.length < 2) fail(`${subcommand}: --workers needs >=2 comma-separated harnesses`);
+      const legs = workers.map((w) => ({
+        worker: w,
+        result: runWithFallback(cwd, {
+          driver, worker: w, role, brief, kind, focus: options.focus, timeoutMs, profile,
+          fallbackKinds: new Set()
+        })
+      }));
+      const merged = mergeReviews(legs);
+      const res = {
+        dual: true,
+        workers,
+        legs: legs.map((l) => ({
+          jobId: l.result.jobId, worker: l.result.worker, status: l.result.status,
+          resultValid: l.result.resultValid, artifactDir: l.result.artifactDir
+        })),
+        merged
+      };
+      out(res, options,
+        `dual review — ${merged.verdict}\n${merged.summary}\n` +
+        legs.map((l) => `  ${l.worker}: ${l.result.status} — ${l.result.jobId}`).join("\n"));
+      break;
+    }
 
     // Async path: spawn a detached worker and return immediately. Poll with
     // `status <jobId> --wait`, read with `result`, stop with `cancel`. Single
     // worker (no auto-fallback — that's the synchronous path).
     if (options.background) {
-      const res = launchBackground(cwd, { driver, worker, role, brief, kind, focus: options.focus, timeoutMs });
+      const res = launchBackground(cwd, { driver, worker, role, brief, kind, focus: options.focus, timeoutMs, profile });
       out(res, options, `${res.status} (background) — ${res.worker} — ${res.jobId}\nPoll: status ${res.jobId} --wait`);
       break;
     }
@@ -132,7 +164,7 @@ switch (subcommand) {
     // (rate-limit, timeout); auth surfaces. Tune via AGENT_COLLAB_FALLBACK
     // (off|on|comma-list); --no-fallback forces a single worker.
     const fallbackKinds = options["no-fallback"] ? new Set() : resolveFallbackKinds();
-    const res = runWithFallback(cwd, { driver, worker, role, brief, kind, focus: options.focus, timeoutMs, fallbackKinds });
+    const res = runWithFallback(cwd, { driver, worker, role, brief, kind, focus: options.focus, timeoutMs, profile, fallbackKinds });
     if (options.apply && res.status === "completed" && role === "worker") {
       res.applied = applyResult(cwd, res.jobId);
     }
@@ -283,8 +315,8 @@ switch (subcommand) {
         "  doctor [--live] [--workers a,b] [--json]   self-check (config + readiness; --live runs review+isolation smoke)",
         "  recommend --task <type> [--driver <name>] [--json]   |   recommend --profiles",
         "  delegate --worker <name> [--driver <name>] [--role worker|reviewer] [--background] [--apply] [--timeout s] <brief>",
-        "  review  --worker <name> [--driver <name>] [--focus <text>] [--background] <diff/context>",
-        "  adversarial-review --worker <name> [--focus <text>] [--background] <diff/context>",
+        "  review  --worker <name> | --workers a,b [--driver <name>] [--focus <text>] [--profile <name>] [--background] <diff/context>",
+        "  adversarial-review --worker <name> | --workers a,b [--focus <text>] [--profile <name>] [--background] <diff/context>",
         "  status [jobId|--latest] [--worker name] [--role role] [--refresh|--wait] [--timeout s] [--active] [--recent n] [--json]",
         "  result <jobId|--latest> [--worker name] [--role role] [--refresh] [--json]",
         "  apply  <jobId>",

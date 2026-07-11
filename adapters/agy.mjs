@@ -51,12 +51,12 @@ function listModels() {
  * then the repo's tracked `.agent-collab.json` role pin (exact label — see
  * core/pins.mjs); then the Flash default.
  */
-function resolveModel(role, workspace) {
+function resolveModel(role, workspace, profile) {
   if (process.env.AGENT_COLLAB_AGY_MODEL) return process.env.AGENT_COLLAB_AGY_MODEL;
   if (process.env.AGENT_COLLAB_AGY_CLASS) {
     return pickLatestModel(listModels(), process.env.AGENT_COLLAB_AGY_CLASS) || null;
   }
-  const pinned = resolvePin("agy", role, workspace).model;
+  const pinned = resolvePin("agy", role, workspace, profile).model;
   if (pinned) return pinned;
   return pickLatestModel(listModels(), "Flash") || null;
 }
@@ -64,7 +64,7 @@ function resolveModel(role, workspace) {
 export default defineAdapter({
   name: "agy",
   supportsStructuredOutput: false,
-  buildCommand({ role, brief, workspace, timeoutMs }) {
+  buildCommand({ role, brief, workspace, timeoutMs, profile }) {
     const seconds = Math.ceil((timeoutMs ?? 300000) / 1000);
     // ORDER MATTERS: agy's flag parser leaks anything after the first non-flag
     // token into the prompt. So ALL flags first, then `-p <brief>` LAST (the
@@ -76,7 +76,7 @@ export default defineAdapter({
     // resolveModel), before -p. Robust against the shared default being changed
     // externally; force a class with AGENT_COLLAB_AGY_CLASS=Pro or pin an exact
     // label with AGENT_COLLAB_AGY_MODEL.
-    const model = resolveModel(role, workspace);
+    const model = resolveModel(role, workspace, profile);
     if (model) args.push("--model", model);
 
     if (workspace) {

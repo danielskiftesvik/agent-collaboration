@@ -67,14 +67,39 @@ function readPins(startDir) {
   return pins;
 }
 
-/** @returns {{model: string|null, effort: string|null}} */
-export function resolvePin(worker, role, workspace) {
+const warnedProfiles = new Set();
+
+/**
+ * Resolve a standing pin for worker+role, optionally escalated through a named
+ * profile (`pins.profiles.<name>.<worker>` — e.g. a "deep" profile pinning
+ * codex to the frontier model for boundary reviews). Within the file, a
+ * requested profile wins over the role pin; env vars (handled by the adapters)
+ * win over both. A requested-but-missing profile WARNS and falls back to the
+ * role pin — a silent fall-through would run an un-escalated review without
+ * anyone noticing.
+ * @returns {{model: string|null, effort: string|null}}
+ */
+export function resolvePin(worker, role, workspace, profile) {
   for (const start of [workspace, process.cwd()]) {
     const pins = readPins(start);
     if (!pins) continue;
-    const p = pins?.workers?.[worker]?.[role];
     // First file found wins entirely (workspace worktree and driver cwd are
     // normally checkouts of the same repo — identical file either way).
+    let p = pins?.workers?.[worker]?.[role];
+    if (profile) {
+      const prof = pins?.profiles?.[profile]?.[worker];
+      if (prof) {
+        p = prof;
+      } else {
+        const key = `${profile}:${worker}`;
+        if (!warnedProfiles.has(key)) {
+          warnedProfiles.add(key);
+          process.stderr.write(
+            `agent-collaboration: profile "${profile}" has no entry for worker "${worker}" in ${PIN_FILE} — using the standing ${role} pin instead\n`
+          );
+        }
+      }
+    }
     return {
       model: (p && typeof p.model === "string" && p.model) || null,
       effort: (p && typeof p.effort === "string" && p.effort) || null
@@ -87,4 +112,5 @@ export function resolvePin(worker, role, workspace) {
 export function _clearPinCache() {
   cache.clear();
   warnedBad = false;
+  warnedProfiles.clear();
 }

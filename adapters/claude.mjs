@@ -8,20 +8,20 @@ import { resolvePin } from "../core/pins.mjs";
 const bin = () => process.env.AGENT_COLLAB_CLAUDE_BIN || "claude";
 // Env wins (per-dispatch lever) > repo `.agent-collab.json` role pin > "default"
 // (Claude Code's account-tier recommendation). See core/pins.mjs.
-const model = (role, workspace) =>
+const model = (role, workspace, profile) =>
   process.env.AGENT_COLLAB_CLAUDE_MODEL ||
-  resolvePin("claude", role, workspace).model ||
+  resolvePin("claude", role, workspace, profile).model ||
   "default";
 
 export default defineAdapter({
   name: "claude",
   supportsStructuredOutput: false, // envelope is JSON; the answer inside is text
-  buildCommand({ role, brief, workspace }) {
+  buildCommand({ role, brief, workspace, profile }) {
     // STREAM the run (NDJSON events) rather than a single JSON at the end, so a
     // long implementation emits a continuous stdout heartbeat — otherwise the
     // idle watchdog can't tell "working" from "frozen" (claude is silent until
     // done in plain --output-format json). stream-json needs --verbose headless.
-    const args = ["-p", brief, "--output-format", "stream-json", "--verbose", "--model", model(role, workspace)];
+    const args = ["-p", brief, "--output-format", "stream-json", "--verbose", "--model", model(role, workspace, profile)];
     args.push("--permission-mode", role === "reviewer" ? "plan" : "acceptEdits");
     if (workspace) args.push("--add-dir", workspace);
     return { command: bin(), args };

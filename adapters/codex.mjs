@@ -15,19 +15,19 @@ import { resolvePin } from "../core/pins.mjs";
 // instrument, identical for every driver harness — see core/pins.mjs), else no
 // flag at all — the user's ~/.codex/config.toml governs (which the codex TUI
 // rewrites with the last interactively-used model, so it is drift, not doctrine).
-function codexModel(role, workspace) {
+function codexModel(role, workspace, profile) {
   return (
     process.env.AGENT_COLLAB_CODEX_MODEL ||
     (role === "reviewer" ? process.env.AGENT_COLLAB_CODEX_MODEL_REVIEW : null) ||
-    resolvePin("codex", role, workspace).model
+    resolvePin("codex", role, workspace, profile).model
   );
 }
 
-function codexEffort(role, workspace) {
+function codexEffort(role, workspace, profile) {
   return (
     process.env.AGENT_COLLAB_CODEX_EFFORT ||
     (role === "reviewer" ? process.env.AGENT_COLLAB_CODEX_EFFORT_REVIEW : null) ||
-    resolvePin("codex", role, workspace).effort
+    resolvePin("codex", role, workspace, profile).effort
   );
 }
 
@@ -51,13 +51,13 @@ export default defineAdapter({
   name: "codex",
   supportsStructuredOutput: true,
   background: true,
-  buildCommand({ role, brief, workspace }) {
+  buildCommand({ role, brief, workspace, profile }) {
     const companion = resolveCompanion();
     const args = [companion, "task", "--json"];
     if (role !== "reviewer") args.push("--write");
-    const model = codexModel(role, workspace);
+    const model = codexModel(role, workspace, profile);
     if (model) args.push("--model", model);
-    const effort = codexEffort(role, workspace);
+    const effort = codexEffort(role, workspace, profile);
     if (effort) args.push("--effort", effort);
     args.push(brief);
     return { command: process.execPath, args };
