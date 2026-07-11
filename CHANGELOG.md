@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- Review provenance hardening: explicit `head|working-tree|diff` surfaces, safe dirty-tree snapshots, default result envelopes with warnings/telemetry, incomplete partial dual reviews, stricter finding contracts and deduplication, focused review follow-ups, and optional worktree/disk preflight limits.
+
 ## 0.6.0 - 2026-07-11
 
 - Named pin profiles: `.agent-collab.json` gains a `profiles` section; select per dispatch with `--profile <name>` on delegate/review/adversarial-review (precedence: env > profile > standing pin > harness default; unknown profiles warn and fall back, never silently).

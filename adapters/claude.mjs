@@ -35,7 +35,9 @@ export default defineAdapter({
         '{"verdict":"approve"|"needs-attention","summary":string,' +
         '"findings":[{"severity":"critical"|"high"|"medium"|"low","title":string,"body":string,' +
         '"file":string,"line_start":int,"line_end":int,"confidence":0..1,"recommendation":string}],' +
-        '"next_steps":[string]}\nPut the highest-severity findings first. No prose outside the JSON.\n</output_contract>'
+        '"next_steps":[string]}\nPut the highest-severity findings first. Every actionable defect must be a finding; ' +
+        'never hide defects in summary or next_steps. A needs-attention verdict requires at least one finding. ' +
+        'No prose outside the JSON.\n</output_contract>'
       );
     }
     return (
@@ -58,7 +60,18 @@ export default defineAdapter({
     for (let i = lines.length - 1; i >= 0; i--) {
       const ev = tryParse(lines[i]);
       if (ev && ev.type === "result" && typeof ev.result === "string") {
-        return { answerText: ev.result, structured: null };
+        return {
+          answerText: ev.result,
+          structured: null,
+          telemetry: {
+            sessionId: ev.session_id ?? null,
+            durationMs: ev.duration_ms ?? null,
+            turns: ev.num_turns ?? null,
+            costUsd: ev.total_cost_usd ?? null,
+            modelUsage: ev.modelUsage ?? null,
+            resolvedModels: ev.modelUsage && typeof ev.modelUsage === "object" ? Object.keys(ev.modelUsage) : []
+          }
+        };
       }
     }
     // Fallbacks: a single JSON envelope (older --output-format json) or raw text.

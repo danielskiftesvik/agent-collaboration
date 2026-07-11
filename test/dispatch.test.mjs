@@ -245,7 +245,7 @@ test("runWorkerSync persists raw stdout/stderr and command metadata for failed s
   delete process.env.AGENT_COLLAB_AGY_BIN;
 });
 
-test("review jobs record whether the requested diff was staged into the reviewer worktree", () => {
+test("review jobs fail closed when dirty natural-language input leaves the surface ambiguous", () => {
   isolateStateRoot();
   const repo = makeRepo();
   fs.writeFileSync(path.join(repo, "local-only.txt"), "dirty\\n");
@@ -254,10 +254,9 @@ test("review jobs record whether the requested diff was staged into the reviewer
   const res = runWorkerSync(repo, { driver: "claude", worker: "agy", role: "reviewer", kind: "review", brief: "review the current branch", maxAttempts: 1 });
   const job = getJob(repo, res.jobId);
 
-  assert.equal(job.reviewContext.stagedIntoWorktree, false);
-  assert.equal(job.reviewContext.stageReason, "input is not a unified diff");
-  assert.deepEqual(job.reviewContext.mainDirtyPathsAtLaunch, ["local-only.txt"]);
-  assert.match(job.note, /uncommitted changes.*HEAD only/i);
+  assert.equal(res.status, "blocked");
+  assert.equal(job.failureKind, "review-surface");
+  assert.match(job.errors[0], /--surface working-tree.*--surface head/i);
 
   delete process.env.AGENT_COLLAB_AGY_BIN;
 });
@@ -272,9 +271,13 @@ test("runWorkerSync (reviewer) validates against the review schema, no patch", (
   process.env.AGENT_COLLAB_AGY_BIN = stubBin(REVIEW_STUB);
 
   const res = runWorkerSync(repo, { driver: "claude", worker: "agy", role: "reviewer", brief: "review" });
+  const job = getJob(repo, res.jobId);
 
   assert.equal(res.valid, true);
   assert.equal(res.artifact.verdict, "approve");
+  assert.match(job.runtimeVersion, /^\d+\.\d+\.\d+$/);
+  assert.ok(Number.isFinite(job.durationMs));
+  assert.ok(job.completedAt);
   assert.equal(fs.existsSync(path.join(res.artifactDir, "patches", "agy.diff")), false);
 
   delete process.env.AGENT_COLLAB_AGY_BIN;
@@ -367,7 +370,7 @@ test("a review (kind) uses the template + the harness output contract", () => {
     process.stdout.write('\`\`\`json\\n{"verdict":"approve","summary":"ok","findings":[],"next_steps":[]}\\n\`\`\`');
   `);
 
-  runWorkerSync(repo, {
+  const res = runWorkerSync(repo, {
     driver: "claude",
     worker: "agy",
     role: "reviewer",
@@ -379,6 +382,7 @@ test("a review (kind) uses the template + the harness output contract", () => {
   assert.match(sent, /<attack_surface>/, "uses the adversarial-review template");
   assert.match(sent, /DIFF_TO_REVIEW_XYZ/, "review input injected");
   assert.match(sent, /ONLY a JSON/i, "agy output contract injected into {{OUTPUT_CONTRACT}}");
+  assert.match(getJob(repo, res.jobId).templateDigest, /^[a-f0-9]{64}$/);
 
   delete process.env.AGENT_COLLAB_AGY_BIN;
   delete process.env.AC_PROMPT_FILE;
@@ -711,10 +715,12 @@ const STAGE_PROBE_STUB = `
   if (process.argv.includes('models')) { process.exit(0); }
   const prompt = process.argv[process.argv.length - 1];
   const app = fs.existsSync('app.js') ? fs.readFileSync('app.js', 'utf8') : '';
+  const local = fs.existsSync('local-only.txt') ? fs.readFileSync('local-only.txt', 'utf8') : '';
   fs.writeFileSync(process.env.AC_SEEN, JSON.stringify({
     appOnDisk: app.trim(),
+    localOnDisk: local.trim(),
     promptSaysApplied: /has been APPLIED to your working tree/.test(prompt),
-    promptSaysBaseline: /repository's HEAD baseline/i.test(prompt)
+    promptSaysBaseline: /committed HEAD surface/i.test(prompt)
   }));
   process.stdout.write('\`\`\`json\\n' + JSON.stringify({verdict:'approve',summary:'ok',findings:[]}) + '\\n\`\`\`');
 `;
@@ -744,7 +750,7 @@ test("a review STAGES a real diff into the worktree (reviewer sees post-change f
   delete process.env.AC_SEEN;
 });
 
-test("a review with non-diff input falls back to the pasted-text baseline path", () => {
+test("a clean review with non-diff input defaults explicitly to HEAD", () => {
   isolateStateRoot();
   const repo = makeRepo();
   const seen = path.join(real(fs.mkdtempSync(path.join(os.tmpdir(), "ac-seen-"))), "seen.json");
@@ -756,6 +762,39 @@ test("a review with non-diff input falls back to the pasted-text baseline path",
   const got = JSON.parse(fs.readFileSync(seen, "utf8"));
   assert.equal(got.promptSaysApplied, false);
   assert.equal(got.promptSaysBaseline, true, "non-diff input keeps the HEAD-baseline framing");
+
+  delete process.env.AGENT_COLLAB_AGY_BIN;
+  delete process.env.AC_SEEN;
+});
+
+test("working-tree surface snapshots dirty content without changing the real index", () => {
+  isolateStateRoot();
+  const repo = makeRepo();
+  fs.writeFileSync(path.join(repo, "app.js"), "const x = 1;\n");
+  git(["add", "app.js"], repo);
+  git(["commit", "-q", "-m", "add app"], repo);
+  fs.writeFileSync(path.join(repo, "app.js"), "const x = 2;\n");
+  git(["add", "app.js"], repo);
+  fs.writeFileSync(path.join(repo, "local-only.txt"), "included\n");
+  const stagedBefore = git(["diff", "--cached", "--name-only"], repo);
+
+  const seen = path.join(real(fs.mkdtempSync(path.join(os.tmpdir(), "ac-seen-"))), "seen.json");
+  process.env.AC_SEEN = seen;
+  process.env.AGENT_COLLAB_AGY_BIN = stubBin(STAGE_PROBE_STUB);
+
+  const res = runWorkerSync(repo, {
+    driver: "claude", worker: "agy", role: "reviewer", kind: "review",
+    surface: "working-tree", brief: "Review the current checkout."
+  });
+  const got = JSON.parse(fs.readFileSync(seen, "utf8"));
+  const job = getJob(repo, res.jobId);
+
+  assert.equal(got.appOnDisk, "const x = 2;");
+  assert.equal(got.localOnDisk, "included");
+  assert.equal(git(["diff", "--cached", "--name-only"], repo), stagedBefore);
+  assert.equal(job.reviewContext.surface, "working-tree");
+  assert.equal(job.reviewContext.stagedIntoWorktree, true);
+  assert.ok(job.reviewContext.sourceSnapshotDigest);
 
   delete process.env.AGENT_COLLAB_AGY_BIN;
   delete process.env.AC_SEEN;

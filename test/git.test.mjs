@@ -4,7 +4,12 @@ import fs from "node:fs";
 import path from "node:path";
 
 import { makeRepo, git } from "./helpers.mjs";
-import { headRef, captureWorkingDiff, applyPatch, diffPaths, stageDiffIntoWorktree, workingTreeStatus, newStatusPaths } from "../core/git.mjs";
+import { headRef, captureWorkingDiff, captureWorkingTreeSnapshot, applyPatch, diffPaths, stageDiffIntoWorktree, workingTreeStatus, workingTreeDigest, newStatusPaths, extractUnifiedDiff } from "../core/git.mjs";
+
+test("extractUnifiedDiff removes Markdown fences and surrounding prose", () => {
+  const input = "Review this:\n```diff\n--- a/a.js\n+++ b/a.js\n@@ -1 +1 @@\n-old\n+new\n```\nextra";
+  assert.equal(extractUnifiedDiff(input), "--- a/a.js\n+++ b/a.js\n@@ -1 +1 @@\n-old\n+new\n");
+});
 
 test("breach snapshot detects a CONTENT change to an ALREADY-dirty file (codex #4)", () => {
   const repo = makeRepo();
@@ -64,6 +69,34 @@ test("captureWorkingDiff(baseRef) captures changes even after the worker COMMITS
   const diff = captureWorkingDiff(repo, base);
   assert.match(diff, /README\.md/);
   assert.match(diff, /fixed/);
+});
+
+test("captureWorkingTreeSnapshot includes staged/unstaged/untracked changes without mutating the real index", () => {
+  const repo = makeRepo();
+  fs.writeFileSync(path.join(repo, "staged.txt"), "staged\n");
+  git(["add", "staged.txt"], repo);
+  fs.writeFileSync(path.join(repo, "README.md"), "seed\nunstaged\n");
+  fs.writeFileSync(path.join(repo, "untracked.txt"), "untracked\n");
+  const stagedBefore = git(["diff", "--cached", "--name-only"], repo);
+
+  const snapshot = captureWorkingTreeSnapshot(repo, headRef(repo));
+
+  assert.match(snapshot.diff, /staged\.txt/);
+  assert.match(snapshot.diff, /unstaged/);
+  assert.match(snapshot.diff, /untracked\.txt/);
+  assert.match(snapshot.digest, /^[0-9a-f]{64}$/);
+  assert.equal(git(["diff", "--cached", "--name-only"], repo), stagedBefore, "real staged state is preserved");
+});
+
+test("workingTreeDigest changes when dirty content changes or disappears", () => {
+  const repo = makeRepo();
+  fs.writeFileSync(path.join(repo, "README.md"), "seed\none\n");
+  const first = workingTreeDigest(workingTreeStatus(repo));
+  fs.writeFileSync(path.join(repo, "README.md"), "seed\ntwo\n");
+  const second = workingTreeDigest(workingTreeStatus(repo));
+  assert.notEqual(first, second);
+  git(["checkout", "--", "README.md"], repo);
+  assert.notEqual(second, workingTreeDigest(workingTreeStatus(repo)));
 });
 
 test("diffPaths extracts touched paths (incl. new files), minus /dev/null", () => {

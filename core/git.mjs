@@ -1,6 +1,7 @@
 // Derived from codex-plugin-cc (Apache-2.0, Copyright 2026 OpenAI).
 import { createHash } from "node:crypto";
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { run, runOk } from "./process.mjs";
 
@@ -39,6 +40,35 @@ export function workingTreeStatus(cwd) {
   return entries;
 }
 
+/** Stable digest for a captured working-tree status set. */
+export function workingTreeDigest(status) {
+  if (status == null) return null;
+  return createHash("sha256").update([...status].sort().join("\n")).digest("hex");
+}
+
+/**
+ * Capture staged, unstaged, and untracked changes relative to `baseRef` without
+ * touching the caller's real index. A temporary index lets review jobs snapshot
+ * the exact working-tree surface while preserving any user staging decisions.
+ */
+export function captureWorkingTreeSnapshot(cwd, baseRef = headRef(cwd)) {
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "agent-collab-index-"));
+  const indexPath = path.join(tempDir, "index");
+  const env = { ...process.env, GIT_INDEX_FILE: indexPath };
+  try {
+    runOk("git", ["read-tree", baseRef], { cwd, env });
+    runOk("git", ["add", "-A"], { cwd, env });
+    const diff = runOk("git", ["diff", "--cached", "--binary", baseRef], { cwd, env });
+    return {
+      diff,
+      digest: createHash("sha256").update(diff).digest("hex"),
+      paths: diffPaths(diff)
+    };
+  } finally {
+    fs.rmSync(tempDir, { recursive: true, force: true });
+  }
+}
+
 /** Paths whose status OR content newly appeared/changed in `after` vs `before`. */
 export function newStatusPaths(before, after) {
   if (!before || !after) return [];
@@ -73,6 +103,17 @@ export function looksLikeDiff(text) {
     /^@@ -\d/m.test(text) ||
     (/^--- /m.test(text) && /^\+\+\+ /m.test(text))
   );
+}
+
+/** Extract a unified diff from a raw patch or a prose/Markdown review brief. */
+export function extractUnifiedDiff(text) {
+  const source = String(text ?? "");
+  const match = /^(?:diff --git |--- (?:a\/|\/dev\/null))/m.exec(source);
+  if (!match) return "";
+  let diff = source.slice(match.index);
+  const fence = /^```\s*$/m.exec(diff);
+  if (fence) diff = diff.slice(0, fence.index);
+  return diff.trimEnd() + "\n";
 }
 
 /**

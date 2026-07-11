@@ -94,7 +94,9 @@ export default defineAdapter({
       "\n\n<structured_output_contract>\n" +
       "Return only valid JSON with this shape and nothing else:\n" +
       shape +
-      "\nPut the highest-value items first. Keep it compact.\n" +
+      "\nPut the highest-value items first. Every actionable defect must be a finding; " +
+      "never hide defects in summary or next_steps. A needs-attention verdict requires at least one finding. " +
+      "Keep it compact.\n" +
       "</structured_output_contract>"
     );
   },
@@ -104,7 +106,11 @@ export default defineAdapter({
     // The agent's actual answer is the rawOutput string.
     const env = extractJson(stdout);
     if (env && typeof env.rawOutput === "string") {
-      return { answerText: env.rawOutput, structured: null };
+      return {
+        answerText: env.rawOutput,
+        structured: null,
+        telemetry: { threadId: env.threadId ?? null, resolvedModel: env.model ?? null }
+      };
     }
     if (env && typeof env.output === "string") {
       return { answerText: env.output, structured: null };

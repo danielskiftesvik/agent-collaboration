@@ -138,8 +138,30 @@ test("normalizeReviewArtifact maps verdict synonyms and strips top-level extras"
     JSON.stringify({ verdict: "request changes", summary: "fix it", findings: [] }),
     normalizeReviewArtifact
   );
-  assert.equal(changes.ok, true, JSON.stringify(changes.errors));
+  assert.equal(changes.ok, false, "requesting changes without a finding is not actionable");
   assert.equal(changes.value.verdict, "needs-attention");
+  assert.ok(changes.errors.some((e) => /requires at least one finding/.test(e)));
+});
+
+test("needs-attention with zero findings is invalid, even when next_steps names work", () => {
+  const r = validate(reviewSchema, {
+    verdict: "needs-attention",
+    summary: "There is a defect.",
+    findings: [],
+    next_steps: ["Fix the null dereference in a.js"]
+  });
+  assert.equal(r.valid, false);
+  assert.ok(r.errors.some((e) => /requires at least one finding/.test(e)));
+});
+
+test("approve with zero findings remains valid", () => {
+  const r = validate(reviewSchema, {
+    verdict: "approve",
+    summary: "No material defects found.",
+    findings: [],
+    next_steps: []
+  });
+  assert.equal(r.valid, true, JSON.stringify(r.errors));
 });
 
 test("a review without next_steps is valid (next_steps no longer required)", () => {

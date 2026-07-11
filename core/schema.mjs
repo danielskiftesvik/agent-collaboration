@@ -64,6 +64,19 @@ function walk(schema, value, path, errors) {
 export function validate(schema, value) {
   const errors = [];
   walk(schema, value, "$", errors);
+  // This cross-field review invariant is outside the deliberately small JSON
+  // Schema subset above. A change-request verdict without a named finding is
+  // not actionable and can hide defects in summary/next_steps.
+  if (
+    value &&
+    typeof value === "object" &&
+    !Array.isArray(value) &&
+    value.verdict === "needs-attention" &&
+    Array.isArray(value.findings) &&
+    value.findings.length === 0
+  ) {
+    errors.push("$.findings: needs-attention verdict requires at least one finding");
+  }
   return { valid: errors.length === 0, errors };
 }
 

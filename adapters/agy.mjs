@@ -99,7 +99,8 @@ export default defineAdapter({
         '{"verdict":"approve" | "needs-attention","summary":"<one line>",' +
         '"findings":[{"severity":"high","title":"...","body":"...","file":"path",' +
         '"line_start":1,"line_end":1,"confidence":0.9,"recommendation":"..."}],' +
-        '"next_steps":["..."]}'
+        '"next_steps":["..."]}. Every actionable defect must be in findings; never hide defects in ' +
+        'summary or next_steps. A needs-attention verdict requires at least one finding.'
       );
     }
     return (
