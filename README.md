@@ -80,10 +80,13 @@ Two delegation paths, chosen automatically:
 | `/agent-collab:delegate --worker <agy\|claude\|codex> [--background] [--apply] <brief>` | Run a cross-harness **worker** task (produces a patch); `--background` detaches and returns a jobId |
 | `/agent-collab:review --worker <name> [--focus <text>] <diff>` | Read-only cross-harness **review** |
 | `/agent-collab:adversarial-review --worker <name> <diff>` | "Try to break it" review |
+| `/agent-collab:review-followup --job <prior-id> [--worker <name>] <focused diff/context>` | Recheck a focused fix against a prior review |
 | `/agent-collab:status [jobId\|--latest] [--worker name] [--role role] [--refresh\|--wait] [--active] [--recent n]` | List / inspect jobs; reads are lock-free unless explicitly refreshed or waited |
 | `/agent-collab:result <jobId\|--latest> [--worker name] [--role role]` | Show a job's report + structured output without mutating state |
 | `/agent-collab:apply <jobId>` | Apply a worker's patch (3-way) to the working tree |
 | `/agent-collab:cancel <jobId>` | Cancel a running job |
+
+Review commands accept `--surface head|working-tree|diff`. Unified diffs are detected automatically and clean prose defaults to `head`. Dirty prose fails closed until the caller chooses `working-tree` (safely snapshotted with a temporary Git index) or `head` (dirty paths excluded). `review-followup --job <prior-id> ...` runs a focused verification tied to the earlier review.
 
 ## Skills
 
@@ -243,6 +246,17 @@ artifacts: findings both reviewers raised are deduped and tagged `agreement: tru
 mismatches flagged, more severe copy wins), single-reviewer findings stay tagged with their
 source, and the verdict is worst-of. Cross-model reviewers typically agree on only a minority
 of findings — the disagreements are the value, so nothing is dropped.
+
+If a requested review leg fails, the merged result is `incomplete` and carries only a
+`provisionalVerdict` from completed legs; it is never presented as final approval.
+
+Optional repo-owned resource guards can live alongside model pins:
+
+```json
+{"preflight":{"maxWorktrees":3,"minFreeDiskGb":20}}
+```
+
+They are checked before another isolated worktree is created.
 
 ## Configuration
 

@@ -201,7 +201,9 @@ test("status/result --latest recover by createdAt with worker and role filters",
 
   const result = cli(["result", "--latest", "--worker", "claude", "--role", "reviewer", "--json"], { cwd: repo, env });
   assert.equal(result.status, 0, result.stderr);
-  assert.deepEqual(JSON.parse(result.stdout), { verdict: "approve", summary: "new", findings: [] });
+  const recovered = JSON.parse(result.stdout);
+  assert.deepEqual(recovered.artifact, { verdict: "approve", summary: "new", findings: [] });
+  assert.equal(recovered.job.id, "new-claude");
 });
 
 test("status and result are lock-free reads; --refresh explicitly updates liveness", () => {
@@ -230,7 +232,7 @@ test("status and result are lock-free reads; --refresh explicitly updates livene
   assert.equal(JSON.parse(status.stdout).status, "running");
   const result = cli(["result", "--latest", "--worker", "claude", "--json"], { cwd: repo, env });
   assert.equal(result.status, 0, result.stderr);
-  assert.equal(JSON.parse(result.stdout).summary, "saved");
+  assert.equal(JSON.parse(result.stdout).artifact.summary, "saved");
   assert.equal(getJob(repo, "dead").status, "running", "read-only commands must not reap jobs");
 
   fs.unlinkSync(lock);
@@ -291,8 +293,93 @@ test("delegate cross-harness reviewer runs and result prints the artifact", () =
 
   const got = cli(["result", res.jobId, "--json"], { cwd: repo, env });
   assert.equal(got.status, 0, got.stderr);
-  const artifact = JSON.parse(got.stdout);
-  assert.equal(artifact.verdict, "approve");
+  const envelope = JSON.parse(got.stdout);
+  assert.equal(envelope.artifact.verdict, "approve");
+  assert.equal(envelope.job.status, "completed");
+});
+
+test("result envelope makes review provenance and warnings unavoidable", () => {
+  const dataDir = isolateStateRoot();
+  const repo = makeRepo();
+  const artifactDir = path.join(dataDir, "artifacts", "warned");
+  fs.mkdirSync(path.join(artifactDir, "outputs"), { recursive: true });
+  fs.mkdirSync(path.join(artifactDir, "reports"), { recursive: true });
+  fs.writeFileSync(
+    path.join(artifactDir, "outputs", "claude.json"),
+    JSON.stringify({ verdict: "approve", summary: "looks fine", findings: [] })
+  );
+  fs.writeFileSync(path.join(artifactDir, "reports", "claude.md"), "looks fine");
+  appendJob(repo, {
+    id: "warned",
+    worker: "claude",
+    role: "reviewer",
+    driver: "codex",
+    status: "completed",
+    resultValid: true,
+    artifactDir,
+    note: "review surface was not captured",
+    reviewContext: { stagedIntoWorktree: false, mainDirtyPathsAtLaunch: ["a.swift"] },
+    breachWarning: { escapedPaths: ["b.swift"] },
+    sandboxed: false
+  });
+
+  const got = cli(["result", "warned", "--json"], { cwd: repo, env: { AGENT_COLLAB_DATA: dataDir } });
+  assert.equal(got.status, 0, got.stderr);
+  const envelope = JSON.parse(got.stdout);
+  assert.equal(envelope.job.note, "review surface was not captured");
+  assert.deepEqual(envelope.job.reviewContext.mainDirtyPathsAtLaunch, ["a.swift"]);
+  assert.deepEqual(envelope.job.breachWarning.escapedPaths, ["b.swift"]);
+  assert.equal(envelope.artifact.verdict, "approve");
+
+  const legacy = cli(["result", "warned", "--artifact-only", "--json"], {
+    cwd: repo,
+    env: { AGENT_COLLAB_DATA: dataDir }
+  });
+  assert.equal(JSON.parse(legacy.stdout).verdict, "approve");
+});
+
+test("review-followup ties a focused review job to the prior review", () => {
+  const dataDir = isolateStateRoot();
+  const repo = makeRepo();
+  const artifactDir = path.join(dataDir, "artifacts", "prior-review");
+  fs.mkdirSync(path.join(artifactDir, "outputs"), { recursive: true });
+  fs.writeFileSync(
+    path.join(artifactDir, "outputs", "agy.json"),
+    JSON.stringify({ verdict: "needs-attention", summary: "one bug", findings: [{ severity: "high", title: "bug" }] })
+  );
+  appendJob(repo, {
+    id: "prior-review", worker: "agy", role: "reviewer", driver: "claude",
+    status: "completed", resultValid: true, artifactDir
+  });
+  const bin = stubBin(
+    `process.stdout.write('\`\`\`json\\n' + JSON.stringify({verdict:'approve',summary:'fixed',findings:[],next_steps:[]}) + '\\n\`\`\`')`
+  );
+  const env = { AGENT_COLLAB_DATA: dataDir, AGENT_COLLAB_AGY_BIN: bin };
+
+  const result = cli([
+    "review-followup", "--job", "prior-review", "--driver", "claude",
+    "--surface", "head", "--json", "Verify the focused fix."
+  ], { cwd: repo, env });
+
+  assert.equal(result.status, 0, result.stderr);
+  const response = JSON.parse(result.stdout);
+  assert.equal(response.status, "completed");
+  assert.equal(getJob(repo, response.jobId).followupOf, "prior-review");
+});
+
+test("review-followup rejects a prior review that did not complete", () => {
+  const dataDir = isolateStateRoot();
+  const repo = makeRepo();
+  appendJob(repo, {
+    id: "failed-review", worker: "agy", role: "reviewer", driver: "claude",
+    status: "failed", resultValid: false, artifactDir: path.join(dataDir, "missing")
+  });
+  const result = cli([
+    "review-followup", "--job", "failed-review", "--driver", "claude",
+    "--surface", "head", "Verify the fix."
+  ], { cwd: repo, env: { AGENT_COLLAB_DATA: dataDir } });
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /not a completed review/);
 });
 
 test("review --workers a,b reaches the dual branch (no --worker required)", () => {

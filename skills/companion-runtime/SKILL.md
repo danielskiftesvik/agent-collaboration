@@ -18,7 +18,8 @@ setup [--json] [--gate on|off] [--sandbox on|off]
 doctor [--live] [--workers a,b] [--json]
 delegate --worker <agy|codex|claude> [--driver <name>] [--role worker|reviewer] [--profile <name>] [--background] [--apply] [--timeout <s>] [--no-fallback] <brief>
 review  --worker <name> | --workers a,b [--focus <text>] [--profile <name>] [--background] [--no-fallback] [--json] <diff/context>
-adversarial-review --worker <name> | --workers a,b [--focus <text>] [--profile <name>] [--background] [--no-fallback] [--json] <diff/context>
+adversarial-review --worker <name> | --workers a,b [--surface head|working-tree|diff] [--focus <text>] [--profile <name>] [--background] [--no-fallback] [--json] <diff/context>
+review-followup --job <prior-id> [--worker <name>] [--surface head|working-tree|diff] <focused diff/context>
 status [jobId|--latest] [--worker <name>] [--role <role>] [--refresh|--wait] [--timeout <s>] [--active] [--recent <n>] [--json]
 result <jobId|--latest> [--worker <name>] [--role <role>] [--refresh] [--json]
 apply  <jobId>
@@ -252,8 +253,10 @@ Do **not** obfuscate the payload to slip past the check — it exists to gate th
 - `result <jobId|--latest>` → the **worker's deliverable**: its report (`reports/<worker>.md`)
   + structured self-report (`outputs/<worker>.json`). Self-report can disagree with
   the runtime (e.g. worker claims `changed:true` but the runtime captured nothing →
-  `status` says `no-changes` with a `note`). `result --json` remains the bare
-  structured artifact for compatibility. Trust the runtime's captured state.
+  `status` says `no-changes` with a `note`). `result --json` returns an envelope
+  containing the artifact plus unavoidable job provenance and warnings. Use
+  `result --artifact-only --json` only for legacy consumers that require the bare
+  structured artifact. Trust the runtime's captured state.
 - `apply <jobId>` → lands the patch in the **working tree, unstaged** (clean index)
   so you inspect with `git diff` then commit; if you had pre-existing staged work it
   stays **staged**. It never accepts `--latest`; never auto-applies.

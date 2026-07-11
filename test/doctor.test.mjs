@@ -20,7 +20,7 @@ const CLEAN_AGY = `
   if (process.argv.includes('--version')) { process.stdout.write('agy 1'); process.exit(0); }
   if (process.argv.includes('models')) { process.exit(0); }
   const brief = process.argv[process.argv.length - 1];
-  if (/Review this change/i.test(brief)) {
+  if (/Review this change|change under review has been APPLIED/i.test(brief)) {
     process.stdout.write('\`\`\`json\\n' + JSON.stringify({verdict:'needs-attention',summary:'bug',findings:[{severity:'high',title:'subtracts',body:'add() subtracts'}]}) + '\\n\`\`\`');
   } else {
     fs.writeFileSync('note.txt', 'ok\\n');
@@ -48,7 +48,7 @@ test("doctor --live passes for a clean reviewer + confined worker", () => {
 
   const r = runDoctor(process.cwd(), { live: true, workers: ["agy"] });
 
-  assert.equal(r.checks.find((c) => c.name === "review:agy").ok, true);
+  assert.equal(r.checks.find((c) => c.name === "review:agy").ok, true, JSON.stringify(r.checks));
   assert.equal(r.checks.find((c) => c.name === "isolation:agy").ok, true);
 
   delete process.env.AGENT_COLLAB_AGY_BIN;

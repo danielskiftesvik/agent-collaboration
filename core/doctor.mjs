@@ -18,7 +18,7 @@ function seedRepo() {
   runOk("git", ["init", "-q", "-b", "main"], { cwd: dir });
   runOk("git", ["config", "user.email", "doctor@example.com"], { cwd: dir });
   runOk("git", ["config", "user.name", "doctor"], { cwd: dir });
-  fs.writeFileSync(path.join(dir, "math.js"), "export const add = (a, b) => a - b;\n");
+  fs.writeFileSync(path.join(dir, "math.js"), "export const add = (a, b) => a + b;\n");
   runOk("git", ["add", "-A"], { cwd: dir });
   runOk("git", ["commit", "-q", "-m", "seed"], { cwd: dir });
   return dir;
@@ -35,7 +35,7 @@ function rmrf(dir) {
 // A pasted diff with a real, obvious bug (add() subtracts) used as the review input.
 const REVIEW_BRIEF =
   "Review this change for correctness:\n```diff\n--- a/math.js\n+++ b/math.js\n" +
-  "@@\n-export const add = (a, b) => a + b;\n+export const add = (a, b) => a - b;\n```\n" +
+  "@@ -1 +1 @@\n-export const add = (a, b) => a + b;\n+export const add = (a, b) => a - b;\n```\n" +
   "Note: add() now subtracts — that looks like a correctness bug.";
 
 // Keep the run cross-harness (worker != driver label); runWorkerSync executes the

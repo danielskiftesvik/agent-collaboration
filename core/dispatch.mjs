@@ -11,15 +11,22 @@ import { fileURLToPath } from "node:url";
 import { getAdapter, listAdapters } from "../adapters/index.mjs";
 import { resolveStateDir, appendJob, updateJob, getJob, loadState, isTerminalStatus } from "./state.mjs";
 import { createWorktree, removeWorktree } from "./workspace.mjs";
-import { headRef, captureWorkingDiff, applyPatch, checkPatchApplies, workingTreeStatus, newStatusPaths, stageDiffIntoWorktree, diffPaths } from "./git.mjs";
+import { headRef, captureWorkingDiff, captureWorkingTreeSnapshot, applyPatch, checkPatchApplies, workingTreeStatus, workingTreeDigest, newStatusPaths, stageDiffIntoWorktree, diffPaths, looksLikeDiff, extractUnifiedDiff } from "./git.mjs";
 import { run } from "./process.mjs";
 import { isPidAlive, isStalled, touchHeartbeat } from "./heartbeat.mjs";
 import { coerceArtifact, normalizeReviewArtifact } from "./schema.mjs";
-import { buildFromTemplate } from "./prompts.mjs";
+import { buildFromTemplate, templateDigest } from "./prompts.mjs";
 import { classifyFailure, FALLBACK_KINDS } from "./failures.mjs";
 import { MODEL_PROFILES, TASK_ROUTING, DEFAULT_ROUTING, WRITE_TASKS } from "./model-profiles.mjs";
+import { version } from "./version.mjs";
+import { checkPreflight } from "./preflight.mjs";
 
 const TEMPLATE_KINDS = new Set(["review", "adversarial-review"]);
+
+function commandOption(args, ...names) {
+  const index = (args ?? []).findIndex((arg) => names.includes(arg));
+  return index >= 0 ? args[index + 1] ?? null : null;
+}
 
 /**
  * Default per-attempt worker timeout. Generous on purpose: a deep reasoner (codex)
@@ -367,7 +374,7 @@ function readProgress(progressFile) {
  * here (only the driver applies). Returns a summary including the artifact.
  */
 export function runWorkerSync(cwd, opts) {
-  const { driver, worker, role = "worker", brief, kind, focus, targetLabel, profile, timeoutMs = defaultTimeoutMs(), idleMs = MODEL_PROFILES[worker]?.idleMsOverride ?? defaultIdleMs(), maxAttempts = 2, noResume = false } = opts;
+  const { driver, worker, role = "worker", brief, kind, focus, targetLabel, profile, surface, followupOf, timeoutMs = defaultTimeoutMs(), idleMs = MODEL_PROFILES[worker]?.idleMsOverride ?? defaultIdleMs(), maxAttempts = 2, noResume = false } = opts;
   const adapter = getAdapter(worker);
   const schema = role === "reviewer" ? reviewSchema : resultSchema;
 
@@ -427,7 +434,43 @@ export function runWorkerSync(cwd, opts) {
   } catch {
     isGitRepo = false;
   }
+
+  const launchStatus = isGitRepo
+    ? opts.breachBefore
+      ? new Set(opts.breachBefore)
+      : workingTreeStatus(cwd)
+    : null;
+  const mainDirtyPathsAtLaunch = dirtyPathsFromStatus(launchStatus);
+  let resolvedSurface = null;
+  let sourceSnapshot = null;
+  if (role === "reviewer" && TEMPLATE_KINDS.has(kind)) {
+    if (surface && !["head", "working-tree", "diff"].includes(surface)) {
+      return blocked(`unknown review surface '${surface}'; use head, working-tree, or diff`, "review-surface");
+    }
+    resolvedSurface = surface || (looksLikeDiff(brief) ? "diff" : mainDirtyPathsAtLaunch.length ? null : "head");
+    if (!resolvedSurface) {
+      return blocked(
+        `review target is ambiguous because the checkout has uncommitted changes (${mainDirtyPathsAtLaunch.join(", ")}). ` +
+          "Choose --surface working-tree to snapshot them, or --surface head to exclude them explicitly.",
+        "review-surface"
+      );
+    }
+    if (resolvedSurface === "diff" && !looksLikeDiff(brief)) {
+      return blocked("--surface diff requires a unified diff as the review brief", "review-surface");
+    }
+    if (resolvedSurface === "working-tree") {
+      try {
+        sourceSnapshot = captureWorkingTreeSnapshot(cwd, baseRef);
+      } catch (e) {
+        return blocked(`could not snapshot the working tree for review (${e?.message || e})`, "review-surface");
+      }
+    }
+  }
   if (isGitRepo) {
+    const preflight = checkPreflight(cwd);
+    if (!preflight.ok) {
+      return blocked(`preflight failed: ${preflight.failures.join("; ")}`, "preflight");
+    }
     // A real repo MUST be isolated. If the worktree can't be created, FAIL CLOSED —
     // never fall back to the real checkout (AGENT_COLLAB_ALLOW_INPLACE does NOT apply
     // inside a repo, so a transient worktree error can't silently uncontain writes).
@@ -456,12 +499,7 @@ export function runWorkerSync(cwd, opts) {
   // --dangerously-skip-permissions). Only meaningful when we actually isolated;
   // in the run-in-place fallback the worker is supposed to write to cwd.
   const breachHeadBefore = worktree ? (opts.breachHeadBefore ?? baseRef) : null;
-  const breachBefore = worktree
-    ? opts.breachBefore
-      ? new Set(opts.breachBefore)
-      : workingTreeStatus(cwd)
-    : null;
-  const mainDirtyPathsAtLaunch = dirtyPathsFromStatus(breachBefore);
+  const breachBefore = worktree ? launchStatus : null;
   const startedAt = new Date().toISOString();
 
   writeInitial({
@@ -481,7 +519,11 @@ export function runWorkerSync(cwd, opts) {
     idleMs,
     heartbeatAt: startedAt,
     lastProgressAt: startedAt,
-    lastProgressKind: "launch"
+    lastProgressKind: "launch",
+    profile: profile ?? null,
+    runtimeVersion: version(),
+    templateDigest: TEMPLATE_KINDS.has(kind) ? templateDigest(kind) : null,
+    followupOf: followupOf ?? null
   });
 
   let answerText = "";
@@ -491,6 +533,8 @@ export function runWorkerSync(cwd, opts) {
   let lastStderr = "";
   let timedOut = false;
   let frozen = false;
+  let workerTelemetry = null;
+  let resolvedModel = null;
   // Reviewers' output is normalized (severity case, etc.) before validation so a
   // complete report isn't false-failed over cosmetics; workers are not.
   const normalize = role === "reviewer" ? normalizeReviewArtifact : undefined;
@@ -510,7 +554,10 @@ export function runWorkerSync(cwd, opts) {
     ? {
         baseRef,
         workspace,
+        surface: resolvedSurface,
         mainDirtyPathsAtLaunch,
+        sourceStatusDigestAtLaunch: workingTreeDigest(breachBefore),
+        sourceSnapshotDigest: sourceSnapshot?.digest ?? (resolvedSurface === "diff" ? workingTreeDigest(new Set([brief ?? ""])) : null),
         inputBytes: Buffer.byteLength(brief ?? ""),
         stagedIntoWorktree: false,
         stageReason: TEMPLATE_KINDS.has(kind) ? null : "no review diff staging for this command",
@@ -518,11 +565,16 @@ export function runWorkerSync(cwd, opts) {
       }
     : undefined;
   if (TEMPLATE_KINDS.has(kind) && worktree) {
-    const staged = stageDiffIntoWorktree(workspace, brief ?? "");
+    const reviewDiff = resolvedSurface === "working-tree" ? sourceSnapshot.diff : resolvedSurface === "diff" ? extractUnifiedDiff(brief) : "";
+    const staged = reviewDiff ? stageDiffIntoWorktree(workspace, reviewDiff) : { staged: false, reason: "HEAD surface selected" };
     if (reviewContext) {
       reviewContext.stagedIntoWorktree = staged.staged;
       reviewContext.stageReason = staged.staged ? null : staged.reason;
       reviewContext.stagedStat = staged.stat || "";
+    }
+    if (reviewDiff && !staged.staged) {
+      removeWorktree(cwd, worktree);
+      return blocked(`could not materialize the ${resolvedSurface} review surface (${staged.reason})`, "review-surface");
     }
     if (staged.staged) {
       reviewInput =
@@ -531,11 +583,11 @@ export function runWorkerSync(cwd, opts) {
         "that rather than the pasted diff below.\n\nFiles changed:\n" +
         (staged.stat || "(run `git diff HEAD --stat`)") +
         "\n\nThe same change as a unified diff:\n" +
-        (brief ?? "");
+        reviewDiff;
     } else {
       reviewInput =
-        "Your working tree is the repository's HEAD baseline; the change under review is the unified " +
-        "diff below, which is AUTHORITATIVE — do not 'correct' based on baseline code the diff changes.\n\n" +
+        `Review repository HEAD ${baseRef}. The driver explicitly selected the committed HEAD surface; ` +
+        "uncommitted checkout changes are excluded. Use the context below only to focus your inspection.\n\n" +
         (brief ?? "");
     }
   }
@@ -628,6 +680,14 @@ export function runWorkerSync(cwd, opts) {
         proc = execGuarded(cmd);
       }
     }
+    if (attempts === 1) {
+      const requestedModel = commandOption(cmd.args, "--model", "-m");
+      const requestedEffort = commandOption(cmd.args, "--effort");
+      updateJob(cwd, jobId, {
+        requestedModel,
+        requestedEffort
+      });
+    }
     appendAttemptDiagnostics(artifactDir, worker, attempts, cmd, proc, {
       cwd: workspace,
       sandboxRequested: wantSandbox
@@ -649,6 +709,9 @@ export function runWorkerSync(cwd, opts) {
       exitCode: proc.status,
       workspace
     });
+    workerTelemetry = parsed.telemetry ?? workerTelemetry;
+    resolvedModel = parsed.telemetry?.resolvedModel ??
+      (parsed.telemetry?.resolvedModels?.length === 1 ? parsed.telemetry.resolvedModels[0] : resolvedModel);
     answerText = parsed.answerText ?? "";
     const candidate = parsed.structured ? JSON.stringify(parsed.structured) : answerText;
     coerce = coerceArtifact(schema, candidate, normalize);
@@ -675,6 +738,22 @@ export function runWorkerSync(cwd, opts) {
     fs.writeFileSync(patchPath, diff);
   }
   if (worktree) removeWorktree(cwd, worktree);
+
+  if (reviewContext) {
+    const completionStatus = workingTreeStatus(cwd);
+    reviewContext.sourceStatusDigestAtCompletion = workingTreeDigest(completionStatus);
+    let completionHead = null;
+    try { completionHead = headRef(cwd); } catch { /* recorded as mismatch */ }
+    let contentMatches = reviewContext.sourceStatusDigestAtCompletion === reviewContext.sourceStatusDigestAtLaunch;
+    if (reviewContext.surface === "working-tree") {
+      try {
+        contentMatches = captureWorkingTreeSnapshot(cwd, baseRef).digest === reviewContext.sourceSnapshotDigest;
+      } catch {
+        contentMatches = false;
+      }
+    }
+    reviewContext.currentCheckoutMatchesSurface = completionHead === baseRef && contentMatches;
+  }
 
   // Did the worker write OUTSIDE its worktree, into the driver's real tree?
   const rawEscapedPaths = worktree ? newStatusPaths(breachBefore, workingTreeStatus(cwd)) : [];
@@ -789,12 +868,17 @@ export function runWorkerSync(cwd, opts) {
     note = (note ? note + " " : "") +
       `Real checkout changed during the worker run (${breachWarning.escapedPaths.join(", ")}); recorded as breachWarning, not a hard breach.`;
   }
-  if (role === "reviewer" && reviewContext?.mainDirtyPathsAtLaunch?.length && !reviewContext.stagedIntoWorktree) {
+  if (role === "reviewer" && reviewContext?.surface === "head" && reviewContext.mainDirtyPathsAtLaunch?.length) {
     note = (note ? note + " " : "") +
-      `Main checkout had uncommitted changes at launch (${reviewContext.mainDirtyPathsAtLaunch.join(", ")}), ` +
-      "but no unified diff was staged into the reviewer worktree; reviewer saw HEAD only plus the brief.";
+      `Review surface was explicitly set to HEAD; uncommitted paths were excluded (${reviewContext.mainDirtyPathsAtLaunch.join(", ")}).`;
+  }
+  if (role === "reviewer" && reviewContext && !reviewContext.currentCheckoutMatchesSurface) {
+    note = (note ? note + " " : "") +
+      `The driver checkout changed while the review ran; the verdict applies to the captured ${reviewContext.surface || "review"} surface.`;
   }
   const sandboxed = wantSandbox && !sandboxDegraded;
+  const completedAt = new Date().toISOString();
+  const durationMs = Math.max(0, new Date(completedAt).getTime() - new Date(startedAt).getTime());
 
   const breach = escapedPaths.length > 0;
   updateJob(cwd, jobId, {
@@ -815,6 +899,10 @@ export function runWorkerSync(cwd, opts) {
     progressFile: logs.progress,
     reviewContext,
     sandboxed,
+    completedAt,
+    durationMs,
+    workerTelemetry,
+    resolvedModel,
     note,
     errors
   });
@@ -840,6 +928,10 @@ export function runWorkerSync(cwd, opts) {
     logs,
     reviewContext,
     sandboxed,
+    completedAt,
+    durationMs,
+    workerTelemetry,
+    resolvedModel,
     note,
     errors
   };
@@ -960,7 +1052,7 @@ const COMPANION = fileURLToPath(new URL("../scripts/agent-companion.mjs", import
  * stays a synchronous-path convenience).
  */
 export function launchBackground(cwd, opts) {
-  const { driver, worker, role = "worker", brief, kind, focus, targetLabel, profile, timeoutMs, maxAttempts } = opts;
+  const { driver, worker, role = "worker", brief, kind, focus, targetLabel, profile, surface, timeoutMs, maxAttempts } = opts;
   const jobId = randomUUID();
   const artifactDir = path.join(resolveStateDir(cwd), "tasks", jobId);
   ensureDirs(artifactDir, role);
@@ -983,7 +1075,7 @@ export function launchBackground(cwd, opts) {
     status: "queued",
     background: true,
     artifactDir,
-    request: { driver, worker, role, brief, kind, focus, targetLabel, profile, timeoutMs, maxAttempts, breachHeadBefore, breachBefore },
+    request: { driver, worker, role, brief, kind, focus, targetLabel, profile, surface, timeoutMs, maxAttempts, breachHeadBefore, breachBefore },
     heartbeatAt: new Date().toISOString()
   });
 

@@ -2,6 +2,7 @@
 // template engine — load a markdown prompt from prompts/ and substitute
 // {{UPPER_CASE}} placeholders. Review-grade prompts are code-loaded templates;
 // free-form task prompts are composed by the driver (see harness-prompting skill).
+import { createHash } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -10,6 +11,10 @@ const PKG_ROOT = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 
 export function loadTemplate(name) {
   return fs.readFileSync(path.join(PKG_ROOT, "prompts", `${name}.md`), "utf8");
+}
+
+export function templateDigest(name) {
+  return createHash("sha256").update(loadTemplate(name)).digest("hex");
 }
 
 export function interpolate(template, variables = {}) {

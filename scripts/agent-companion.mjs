@@ -15,8 +15,8 @@ import { isPidAlive } from "../core/heartbeat.mjs";
 import { renderSetup, renderJob, renderJobList, renderRecommendation, renderProfiles } from "../core/render.mjs";
 import { MODEL_PROFILES } from "../core/model-profiles.mjs";
 
-const VALUE_FLAGS = new Set(["worker", "workers", "role", "driver", "base", "timeout", "gate", "sandbox", "focus", "task", "job", "recent"]);
-const BOOL_FLAGS = new Set(["json", "apply", "wait", "background", "profiles", "no-fallback", "live", "active", "latest", "refresh"]);
+const VALUE_FLAGS = new Set(["worker", "workers", "role", "driver", "base", "timeout", "gate", "sandbox", "focus", "surface", "task", "job", "recent"]);
+const BOOL_FLAGS = new Set(["json", "apply", "wait", "background", "profiles", "no-fallback", "live", "active", "latest", "refresh", "artifact-only"]);
 
 function parseArgs(tokens) {
   const options = {};
@@ -135,7 +135,7 @@ switch (subcommand) {
       const legs = workers.map((w) => ({
         worker: w,
         result: runWithFallback(cwd, {
-          driver, worker: w, role, brief, kind, focus: options.focus, timeoutMs, profile,
+          driver, worker: w, role, brief, kind, focus: options.focus, surface: options.surface, timeoutMs, profile,
           fallbackKinds: new Set()
         })
       }));
@@ -159,7 +159,7 @@ switch (subcommand) {
     // `status <jobId> --wait`, read with `result`, stop with `cancel`. Single
     // worker (no auto-fallback — that's the synchronous path).
     if (options.background) {
-      const res = launchBackground(cwd, { driver, worker, role, brief, kind, focus: options.focus, timeoutMs, profile });
+      const res = launchBackground(cwd, { driver, worker, role, brief, kind, focus: options.focus, surface: options.surface, timeoutMs, profile });
       out(res, options, `${res.status} (background) — ${res.worker} — ${res.jobId}\nPoll: status ${res.jobId} --wait`);
       break;
     }
@@ -168,7 +168,7 @@ switch (subcommand) {
     // (rate-limit, timeout); auth surfaces. Tune via AGENT_COLLAB_FALLBACK
     // (off|on|comma-list); --no-fallback forces a single worker.
     const fallbackKinds = options["no-fallback"] ? new Set() : resolveFallbackKinds();
-    const res = runWithFallback(cwd, { driver, worker, role, brief, kind, focus: options.focus, timeoutMs, profile, fallbackKinds });
+    const res = runWithFallback(cwd, { driver, worker, role, brief, kind, focus: options.focus, surface: options.surface, timeoutMs, profile, fallbackKinds });
     if (options.apply && res.status === "completed" && role === "worker") {
       res.applied = applyResult(cwd, res.jobId);
     }
@@ -176,6 +176,49 @@ switch (subcommand) {
       `${res.status} — ${res.worker} — ${res.jobId}\nartifacts: ${res.artifactDir}` +
       (res.note ? `\n${res.note}` : "");
     out(res, options, human);
+    if (res.status !== "completed") process.exitCode = 2;
+    break;
+  }
+
+  case "review-followup": {
+    const priorId = options.job;
+    if (!priorId) fail("review-followup: --job <prior-job-id> is required");
+    const prior = getJob(cwd, priorId);
+    if (!prior) fail(`review-followup: unknown job ${priorId}`);
+    if (prior.role !== "reviewer") fail(`review-followup: ${priorId} was not a review job`);
+    if (prior.status !== "completed") fail(`review-followup: ${priorId} is not a completed review (status=${prior.status})`);
+    const worker = options.worker || prior.worker;
+    const { driver } = resolveDriver(options);
+    const brief = positionals.join(" ");
+    if (!brief) fail("review-followup: provide the focused follow-up diff or context");
+    let priorArtifact = null;
+    let priorReport = "";
+    try {
+      priorArtifact = JSON.parse(fs.readFileSync(path.join(prior.artifactDir, "outputs", `${prior.worker}.json`), "utf8"));
+    } catch { /* the saved report may have been prose-only */ }
+    try {
+      priorReport = fs.readFileSync(path.join(prior.artifactDir, "reports", `${prior.worker}.md`), "utf8").trim();
+    } catch { /* structured artifacts do not require a prose report */ }
+    const usableArtifact = prior.resultValid === true && priorArtifact ? priorArtifact : null;
+    if (!usableArtifact && !priorReport) {
+      fail(`review-followup: ${priorId} has neither a valid structured artifact nor a saved prose report`);
+    }
+    const focus = [
+      `Focused re-review of prior job ${priorId}.`,
+      "Verify whether its findings are resolved and report only regressions caused by this follow-up; do not repeat full discovery.",
+      usableArtifact
+        ? `Prior review artifact: ${JSON.stringify(usableArtifact)}`
+        : `Prior prose review:\n${priorReport}`,
+      options.focus || ""
+    ].filter(Boolean).join("\n");
+    const timeoutMs = options.timeout ? Number(options.timeout) * 1000 : undefined;
+    const res = runWithFallback(cwd, {
+      driver, worker, role: "reviewer", kind: "review", brief, focus,
+      surface: options.surface, profile: options.profile, timeoutMs,
+      followupOf: priorId,
+      fallbackKinds: options["no-fallback"] ? new Set() : resolveFallbackKinds()
+    });
+    out(res, options, `${res.status} — focused follow-up to ${priorId} — ${res.worker} — ${res.jobId}\nartifacts: ${res.artifactDir}`);
     if (res.status !== "completed") process.exitCode = 2;
     break;
   }
@@ -257,7 +300,39 @@ switch (subcommand) {
       : { error: "no output artifact" };
     const reportFile = path.join(job.artifactDir, "reports", `${job.worker}.md`);
     const report = fs.existsSync(reportFile) ? fs.readFileSync(reportFile, "utf8") : "";
-    out(artifact, options, `${report}\n\n---\n${JSON.stringify(artifact, null, 2)}`);
+    const jobMetadata = {
+      id: job.id,
+      driver: job.driver,
+      worker: job.worker,
+      role: job.role,
+      status: job.status,
+      resultValid: job.resultValid,
+      failureKind: job.failureKind,
+      errors: job.errors,
+      note: job.note,
+      reviewContext: job.reviewContext,
+      breachWarning: job.breachWarning,
+      breach: job.breach,
+      escapedPaths: job.escapedPaths,
+      sandboxed: job.sandboxed,
+      requestedModel: job.requestedModel,
+      resolvedModel: job.resolvedModel,
+      requestedEffort: job.requestedEffort,
+      profile: job.profile,
+      followupOf: job.followupOf,
+      runtimeVersion: job.runtimeVersion,
+      templateDigest: job.templateDigest,
+      workerTelemetry: job.workerTelemetry,
+      startedAt: job.startedAt,
+      completedAt: job.completedAt,
+      durationMs: job.durationMs
+    };
+    const envelope = { job: jobMetadata, artifact, report };
+    const warning = [job.note, job.breachWarning ? `breach warning: ${JSON.stringify(job.breachWarning)}` : null]
+      .filter(Boolean)
+      .join("\n");
+    const human = `${warning ? `WARNING\n${warning}\n\n` : ""}${report}\n\n---\n${JSON.stringify(envelope, null, 2)}`;
+    out(options["artifact-only"] ? artifact : envelope, options, options["artifact-only"] ? JSON.stringify(artifact, null, 2) : human);
     break;
   }
 
@@ -319,10 +394,11 @@ switch (subcommand) {
         "  doctor [--live] [--workers a,b] [--json]   self-check (config + readiness; --live runs review+isolation smoke)",
         "  recommend --task <type> [--driver <name>] [--json]   |   recommend --profiles",
         "  delegate --worker <name> [--driver <name>] [--role worker|reviewer] [--background] [--apply] [--timeout s] <brief>",
-        "  review  --worker <name> | --workers a,b [--driver <name>] [--focus <text>] [--profile <name>] [--background] <diff/context>",
-        "  adversarial-review --worker <name> | --workers a,b [--focus <text>] [--profile <name>] [--background] <diff/context>",
+        "  review  --worker <name> | --workers a,b [--surface head|working-tree|diff] [--focus <text>] [--profile <name>] [--background] <diff/context>",
+        "  adversarial-review --worker <name> | --workers a,b [--surface head|working-tree|diff] [--focus <text>] [--profile <name>] [--background] <diff/context>",
+        "  review-followup --job <prior-id> [--worker <name>] [--surface head|working-tree|diff] <focused diff/context>",
         "  status [jobId|--latest] [--worker name] [--role role] [--refresh|--wait] [--timeout s] [--active] [--recent n] [--json]",
-        "  result <jobId|--latest> [--worker name] [--role role] [--refresh] [--json]",
+        "  result <jobId|--latest> [--worker name] [--role role] [--refresh] [--artifact-only] [--json]",
         "  apply  <jobId>",
         "  cancel <jobId>"
       ].join("\n")

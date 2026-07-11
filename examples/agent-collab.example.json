@@ -1,4 +1,8 @@
 {
+  "preflight": {
+    "maxWorktrees": 3,
+    "minFreeDiskGb": 20
+  },
   "workers": {
     "codex":  { "reviewer": { "model": "gpt-5.6-terra", "effort": "high" } },
     "agy":    { "reviewer": { "model": "Gemini 3.5 Flash (High)" } },

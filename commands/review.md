@@ -1,6 +1,6 @@
 ---
-description: Get a read-only correctness review from another harness (codex, claude, or agy) against the current changes
-argument-hint: '--worker <codex|claude|agy> [--focus <text>] <diff / what to review>'
+description: Get a read-only correctness review from another harness against an explicit change surface
+argument-hint: '--worker <codex|claude|agy> [--surface head|working-tree|diff] [--focus <text>] <diff / what to review>'
 disable-model-invocation: true
 allowed-tools: Bash(node:*), Bash(git:*), Read
 ---
@@ -14,6 +14,10 @@ Any worker (**codex**, **claude**, or **agy**) can review — agy uses its
 configured Gemini model (Flash by default). Gather the diff (`git diff` / `git diff --cached`) and pass
 it as the brief; it becomes the review template's `{{REVIEW_INPUT}}`. Use `--focus`
 to weight an area.
+
+Unified diffs select the `diff` surface automatically. A clean prose brief defaults to `head`;
+if the checkout is dirty, explicitly choose `--surface working-tree` to snapshot it or
+`--surface head` to exclude those changes. Ambiguous dirty reviews fail closed.
 
 ```bash
 node "${CLAUDE_PLUGIN_ROOT}/scripts/agent-companion.mjs" review $ARGUMENTS --driver claude

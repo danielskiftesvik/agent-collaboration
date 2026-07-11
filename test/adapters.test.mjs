@@ -97,6 +97,22 @@ test("claude parseOutput unwraps the result field from the JSON envelope", () =>
   assert.equal(r.answerText, '{"status":"completed"}');
 });
 
+test("claude parseOutput preserves provider telemetry from the terminal event", () => {
+  const claude = getAdapter("claude");
+  const parsed = claude.parseOutput({
+    stdout: JSON.stringify({
+      type: "result", result: '{"verdict":"approve"}', session_id: "session-1",
+      duration_ms: 1234, num_turns: 3, total_cost_usd: 0.42,
+      modelUsage: { opus: { inputTokens: 10 } }
+    })
+  });
+  assert.equal(parsed.telemetry.sessionId, "session-1");
+  assert.equal(parsed.telemetry.durationMs, 1234);
+  assert.equal(parsed.telemetry.turns, 3);
+  assert.equal(parsed.telemetry.costUsd, 0.42);
+  assert.deepEqual(parsed.telemetry.resolvedModels, ["opus"]);
+});
+
 test("claude parseOutput falls back to raw stdout when not a JSON envelope", () => {
   const claude = getAdapter("claude");
   const r = claude.parseOutput({ stdout: "plain text answer", stderr: "", exitCode: 0 });
@@ -154,6 +170,8 @@ test("agy buildCommand honors an explicit model env override", () => {
 test("claude.outputContract gives a structured contract per role", () => {
   const claude = getAdapter("claude");
   assert.match(claude.outputContract("reviewer"), /verdict/);
+  assert.match(claude.outputContract("reviewer"), /Every actionable defect must be a finding/);
+  assert.match(claude.outputContract("reviewer"), /needs-attention verdict requires at least one finding/);
   assert.match(claude.outputContract("worker"), /status/);
 });
 
@@ -163,12 +181,14 @@ test("agy.outputContract is an example-anchored, JSON-only instruction", () => {
   assert.match(c, /only.*json/i, "demands JSON only");
   assert.match(c, /nothing else|no prose|no text (before|outside)/i, "forbids surrounding prose");
   assert.match(c, /"verdict"/, "includes a concrete example");
+  assert.match(c, /Every actionable defect must be in findings/);
 });
 
 test("codex.outputContract uses an XML structured-output block", () => {
   const codex = getAdapter("codex");
-  const c = codex.outputContract("worker");
+  const c = codex.outputContract("reviewer");
   assert.match(c, /<structured_output_contract>/);
+  assert.match(c, /Every actionable defect must be a finding/);
 });
 
 function clearCodexModelEnv() {
@@ -363,4 +383,3 @@ test("qwen probe reports unavailable with a clear message when the local server 
 // could avoid it, but adds real timing/port-coordination complexity for one
 // assertion; the positive path is exercised implicitly by every live qwen run
 // throughout this project's development instead.
-

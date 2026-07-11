@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.6.2 - 2026-07-11
+
+- Review provenance hardening (codex): explicit `head|working-tree|diff` surfaces with fail-closed ambiguity on dirty checkouts, safe working-tree snapshots, default result envelopes with warnings/telemetry, incomplete partial dual reviews (never "approved" on one family), stricter finding contracts (`critical` rank, needs-attention requires a finding, title-similarity dedup), focused `review-followup`, and optional repo-owned worktree/disk preflight limits.
+
 ## 0.6.1 - 2026-07-11
 
 - Fix: `review --workers a,b` (dual review) was unreachable — the `--worker`-required guard fired first. Found by the first live dual-review run; the guard now accepts `--workers`, the native-route shortcut applies only to a single named worker, and dual mode rejects `--background` explicitly.
