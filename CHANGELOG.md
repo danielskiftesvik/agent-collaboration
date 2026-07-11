@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.5.7 - 2026-07-11
+
+- codex adapter: per-dispatch `--model`/`--effort` via `AGENT_COLLAB_CODEX_MODEL`/`AGENT_COLLAB_CODEX_EFFORT`, with reviewer-scoped defaults `_MODEL_REVIEW`/`_EFFORT_REVIEW` (generic wins; unset preserves prior behavior — base `~/.codex/config.toml` governs). Enables the Terra-standard / Sol-boundary review seat policy without hand-editing the user's config. Resume-repair never re-pins (the thread keeps its model).
+
 ## 0.5.6 - 2026-07-10
 
 - Recover lost collaboration envelopes with lock-free `status/result --latest`, filterable by worker and role.

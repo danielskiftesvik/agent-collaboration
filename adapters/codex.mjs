@@ -8,6 +8,28 @@ import path from "node:path";
 import { defineAdapter } from "./contract.mjs";
 import { extractJson } from "../core/schema.mjs";
 
+// Per-dispatch model/effort overrides. The base ~/.codex/config.toml remains the
+// default instrument; these envs let a driver escalate a single dispatch (e.g. a
+// boundary review on Sol while the base stays Terra) without hand-editing the
+// user's config. Precedence: the explicit generic var wins (the "this dispatch"
+// lever), then the role-scoped var (a standing default for that role), else no
+// flag at all — unset preserves prior behavior (base config governs).
+function codexModel(role) {
+  return (
+    process.env.AGENT_COLLAB_CODEX_MODEL ||
+    (role === "reviewer" ? process.env.AGENT_COLLAB_CODEX_MODEL_REVIEW : null) ||
+    null
+  );
+}
+
+function codexEffort(role) {
+  return (
+    process.env.AGENT_COLLAB_CODEX_EFFORT ||
+    (role === "reviewer" ? process.env.AGENT_COLLAB_CODEX_EFFORT_REVIEW : null) ||
+    null
+  );
+}
+
 function resolveCompanion() {
   if (process.env.AGENT_COLLAB_CODEX_COMPANION) {
     return process.env.AGENT_COLLAB_CODEX_COMPANION;
@@ -32,6 +54,10 @@ export default defineAdapter({
     const companion = resolveCompanion();
     const args = [companion, "task", "--json"];
     if (role !== "reviewer") args.push("--write");
+    const model = codexModel(role);
+    if (model) args.push("--model", model);
+    const effort = codexEffort(role);
+    if (effort) args.push("--effort", effort);
     args.push(brief);
     return { command: process.execPath, args };
   },
@@ -45,6 +71,8 @@ export default defineAdapter({
     if (!companion) return null;
     const args = [companion, "task", "--json", "--resume-last"];
     if (role !== "reviewer") args.push("--write");
+    // No --model/--effort on resume: the resumed thread already carries the
+    // model it was started with; re-pinning here could conflict with it.
     args.push(repairBrief);
     return { command: process.execPath, args };
   },

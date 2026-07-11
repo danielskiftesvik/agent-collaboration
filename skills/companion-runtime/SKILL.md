@@ -186,6 +186,7 @@ read `tasks/<jobId>/reports/<worker>.md`.
 - `AGENT_COLLAB_ALLOW_INPLACE=on` — allow an UNISOLATED in-place run when a worktree can't be created (off by default → such a job is `blocked`, never run in the real cwd).
 - `AGENT_COLLAB_<AGY|CLAUDE|CODEX>_BIN` — override a harness binary.
 - `AGENT_COLLAB_AGY_MODEL[_PRO|_FLASH]` — explicit agy model id (default: unset).
+- `AGENT_COLLAB_CODEX_MODEL` / `AGENT_COLLAB_CODEX_EFFORT` — per-dispatch codex model/effort (passed as `--model`/`--effort` to codex-companion). Role-scoped defaults: `AGENT_COLLAB_CODEX_MODEL_REVIEW` / `AGENT_COLLAB_CODEX_EFFORT_REVIEW` apply to reviewers only; the generic var wins when both are set. Unset = no flags, the user's `~/.codex/config.toml` governs (prior behavior). Not re-pinned on thread-resume repair.
 
 ## Driving from a sandboxed harness
 

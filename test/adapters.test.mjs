@@ -171,6 +171,63 @@ test("codex.outputContract uses an XML structured-output block", () => {
   assert.match(c, /<structured_output_contract>/);
 });
 
+function clearCodexModelEnv() {
+  delete process.env.AGENT_COLLAB_CODEX_MODEL;
+  delete process.env.AGENT_COLLAB_CODEX_MODEL_REVIEW;
+  delete process.env.AGENT_COLLAB_CODEX_EFFORT;
+  delete process.env.AGENT_COLLAB_CODEX_EFFORT_REVIEW;
+}
+
+test("codex buildCommand omits --model/--effort when no env is set (base config governs)", () => {
+  clearCodexModelEnv();
+  process.env.AGENT_COLLAB_CODEX_COMPANION = "/stub/codex-companion.mjs";
+  const { args } = getAdapter("codex").buildCommand({ role: "reviewer", brief: "x" });
+  assert.ok(!args.includes("--model"), "no --model without env");
+  assert.ok(!args.includes("--effort"), "no --effort without env");
+  assert.equal(args[args.length - 1], "x", "brief stays last");
+  delete process.env.AGENT_COLLAB_CODEX_COMPANION;
+});
+
+test("codex buildCommand honors AGENT_COLLAB_CODEX_MODEL and _EFFORT for any role", () => {
+  clearCodexModelEnv();
+  process.env.AGENT_COLLAB_CODEX_COMPANION = "/stub/codex-companion.mjs";
+  process.env.AGENT_COLLAB_CODEX_MODEL = "gpt-5.6-sol";
+  process.env.AGENT_COLLAB_CODEX_EFFORT = "xhigh";
+  const { args } = getAdapter("codex").buildCommand({ role: "worker", brief: "x" });
+  assert.equal(args[args.indexOf("--model") + 1], "gpt-5.6-sol");
+  assert.equal(args[args.indexOf("--effort") + 1], "xhigh");
+  assert.equal(args[args.length - 1], "x", "brief stays last");
+  clearCodexModelEnv();
+  delete process.env.AGENT_COLLAB_CODEX_COMPANION;
+});
+
+test("codex _MODEL_REVIEW applies to reviewers only; generic _MODEL wins over it", () => {
+  clearCodexModelEnv();
+  process.env.AGENT_COLLAB_CODEX_COMPANION = "/stub/codex-companion.mjs";
+  process.env.AGENT_COLLAB_CODEX_MODEL_REVIEW = "gpt-5.6-sol";
+  const reviewer = getAdapter("codex").buildCommand({ role: "reviewer", brief: "x" });
+  assert.equal(reviewer.args[reviewer.args.indexOf("--model") + 1], "gpt-5.6-sol");
+  const worker = getAdapter("codex").buildCommand({ role: "worker", brief: "x" });
+  assert.ok(!worker.args.includes("--model"), "role-scoped var must not leak to workers");
+  process.env.AGENT_COLLAB_CODEX_MODEL = "gpt-5.6-terra";
+  const overridden = getAdapter("codex").buildCommand({ role: "reviewer", brief: "x" });
+  assert.equal(overridden.args[overridden.args.indexOf("--model") + 1], "gpt-5.6-terra");
+  clearCodexModelEnv();
+  delete process.env.AGENT_COLLAB_CODEX_COMPANION;
+});
+
+test("codex buildRetryCommand never re-pins model/effort (resumed thread keeps its own)", () => {
+  clearCodexModelEnv();
+  process.env.AGENT_COLLAB_CODEX_COMPANION = "/stub/codex-companion.mjs";
+  process.env.AGENT_COLLAB_CODEX_MODEL = "gpt-5.6-sol";
+  delete process.env.AGENT_COLLAB_CODEX_RESUME;
+  const retry = getAdapter("codex").buildRetryCommand({ role: "reviewer", repairBrief: "fix json" });
+  assert.ok(retry.args.includes("--resume-last"));
+  assert.ok(!retry.args.includes("--model"), "resume must not re-pin model");
+  clearCodexModelEnv();
+  delete process.env.AGENT_COLLAB_CODEX_COMPANION;
+});
+
 test("codex parseOutput unwraps rawOutput from the companion envelope", () => {
   const codex = getAdapter("codex");
   const envelope = JSON.stringify({

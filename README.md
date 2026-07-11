@@ -201,6 +201,7 @@ node /path/to/agent-collaboration/scripts/agent-companion.mjs \
 | `AGENT_COLLAB_ALLOW_NONWRITER=on` | Force a harness marked reviewer-only to run as a write-worker anyway. Off by default; use only for local experiments because patch capture may be empty |
 | `AGENT_COLLAB_AGY_CLASS` | agy model class to pin (`Flash` default, `Pro`, …) |
 | `AGENT_COLLAB_AGY_MODEL` | Pin an exact agy model label (overrides the class) |
+| `AGENT_COLLAB_CODEX_MODEL` / `_EFFORT` | Per-dispatch codex model/effort override (e.g. escalate one boundary review to `gpt-5.6-sol` while base config stays on a cheaper tier). `_MODEL_REVIEW` / `_EFFORT_REVIEW` variants apply to reviewers only; generic wins. Unset = base `~/.codex/config.toml` governs |
 | `AGENT_COLLAB_CLAUDE_MODEL` | Pin the model passed to `claude --model` (default: `default`, Claude Code's account-tier recommendation — never Fable/Haiku) |
 | `AGENT_COLLAB_QWEN_BIN` | Override the `qwen` binary path |
 | `AGENT_COLLAB_QWEN_MODEL` | Pin a specific local model via `-m` (default: none — inherits qwen's own configured default in `~/.qwen/settings.json`, since LM Studio serves one model at a time and can't be reliably auto-detected) |
