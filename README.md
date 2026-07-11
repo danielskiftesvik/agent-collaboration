@@ -183,6 +183,44 @@ node /path/to/agent-collaboration/scripts/agent-companion.mjs \
 > **escalated / network-enabled** permissions — it spawns a worker that calls an external
 > API, which a default sandbox will block.
 
+## Model pins — `.agent-collab.json`
+
+**The problem:** the model your reviews run on shouldn't depend on what you last did in a
+terminal. Harness base configs drift — the Codex TUI, for example, writes whatever model you
+last picked in a session back to `~/.codex/config.toml`. If dispatches read that file, your
+carefully-chosen review model silently follows your interactive habits.
+
+**The fix:** commit a `.agent-collab.json` at your repo root. It pins standing models per
+worker and role, and the runtime reads it on every dispatch — no matter which harness is
+driving (Claude Code, Codex, or Antigravity shells all get the same pins), no env vars, no
+shell-profile exports.
+
+```json
+{
+  "workers": {
+    "codex":  { "reviewer": { "model": "gpt-5.6-terra", "effort": "high" } },
+    "agy":    { "reviewer": { "model": "Gemini 3.5 Flash (High)" } },
+    "claude": { "worker":   { "model": "sonnet" } }
+  }
+}
+```
+
+**Precedence** (per dispatch, most-specific wins):
+
+```
+env var (this dispatch)  >  .agent-collab.json (standing pin)  >  harness default
+AGENT_COLLAB_CODEX_MODEL     tracked in your repo                 e.g. ~/.codex/config.toml
+```
+
+- **Env = the escalation lever.** A single hard review can be bumped without touching the
+  standing pin: `AGENT_COLLAB_CODEX_MODEL=gpt-5.6-sol node …/agent-companion.mjs review …`
+- **File = the instrument.** Because it's version-controlled, changing a review model is a
+  visible diff — pair it with whatever re-validation your project requires (recommended:
+  re-run a planted-bug calibration before changing a reviewer pin).
+- Roles are `reviewer` and `worker`; pin only what you need — anything unpinned falls through
+  to the harness's own default.
+- A malformed file logs a warning and behaves as unpinned; it never silently changes models.
+
 ## Configuration
 
 | Env var | Effect |
