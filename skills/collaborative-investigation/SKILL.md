@@ -107,6 +107,15 @@ If disagree, my alternative: same structure, or n/a."
 
 Read the worker's report (`… result <jobId>`). The assessment is the report text.
 
+The command is synchronous by default and can be quiet until the reviewer exits;
+silence alone is never evidence of a stall. Let the runtime's idle and hard limits
+classify failure. If the shell surface cannot hold a long synchronous command, use
+`--background --json`, retain the exact job id, run
+`status <exact-job-id> --wait`, and only then `result <exact-job-id>`. Do not use
+`--latest` when the launch returned an id, and do not cancel a healthy within-budget
+review. Background runs currently lack synchronous auto-fallback, so prefer the
+synchronous gate when the shell can wait.
+
 ## Step 4 — Synthesize and gate
 
 ```markdown

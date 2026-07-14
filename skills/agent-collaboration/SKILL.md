@@ -49,6 +49,11 @@ node scripts/agent-companion.mjs apply <jobId>
 1. The driver harness holds the authority of the main branch.
 2. The worker harness only produces artifact files (patch, report, results).
 3. Do not apply patches automatically without checking their contents.
-4. Empty or lost companion output is not a failed review. Recover with
-   `status --latest --role reviewer [--worker <name>]`, read `result --latest`
-   with the same filters, and inspect the saved report before retrying.
+4. Keep the exact job id returned by the launch. For a background run, wait with
+   `status <exact-job-id> --wait`, then read `result <exact-job-id>`. A quiet
+   terminal is not a stall: trust the reported `health` and the runtime's idle/
+   hard limits, not the absence of streamed text.
+5. `--latest` is only for lost-launch recovery when the exact job id is genuinely
+   unavailable. Narrow it by worker/role, recover the id once, then use that id.
+6. Never cancel a healthy within-budget job merely because it is unfinished.
+   `cancel` refuses this without an explicit `--force` override.

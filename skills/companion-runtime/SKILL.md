@@ -23,7 +23,7 @@ review-followup --job <prior-id> [--worker <name>] [--surface head|working-tree|
 status [jobId|--latest] [--worker <name>] [--role <role>] [--refresh|--wait] [--timeout <s>] [--active] [--recent <n>] [--json]
 result <jobId|--latest> [--worker <name>] [--role <role>] [--refresh] [--json]
 apply  <jobId>
-cancel <jobId>
+cancel <jobId> [--force]
 ```
 (`run-job --job <id>` exists but is INTERNAL — it's the detached worker entrypoint
 spawned by `--background`; don't call it directly.)
@@ -111,17 +111,24 @@ By default `delegate`/`review`/`adversarial-review` run **synchronously** (block
 done, with auto-fallback). With **`--background`** the runtime spawns a **detached**
 worker and returns `{jobId, status:"running", background:true}` immediately — the run
 survives a driver crash. Then:
-- `status <jobId>` — poll once; `status <jobId> --wait [--timeout <s>]` — block until
-  the job reaches a terminal status (or the process dies → `failureKind:"stalled"`).
+- `status <jobId>` — poll once and return a lock-free `health` projection (`live`,
+  idle/hard budget state, latest progress, `stalled`). `status <jobId> --wait
+  [--timeout <s>]` blocks until the job reaches a terminal status (or the process
+  dies → `failureKind:"stalled"`). Retain and use the exact job id from launch.
 - `status --active` — show only non-terminal jobs; `status --recent <n>` — limit list output.
-- `result <jobId>` — the report + structured output once terminal.
-- `cancel <jobId>` — kills the detached worker's whole process group.
+- `result <jobId>` — the report + structured output once terminal. Before then it
+  returns `ready:false`, the live health projection, and the exact wait command.
+- `cancel <jobId>` — refuses a healthy, within-budget job. `cancel <jobId> --force`
+  is the explicit override that kills the detached worker's whole process group.
 
 Plain `status` and `result` calls are read-only and do not acquire the state write
-lock. Use `status --refresh` to update liveness or `status --wait` to block. If a
-sync caller loses its terminal envelope, recover by creation time with
-`status --latest --role reviewer [--worker claude]`, then run `result --latest`
-with the same filters. Check the recovered artifacts before launching a retry.
+lock. The `health` projection reads the live progress marker without mutating state;
+use `status --refresh` only to persist/reap objective liveness changes, or
+`status --wait` to block. Keep the exact job id whenever launch returned one.
+`--latest` is only for lost-launch recovery when that id is unavailable: recover by
+creation time with `status --latest --role reviewer [--worker claude]`, capture the
+recovered id, then use `result <exact-job-id>`. Check the recovered artifacts before
+launching a retry.
 
 Background runs a **single worker** (no auto-fallback — that's the synchronous path).
 This is the brokerless version of the reference's async model (no app-server broker).
@@ -138,6 +145,9 @@ qwen also have wider profile idle budgets for quiet long-running work. Separate
 from the hard timeout below.
 For post-mortems, every attempt writes raw stdout/stderr and redacted command
 metadata to `artifactDir/logs/`; `status <jobId>` points at those logs.
+Claude's NDJSON can update the progress marker while the outer CLI remains quiet
+because the synchronous process wrapper buffers output. This is expected and is why
+`status.health`, rather than visible terminal text, is the liveness authority.
 
 ## Timeouts (avoid the "no JSON found" no-output)
 
@@ -247,16 +257,19 @@ Do **not** obfuscate the payload to slip past the check — it exists to gate th
 ## status vs result vs apply
 
 - `status <jobId|--latest>` → the **runtime's job metadata** (status, breach,
-  escapedPaths, attempts, failureKind, note, pid…). `--latest` selects by
-  `createdAt`, optionally filtered by `--worker`/`--role`; `--refresh` updates
-  liveness and `--wait` blocks until terminal.
+  escapedPaths, attempts, failureKind, note, pid…) plus a read-only `health`
+  projection for active jobs. `--latest` selects by `createdAt`, optionally filtered
+  by `--worker`/`--role`, and is recovery-only; `--refresh` persists objective
+  liveness changes and `--wait` blocks until terminal.
 - `result <jobId|--latest>` → the **worker's deliverable**: its report (`reports/<worker>.md`)
   + structured self-report (`outputs/<worker>.json`). Self-report can disagree with
   the runtime (e.g. worker claims `changed:true` but the runtime captured nothing →
   `status` says `no-changes` with a `note`). `result --json` returns an envelope
   containing the artifact plus unavoidable job provenance and warnings. Use
   `result --artifact-only --json` only for legacy consumers that require the bare
-  structured artifact. Trust the runtime's captured state.
+  structured artifact. A nonterminal result returns `ready:false` and the exact
+  wait command instead of a misleading missing-artifact error. Trust the runtime's
+  captured state.
 - `apply <jobId>` → lands the patch in the **working tree, unstaged** (clean index)
   so you inspect with `git diff` then commit; if you had pre-existing staged work it
   stays **staged**. It never accepts `--latest`; never auto-applies.

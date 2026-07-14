@@ -26,3 +26,18 @@ test("ships a Codex auto-review TOML example for agy review egress", () => {
   assert.match(t, /Deny:/);
   assert.doesNotMatch(t, /prspctv|nbfcqrtwxevypgtsysqr|supabase/i);
 });
+
+test("runtime guidance keeps exact job ids and treats --latest as lost-launch recovery only", () => {
+  for (const f of [
+    "../skills/agent-collaboration/SKILL.md",
+    "../skills/companion-runtime/SKILL.md",
+    "../skills/result-handling/SKILL.md"
+  ]) {
+    const t = readText(f);
+    assert.match(t, /exact job id/i, `${f} requires exact job ids`);
+    assert.match(t, /--latest[^\n]*(lost|recovery)|lost[^\n]*--latest/i, `${f} limits --latest to recovery`);
+  }
+  const cancel = readText("../commands/cancel.md");
+  assert.match(cancel, /--force/);
+  assert.match(cancel, /healthy|within-budget/i);
+});

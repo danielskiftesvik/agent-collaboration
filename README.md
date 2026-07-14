@@ -67,8 +67,9 @@ Two delegation paths, chosen automatically:
 - **Cross-harness** — when driver ≠ worker, the `agent-companion` runtime creates an
   isolated git worktree, writes a brief, spawns the target harness **unattended**, monitors
   it, and collects validated artifacts. The driver — and only the driver — applies the patch.
-  Runs **synchronously** by default; pass `--background` to detach the worker and poll it with
-  `status <jobId> --wait` / `result` / `cancel` (a brokerless take on the reference's async model).
+  Runs **synchronously** by default; pass `--background` to detach the worker, retain its exact
+  job id, and use `status <jobId> --wait` then `result <jobId>` (a brokerless take on the
+  reference's async model). Quiet terminal output is not a stall; status exposes live health.
 
 ## Commands
 
@@ -81,10 +82,10 @@ Two delegation paths, chosen automatically:
 | `/agent-collab:review --worker <name> [--focus <text>] <diff>` | Read-only cross-harness **review** |
 | `/agent-collab:adversarial-review --worker <name> <diff>` | "Try to break it" review |
 | `/agent-collab:review-followup --job <prior-id> [--worker <name>] <focused diff/context>` | Recheck a focused fix against a prior review |
-| `/agent-collab:status [jobId\|--latest] [--worker name] [--role role] [--refresh\|--wait] [--active] [--recent n]` | List / inspect jobs; reads are lock-free unless explicitly refreshed or waited |
-| `/agent-collab:result <jobId\|--latest> [--worker name] [--role role]` | Show a job's report + structured output without mutating state |
+| `/agent-collab:status [jobId\|--latest] [--worker name] [--role role] [--refresh\|--wait] [--active] [--recent n]` | List / inspect jobs with lock-free live health; reads mutate state only when explicitly refreshed or waited |
+| `/agent-collab:result <jobId\|--latest> [--worker name] [--role role]` | Show a terminal job's report, or `ready:false` plus the exact wait command while it runs |
 | `/agent-collab:apply <jobId>` | Apply a worker's patch (3-way) to the working tree |
-| `/agent-collab:cancel <jobId>` | Cancel a running job |
+| `/agent-collab:cancel <jobId> [--force]` | Cancel an unhealthy job; healthy within-budget jobs require the explicit `--force` override |
 
 Review commands accept `--surface head|working-tree|diff`. Unified diffs are detected automatically and clean prose defaults to `head`. Dirty prose fails closed until the caller chooses `working-tree` (safely snapshotted with a temporary Git index) or `head` (dirty paths excluded). `review-followup --job <prior-id> ...` runs a focused verification tied to the earlier review.
 
@@ -129,13 +130,15 @@ driver, `AGENTS.md` for Codex/agy drivers).
   (`schemas/`); a worker is `completed` on a clean, applying patch even if its metadata JSON
   is missing (the patch is the deliverable).
 - **Stall detection:** jobs carry a heartbeat; a job whose heartbeat is stale **and** whose
-  process is gone is treated as stalled.
+  process is gone is treated as stalled. `status.health` also reads the idle-guard's live
+  progress marker, so internally streaming work remains visibly healthy even when the outer
+  synchronous process wrapper has not printed yet.
 - **Diagnostics:** every attempt persists raw stdout/stderr plus redacted command
   metadata in `artifactDir/logs/`. `version --json` reports the runtime path and
   state dir, and `status --active` / `status --recent <n>` keep current jobs visible.
-  If a caller loses the terminal envelope, recover it with
-  `status --latest --role reviewer [--worker claude]`, then read the deliverable with
-  `result --latest` using the same filters. Do this before retrying a review.
+  Keep and use the exact job id from launch. `--latest` is only for lost-launch recovery:
+  recover once with `status --latest --role reviewer [--worker claude]`, capture that id,
+  then read `result <exact-job-id>`. Do this before retrying a review.
 - **Review provenance:** review jobs record `reviewContext` (`baseRef`, dirty paths
   at launch, and whether the supplied diff was staged into the reviewer worktree)
   so you can prove what code the reviewer saw.

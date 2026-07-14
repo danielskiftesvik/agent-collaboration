@@ -232,13 +232,111 @@ test("status and result are lock-free reads; --refresh explicitly updates livene
   assert.equal(JSON.parse(status.stdout).status, "running");
   const result = cli(["result", "--latest", "--worker", "claude", "--json"], { cwd: repo, env });
   assert.equal(result.status, 0, result.stderr);
-  assert.equal(JSON.parse(result.stdout).artifact.summary, "saved");
+  assert.equal(JSON.parse(result.stdout).ready, false);
+  assert.equal(JSON.parse(result.stdout).job.id, "dead");
   assert.equal(getJob(repo, "dead").status, "running", "read-only commands must not reap jobs");
 
   fs.unlinkSync(lock);
   const refreshed = cli(["status", "dead", "--refresh", "--json"], { cwd: repo, env });
   assert.equal(refreshed.status, 0, refreshed.stderr);
   assert.equal(JSON.parse(refreshed.stdout).failureKind, "stalled");
+  const recovered = cli(["result", "dead", "--json"], { cwd: repo, env });
+  assert.equal(recovered.status, 0, recovered.stderr);
+  assert.equal(JSON.parse(recovered.stdout).ready, true);
+  assert.equal(JSON.parse(recovered.stdout).artifact.summary, "saved");
+});
+
+test("status projects live progress without mutating state; result says a running job is not ready", () => {
+  const dataDir = isolateStateRoot();
+  const repo = makeRepo();
+  const artifactDir = path.join(dataDir, "artifacts", "healthy-running");
+  const progressFile = path.join(artifactDir, "logs", "progress.json");
+  fs.mkdirSync(path.dirname(progressFile), { recursive: true });
+  const startedAt = new Date(Date.now() - 30_000).toISOString();
+  const progressAt = new Date(Date.now() - 1_000).toISOString();
+  fs.writeFileSync(progressFile, JSON.stringify({ at: progressAt, kind: "stdout" }) + "\n");
+  appendJob(repo, {
+    id: "healthy-running",
+    worker: "claude",
+    role: "reviewer",
+    driver: "codex",
+    status: "running",
+    pid: process.pid,
+    artifactDir,
+    progressFile,
+    startedAt,
+    heartbeatAt: startedAt,
+    lastProgressAt: startedAt,
+    lastProgressKind: "launch",
+    idleMs: 600_000,
+    timeoutMs: 1_200_000
+  });
+  const env = { AGENT_COLLAB_DATA: dataDir, AGENT_COLLAB_LOCK_TIMEOUT_MS: "30" };
+  const lock = path.join(resolveStateDir(repo), ".lock");
+  fs.writeFileSync(lock, "held");
+
+  const status = cli(["status", "healthy-running", "--json"], { cwd: repo, env });
+  assert.equal(status.status, 0, status.stderr);
+  const projected = JSON.parse(status.stdout);
+  assert.equal(projected.status, "running");
+  assert.equal(projected.health.live, true);
+  assert.equal(projected.health.withinIdleBudget, true);
+  assert.equal(projected.health.withinHardBudget, true);
+  assert.equal(projected.health.stalled, false);
+  assert.equal(projected.health.lastProgressAt, progressAt);
+  assert.equal(projected.health.lastProgressKind, "stdout");
+  assert.equal(getJob(repo, "healthy-running").lastProgressKind, "launch", "projection must stay lock-free");
+
+  const result = cli(["result", "healthy-running", "--json"], { cwd: repo, env });
+  assert.equal(result.status, 0, result.stderr);
+  const pending = JSON.parse(result.stdout);
+  assert.equal(pending.ready, false);
+  assert.equal(pending.job.id, "healthy-running");
+  assert.equal(pending.health.live, true);
+  assert.equal(pending.health.stalled, false);
+  assert.equal(pending.waitCommand, "status healthy-running --wait");
+
+  fs.unlinkSync(lock);
+});
+
+test("cancel refuses a healthy live job unless --force is explicit", (t) => {
+  const dataDir = isolateStateRoot();
+  const repo = makeRepo();
+  const bin = stubBin(`
+    if (process.argv.includes('models')) { process.exit(0); }
+    await new Promise((resolve) => setTimeout(resolve, 60_000));
+    process.stdout.write('Done.\\n\\n\`\`\`json\\n{"status":"completed","summary":"late","changed":false}\\n\`\`\`');
+  `);
+  const env = { AGENT_COLLAB_DATA: dataDir, AGENT_COLLAB_AGY_BIN: bin };
+  const launch = cli([
+    "delegate", "--driver", "claude", "--worker", "agy", "--background", "--json", "wait"
+  ], { cwd: repo, env });
+  assert.equal(launch.status, 0, launch.stderr);
+  const { jobId } = JSON.parse(launch.stdout);
+  t.after(() => {
+    const job = getJob(repo, jobId);
+    if (!job?.pid) return;
+    try { process.kill(-job.pid, "SIGKILL"); } catch {}
+    try { process.kill(job.pid, "SIGKILL"); } catch {}
+  });
+
+  const refused = cli(["cancel", jobId, "--json"], { cwd: repo, env });
+  assert.equal(refused.status, 2, refused.stderr);
+  const refusal = JSON.parse(refused.stdout);
+  assert.equal(refusal.cancelled, false);
+  assert.equal(refusal.health.live, true);
+  assert.equal(refusal.health.withinIdleBudget, true);
+  assert.equal(refusal.health.withinHardBudget, true);
+  assert.ok(refusal.health.idleSecondsRemaining > 0);
+  assert.ok(refusal.health.hardSecondsRemaining > 0);
+  assert.equal(refusal.waitCommand, `status ${jobId} --wait`);
+  assert.equal(refusal.forceCommand, `cancel ${jobId} --force`);
+  assert.equal(getJob(repo, jobId).status, "running");
+
+  const forced = cli(["cancel", jobId, "--force", "--json"], { cwd: repo, env });
+  assert.equal(forced.status, 0, forced.stderr);
+  assert.equal(JSON.parse(forced.stdout).status, "cancelled");
+  assert.equal(getJob(repo, jobId).status, "cancelled");
 });
 
 test("status --refresh only refreshes jobs selected by --recent", () => {

@@ -18,14 +18,16 @@ export function renderSetup(rows) {
 export function renderJob(job) {
   if (!job) return "no such job";
   const running = job.status === "running" || job.status === "queued";
-  const idleLeft = running ? secondsLeft(job.lastProgressAt || job.heartbeatAt, job.idleMs) : null;
-  const hardLeft = running ? secondsLeft(job.startedAt || job.createdAt, job.timeoutMs) : null;
+  const health = job.health;
+  const idleLeft = health?.idleSecondsRemaining ?? (running ? secondsLeft(job.lastProgressAt || job.heartbeatAt, job.idleMs) : null);
+  const hardLeft = health?.hardSecondsRemaining ?? (running ? secondsLeft(job.startedAt || job.createdAt, job.timeoutMs) : null);
   return [
     `job      ${job.id}`,
     `route    ${job.driver} → ${job.worker} (${job.role})`,
     `status   ${job.status}${job.valid === false ? " (invalid output)" : ""}`,
     running && job.pid ? `pid      ${job.pid}` : null,
-    running ? `progress ${job.lastProgressAt || job.heartbeatAt || "unknown"}${job.lastProgressKind ? ` (${job.lastProgressKind})` : ""}` : null,
+    running && health ? `health   ${health.healthy ? "live and within budget (not stalled)" : health.state}` : null,
+    running ? `progress ${health?.lastProgressAt || job.lastProgressAt || job.heartbeatAt || "unknown"}${health?.lastProgressKind || job.lastProgressKind ? ` (${health?.lastProgressKind || job.lastProgressKind})` : ""}` : null,
     idleLeft != null ? `idle     kill in ${idleLeft}s` : null,
     hardLeft != null ? `timeout  kill in ${hardLeft}s` : null,
     `updated  ${job.updatedAt}`,

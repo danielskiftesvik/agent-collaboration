@@ -57,16 +57,27 @@ Empty companion stdout, `no-changes`, a non-zero wrapper exit, or invalid struct
 output is not evidence that the worker failed. Before retrying or declaring a review
 unavailable:
 
-1. Run `status --latest --role reviewer [--worker <expected>]` to recover the job id,
-   actual worker, artifact directory, and logs. Latest is selected by `createdAt`;
-   narrow it when concurrent jobs may exist.
-2. Run `result --latest --role reviewer [--worker <actual>]` with the same filters.
-3. Read `reports/<actual-worker>.md`, then `outputs/<actual-worker>.json`, then
+1. If the launch returned an exact job id, run `status <exact-job-id>` and keep using
+   that id. If it is nonterminal and `health.live` is true within the idle/hard
+   budgets, it is running, not stalled; use the returned wait command.
+2. `--latest` is only for lost-launch recovery when the exact job id is unavailable.
+   Run `status --latest --role reviewer [--worker <expected>]` once to recover the id,
+   actual worker, artifact directory, and logs. Latest is selected by `createdAt` and
+   can still be ambiguous under concurrency, so narrow it and capture the recovered id.
+3. Run `result <exact-job-id>`. A nonterminal result returns `ready:false`; wait on
+   that same id instead of treating the missing final artifact as failure.
+4. Read `reports/<actual-worker>.md`, then `outputs/<actual-worker>.json`, then
    `logs/run.jsonl` and the worker stdout/stderr logs.
 
 Plain `status`/`result` are lock-free reads. Never launch a duplicate job until this
 artifact check is complete. For read-only reviews, the saved report is authoritative
 even when no patch exists. `apply` still requires an explicit job id.
+
+Quiet terminal output is normal for some adapters. Do not call a live, within-budget
+job broken and do not cancel it merely because it has not finished. The runtime's
+idle watchdog detects genuine no-progress freezes; its hard timeout prevents waiting
+forever. `cancel --force` is reserved for an intentional override of the healthy-job
+interlock.
 
 - If the run **failed or returned invalid output**, surface the worker's actual
   output and the most actionable stderr lines. Do **not** fabricate a result.

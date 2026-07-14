@@ -1053,6 +1053,9 @@ const COMPANION = fileURLToPath(new URL("../scripts/agent-companion.mjs", import
  */
 export function launchBackground(cwd, opts) {
   const { driver, worker, role = "worker", brief, kind, focus, targetLabel, profile, surface, timeoutMs, maxAttempts } = opts;
+  const resolvedTimeoutMs = timeoutMs ?? defaultTimeoutMs();
+  const resolvedIdleMs = opts.idleMs ?? MODEL_PROFILES[worker]?.idleMsOverride ?? defaultIdleMs();
+  const launchedAt = new Date().toISOString();
   const jobId = randomUUID();
   const artifactDir = path.join(resolveStateDir(cwd), "tasks", jobId);
   ensureDirs(artifactDir, role);
@@ -1075,8 +1078,17 @@ export function launchBackground(cwd, opts) {
     status: "queued",
     background: true,
     artifactDir,
-    request: { driver, worker, role, brief, kind, focus, targetLabel, profile, surface, timeoutMs, maxAttempts, breachHeadBefore, breachBefore },
-    heartbeatAt: new Date().toISOString()
+    request: {
+      driver, worker, role, brief, kind, focus, targetLabel, profile, surface,
+      timeoutMs: resolvedTimeoutMs, idleMs: resolvedIdleMs, maxAttempts,
+      breachHeadBefore, breachBefore
+    },
+    timeoutMs: resolvedTimeoutMs,
+    idleMs: resolvedIdleMs,
+    startedAt: launchedAt,
+    heartbeatAt: launchedAt,
+    lastProgressAt: launchedAt,
+    lastProgressKind: "launch"
   });
 
   const logFd = fs.openSync(path.join(artifactDir, "run.log"), "a");

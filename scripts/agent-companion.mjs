@@ -11,12 +11,12 @@ import { runDoctor } from "../core/doctor.mjs";
 import { mergeReviews } from "../core/merge-reviews.mjs";
 import { version } from "../core/version.mjs";
 import { listJobs, getJob, updateJob, sortJobsNewestFirst, loadState, saveState, resolveStateDir, isTerminalStatus } from "../core/state.mjs";
-import { isPidAlive } from "../core/heartbeat.mjs";
+import { isPidAlive, projectJobHealth } from "../core/heartbeat.mjs";
 import { renderSetup, renderJob, renderJobList, renderRecommendation, renderProfiles } from "../core/render.mjs";
 import { MODEL_PROFILES } from "../core/model-profiles.mjs";
 
 const VALUE_FLAGS = new Set(["worker", "workers", "role", "driver", "base", "timeout", "gate", "sandbox", "focus", "surface", "task", "job", "recent"]);
-const BOOL_FLAGS = new Set(["json", "apply", "wait", "background", "profiles", "no-fallback", "live", "active", "latest", "refresh", "artifact-only"]);
+const BOOL_FLAGS = new Set(["json", "apply", "wait", "background", "profiles", "no-fallback", "live", "active", "latest", "refresh", "artifact-only", "force"]);
 
 function parseArgs(tokens) {
   const options = {};
@@ -63,6 +63,40 @@ function latestCreatedJob(jobs) {
       !latest || String(job.createdAt ?? "").localeCompare(String(latest.createdAt ?? "")) >= 0 ? job : latest,
     null
   );
+}
+
+function withHealth(job) {
+  return job ? { ...job, health: projectJobHealth(job) } : job;
+}
+
+function resultJobMetadata(job) {
+  return {
+    id: job.id,
+    driver: job.driver,
+    worker: job.worker,
+    role: job.role,
+    status: job.status,
+    resultValid: job.resultValid,
+    failureKind: job.failureKind,
+    errors: job.errors,
+    note: job.note,
+    reviewContext: job.reviewContext,
+    breachWarning: job.breachWarning,
+    breach: job.breach,
+    escapedPaths: job.escapedPaths,
+    sandboxed: job.sandboxed,
+    requestedModel: job.requestedModel,
+    resolvedModel: job.resolvedModel,
+    requestedEffort: job.requestedEffort,
+    profile: job.profile,
+    followupOf: job.followupOf,
+    runtimeVersion: job.runtimeVersion,
+    templateDigest: job.templateDigest,
+    workerTelemetry: job.workerTelemetry,
+    startedAt: job.startedAt,
+    completedAt: job.completedAt,
+    durationMs: job.durationMs
+  };
 }
 
 const [subcommand, ...rest] = process.argv.slice(2);
@@ -277,11 +311,13 @@ switch (subcommand) {
         : options.refresh
           ? refreshJobStatus(cwd, selected.id)
           : selected;
-      out(job, options, renderJob(job));
+      const projected = withHealth(job);
+      out(projected, options, renderJob(projected));
     } else {
       let jobs = sortJobsNewestFirst(filterJobs(listJobs(cwd), options));
       jobs = jobs.slice(0, options.recent ? Math.max(0, Number(options.recent) || 0) : 8);
       if (options.refresh) jobs = jobs.map((job) => refreshJobStatus(cwd, job.id));
+      jobs = jobs.map(withHealth);
       out(jobs, options, renderJobList(jobs));
     }
     break;
@@ -294,40 +330,29 @@ switch (subcommand) {
     const selected = id ? getJob(cwd, id) : latestCreatedJob(filterJobs(listJobs(cwd), options));
     if (!selected) fail(`result: ${id ? "unknown job" : "no matching jobs"}`);
     const job = options.refresh ? refreshJobStatus(cwd, selected.id) : selected;
+    const health = projectJobHealth(job);
+    if (!isTerminalStatus(job.status)) {
+      const pending = {
+        ready: false,
+        job: resultJobMetadata(job),
+        health,
+        waitCommand: `status ${job.id} --wait`
+      };
+      const human = [
+        `result not ready — job ${job.id} is ${job.status}`,
+        health?.healthy ? "health: live and within budget (not stalled)" : `health: ${health?.state ?? "unknown"}`,
+        `wait: ${pending.waitCommand}`
+      ].join("\n");
+      out(pending, options, human);
+      break;
+    }
     const outputFile = path.join(job.artifactDir, "outputs", `${job.worker}.json`);
     const artifact = fs.existsSync(outputFile)
       ? JSON.parse(fs.readFileSync(outputFile, "utf8"))
       : { error: "no output artifact" };
     const reportFile = path.join(job.artifactDir, "reports", `${job.worker}.md`);
     const report = fs.existsSync(reportFile) ? fs.readFileSync(reportFile, "utf8") : "";
-    const jobMetadata = {
-      id: job.id,
-      driver: job.driver,
-      worker: job.worker,
-      role: job.role,
-      status: job.status,
-      resultValid: job.resultValid,
-      failureKind: job.failureKind,
-      errors: job.errors,
-      note: job.note,
-      reviewContext: job.reviewContext,
-      breachWarning: job.breachWarning,
-      breach: job.breach,
-      escapedPaths: job.escapedPaths,
-      sandboxed: job.sandboxed,
-      requestedModel: job.requestedModel,
-      resolvedModel: job.resolvedModel,
-      requestedEffort: job.requestedEffort,
-      profile: job.profile,
-      followupOf: job.followupOf,
-      runtimeVersion: job.runtimeVersion,
-      templateDigest: job.templateDigest,
-      workerTelemetry: job.workerTelemetry,
-      startedAt: job.startedAt,
-      completedAt: job.completedAt,
-      durationMs: job.durationMs
-    };
-    const envelope = { job: jobMetadata, artifact, report };
+    const envelope = { ready: true, job: resultJobMetadata(job), artifact, report };
     const warning = [job.note, job.breachWarning ? `breach warning: ${JSON.stringify(job.breachWarning)}` : null]
       .filter(Boolean)
       .join("\n");
@@ -367,6 +392,32 @@ switch (subcommand) {
     if (!id) fail("cancel: a job id is required");
     const job = getJob(cwd, id);
     if (!job) fail("cancel: unknown job");
+    if (isTerminalStatus(job.status)) {
+      const response = { cancelled: false, reason: `job is already ${job.status}`, job };
+      out(response, options, `not cancelled: job ${id} is already ${job.status}`);
+      process.exitCode = 2;
+      break;
+    }
+    const health = projectJobHealth(job);
+    if (!options.force && health?.healthy) {
+      const response = {
+        cancelled: false,
+        reason: "job is healthy and within its configured idle and hard time budgets",
+        job: resultJobMetadata(job),
+        health,
+        waitCommand: `status ${id} --wait`,
+        forceCommand: `cancel ${id} --force`
+      };
+      out(
+        response,
+        options,
+        `not cancelled: job ${id} is healthy and within budget (not stalled)\n` +
+          `wait: ${response.waitCommand}\n` +
+          `override only when cancellation is intentional: ${response.forceCommand}`
+      );
+      process.exitCode = 2;
+      break;
+    }
     if (job.pid && isPidAlive(job.pid)) {
       try {
         // A background job is its own process group (detached) — kill the whole
@@ -400,7 +451,7 @@ switch (subcommand) {
         "  status [jobId|--latest] [--worker name] [--role role] [--refresh|--wait] [--timeout s] [--active] [--recent n] [--json]",
         "  result <jobId|--latest> [--worker name] [--role role] [--refresh] [--artifact-only] [--json]",
         "  apply  <jobId>",
-        "  cancel <jobId>"
+        "  cancel <jobId> [--force]"
       ].join("\n")
     );
 }
