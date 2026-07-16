@@ -6,7 +6,9 @@ import { fileURLToPath } from "node:url";
 
 import { makeRepo, isolateStateRoot, stubBin } from "./helpers.mjs";
 import { run } from "../core/process.mjs";
-import { appendJob, getJob, resolveStateDir, updateJob } from "../core/state.mjs";
+import { appendJob, getJob, loadState, resolveStateDir, saveState, updateJob } from "../core/state.mjs";
+import { headRef } from "../core/git.mjs";
+import { createWorktree } from "../core/workspace.mjs";
 
 const CLI = fileURLToPath(new URL("../scripts/agent-companion.mjs", import.meta.url));
 
@@ -38,6 +40,40 @@ test("setup (human) prints a sandboxed-driver hint; --json stays pure JSON", () 
   assert.match(human.stdout, /sandbox/i, "human output carries the escalation hint");
   const json = cli(["setup", "--json"]);
   assert.ok(Array.isArray(JSON.parse(json.stdout)), "--json output is still a pure array");
+});
+
+test("setup persists configurable artifact retention", () => {
+  const dataDir = isolateStateRoot();
+  const repo = makeRepo();
+  const r = cli(["setup", "--retention-days", "14", "--json"], {
+    cwd: repo,
+    env: { AGENT_COLLAB_DATA: dataDir }
+  });
+  assert.equal(r.status, 0, r.stderr);
+  assert.equal(loadState(repo).config.artifactRetentionDays, 14);
+});
+
+test("gc --dry-run previews old artifacts without deleting them", () => {
+  const dataDir = isolateStateRoot();
+  const repo = makeRepo();
+  saveState(repo, loadState(repo));
+  const task = path.join(resolveStateDir(repo), "tasks", "old-review");
+  fs.mkdirSync(path.join(task, "reports"), { recursive: true });
+  fs.writeFileSync(path.join(task, "reports", "claude.md"), "saved review");
+  const old = (Date.now() - 45 * 24 * 60 * 60 * 1000) / 1000;
+  fs.utimesSync(path.join(task, "reports", "claude.md"), old, old);
+  fs.utimesSync(path.join(task, "reports"), old, old);
+  fs.utimesSync(task, old, old);
+
+  const r = cli(["gc", "--dry-run", "--artifacts-older-than", "30", "--json"], {
+    cwd: repo,
+    env: { AGENT_COLLAB_DATA: dataDir }
+  });
+  assert.equal(r.status, 0, r.stderr);
+  const result = JSON.parse(r.stdout);
+  assert.equal(result.dryRun, true);
+  assert.ok(result.artifacts.removed.some((item) => item.id === "old-review"));
+  assert.equal(fs.existsSync(task), true);
 });
 
 test("recommend --profiles --json dumps the model profiles", () => {
@@ -109,6 +145,28 @@ test("delegate to the same harness IS native when --driver is explicit (authorit
   assert.equal(r.status, 0, r.stderr);
   const out = JSON.parse(r.stdout);
   assert.equal(out.mode, "native");
+});
+
+test("each collaboration launch runs the safe worktree janitor", () => {
+  const dataDir = isolateStateRoot();
+  const repo = makeRepo();
+  const workspace = createWorktree(repo, "completed-debris", headRef(repo));
+  appendJob(repo, {
+    id: "completed-debris",
+    worker: "agy",
+    role: "reviewer",
+    status: "completed",
+    workspace
+  });
+
+  const r = cli(["delegate", "--driver", "claude", "--worker", "claude", "do a thing"], {
+    cwd: repo,
+    env: { AGENT_COLLAB_DATA: dataDir }
+  });
+
+  assert.equal(r.status, 0, r.stderr);
+  assert.equal(fs.existsSync(workspace), false);
+  assert.equal(getJob(repo, "completed-debris").worktreeCleanup.removed, true);
 });
 
 test("delegate auto-falls-back to another worker when the first is rate-limited", () => {
@@ -313,6 +371,11 @@ test("cancel refuses a healthy live job unless --force is explicit", (t) => {
   ], { cwd: repo, env });
   assert.equal(launch.status, 0, launch.stderr);
   const { jobId } = JSON.parse(launch.stdout);
+  const workspaceDeadline = Date.now() + 15000;
+  while (!getJob(repo, jobId)?.workspace && Date.now() < workspaceDeadline) {
+    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 25);
+  }
+  assert.ok(getJob(repo, jobId)?.workspace, "background child should record its isolated worktree");
   t.after(() => {
     const job = getJob(repo, jobId);
     if (!job?.pid) return;
@@ -335,7 +398,10 @@ test("cancel refuses a healthy live job unless --force is explicit", (t) => {
 
   const forced = cli(["cancel", jobId, "--force", "--json"], { cwd: repo, env });
   assert.equal(forced.status, 0, forced.stderr);
-  assert.equal(JSON.parse(forced.stdout).status, "cancelled");
+  const cancelled = JSON.parse(forced.stdout);
+  assert.equal(cancelled.status, "cancelled");
+  assert.equal(cancelled.worktreeCleanup.removed, true, JSON.stringify(cancelled.worktreeCleanup));
+  assert.equal(fs.existsSync(cancelled.workspace), false);
   assert.equal(getJob(repo, jobId).status, "cancelled");
 });
 

@@ -20,6 +20,7 @@ import { classifyFailure, FALLBACK_KINDS } from "./failures.mjs";
 import { MODEL_PROFILES, TASK_ROUTING, DEFAULT_ROUTING, WRITE_TASKS } from "./model-profiles.mjs";
 import { version } from "./version.mjs";
 import { checkPreflight } from "./preflight.mjs";
+import { cleanupJobWorktree } from "./gc.mjs";
 
 const TEMPLATE_KINDS = new Set(["review", "adversarial-review"]);
 
@@ -150,7 +151,9 @@ export function refreshJobStatus(cwd, jobOrId) {
     current = updateJob(cwd, current.id, { lastProgressAt: progress.at, lastProgressKind: progress.kind });
   }
   if (current.pid && (isStalled(current, { staleMs: 0 }) || !isPidAlive(current.pid))) {
-    return updateJob(cwd, current.id, stalledUpdate());
+    const failed = updateJob(cwd, current.id, stalledUpdate());
+    const worktreeCleanup = cleanupJobWorktree(cwd, failed);
+    return updateJob(cwd, current.id, { worktreeCleanup });
   }
   return current;
 }

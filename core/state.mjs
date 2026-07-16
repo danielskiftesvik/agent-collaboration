@@ -117,24 +117,35 @@ function nowIso() {
 }
 
 function defaultState() {
-  return { version: STATE_VERSION, config: { stopReviewGate: false }, jobs: [] };
+  return {
+    version: STATE_VERSION,
+    config: { stopReviewGate: false, artifactRetentionDays: 30 },
+    jobs: []
+  };
 }
 
-export function loadState(cwd) {
+export function loadStateWithStatus(cwd) {
   const file = resolveStateFile(cwd);
-  if (!fs.existsSync(file)) return defaultState();
+  if (!fs.existsSync(file)) return { state: defaultState(), reliable: false, reason: "missing" };
   try {
     const parsed = JSON.parse(fs.readFileSync(file, "utf8"));
+    if (!parsed || typeof parsed !== "object" || !Array.isArray(parsed.jobs)) {
+      return { state: defaultState(), reliable: false, reason: "invalid-shape" };
+    }
     const base = defaultState();
-    return {
+    return { state: {
       ...base,
       ...parsed,
       config: { ...base.config, ...(parsed.config ?? {}) },
-      jobs: Array.isArray(parsed.jobs) ? parsed.jobs : []
-    };
+      jobs: parsed.jobs
+    }, reliable: true, reason: null };
   } catch {
-    return defaultState();
+    return { state: defaultState(), reliable: false, reason: "corrupt" };
   }
+}
+
+export function loadState(cwd) {
+  return loadStateWithStatus(cwd).state;
 }
 
 /** Write the whole state atomically (write temp + rename = single-writer safe). */
@@ -160,14 +171,30 @@ export function getJob(cwd, id) {
   return loadState(cwd).jobs.find((job) => job.id === id);
 }
 
+function pruneTerminalHistory(jobs) {
+  const terminal = jobs.filter((job) => isTerminalStatus(job.status));
+  if (terminal.length <= MAX_JOBS) return jobs;
+  // An old, long-running job may complete after many newer jobs. Rank terminal
+  // history by its latest update, not insertion position, or that just-finished
+  // result would be evicted in the same write that made it terminal.
+  const newest = [...terminal].sort((a, b) =>
+    String(a.updatedAt ?? a.createdAt ?? "").localeCompare(String(b.updatedAt ?? b.createdAt ?? ""))
+  );
+  const keep = new Set(newest.slice(newest.length - MAX_JOBS));
+  return jobs.filter((job) => !isTerminalStatus(job.status) || keep.has(job));
+}
+
 export function appendJob(cwd, job) {
   return withLock(cwd, () => {
     const state = loadState(cwd);
     const stamped = { createdAt: nowIso(), updatedAt: nowIso(), ...job };
-    state.jobs.push(stamped);
-    if (state.jobs.length > MAX_JOBS) {
-      state.jobs = state.jobs.slice(state.jobs.length - MAX_JOBS);
+    if (isTerminalStatus(stamped.status) && !stamped.terminalAt) {
+      stamped.terminalAt = stamped.updatedAt;
     }
+    state.jobs.push(stamped);
+    // MAX_JOBS caps terminal history only. Active records are liveness and cleanup
+    // authority; evicting one can orphan a live worker and its large worktree.
+    state.jobs = pruneTerminalHistory(state.jobs);
     saveState(cwd, state);
     return stamped;
   });
@@ -184,7 +211,12 @@ export function updateJob(cwd, id, patch) {
     if (isTerminalStatus(job.status) && "status" in next && next.status !== job.status) {
       delete next.status;
     }
-    Object.assign(job, next, { updatedAt: nowIso() });
+    const stamp = nowIso();
+    if (!isTerminalStatus(job.status) && isTerminalStatus(next.status) && !next.terminalAt) {
+      next.terminalAt = stamp;
+    }
+    Object.assign(job, next, { updatedAt: stamp });
+    state.jobs = pruneTerminalHistory(state.jobs);
     saveState(cwd, state);
     return job;
   });

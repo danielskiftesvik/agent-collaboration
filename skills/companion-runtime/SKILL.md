@@ -14,7 +14,7 @@ generalization of codex-plugin-cc's `codex-cli-runtime` skill.
 ## Subcommands
 
 ```
-setup [--json] [--gate on|off] [--sandbox on|off]
+setup [--json] [--gate on|off] [--sandbox on|off] [--retention-days <n>]
 doctor [--live] [--workers a,b] [--json]
 delegate --worker <agy|codex|claude> [--driver <name>] [--role worker|reviewer] [--profile <name>] [--background] [--apply] [--timeout <s>] [--no-fallback] <brief>
 review  --worker <name> | --workers a,b [--focus <text>] [--profile <name>] [--background] [--no-fallback] [--json] <diff/context>
@@ -23,6 +23,7 @@ review-followup --job <prior-id> [--worker <name>] [--surface head|working-tree|
 status [jobId|--latest] [--worker <name>] [--role <role>] [--refresh|--wait] [--timeout <s>] [--active] [--recent <n>] [--json]
 result <jobId|--latest> [--worker <name>] [--role <role>] [--refresh] [--json]
 apply  <jobId>
+gc [--dry-run] [--artifacts-older-than <days>] [--include-unapplied] [--json]
 cancel <jobId> [--force]
 ```
 (`run-job --job <id>` exists but is INTERNAL — it's the detached worker entrypoint
@@ -119,7 +120,9 @@ survives a driver crash. Then:
 - `result <jobId>` — the report + structured output once terminal. Before then it
   returns `ready:false`, the live health projection, and the exact wait command.
 - `cancel <jobId>` — refuses a healthy, within-budget job. `cancel <jobId> --force`
-  is the explicit override that kills the detached worker's whole process group.
+  is the explicit override that kills the detached worker's whole process group. After a
+  bounded exit wait it removes that job's managed worktree; if the process is still live,
+  cleanup is deferred rather than risking a live workspace.
 
 Plain `status` and `result` calls are read-only and do not acquire the state write
 lock. The `health` projection reads the live progress marker without mutating state;
@@ -132,6 +135,28 @@ launching a retry.
 
 Background runs a **single worker** (no auto-fallback — that's the synchronous path).
 This is the brokerless version of the reference's async model (no app-server broker).
+
+## Disk lifecycle and garbage collection
+
+Every cross-harness launch runs a best-effort, liveness-aware janitor. It removes managed
+worktrees for terminal jobs and for nonterminal jobs whose recorded process is objectively
+dead. It never removes a live active job. A terminal worktree whose old PID still appears
+alive is preserved for a one-hour grace, then converges so PID reuse cannot pin debris
+forever. Fresh worktrees missing from valid state get a 24-hour grace so a launch/state-write
+race cannot be reaped; old unknown worktrees are treated as crash debris. Missing, corrupt,
+or structurally invalid state disables destructive worktree and artifact collection rather
+than treating every live job as unknown. Explicit `status --refresh` and `cancel` also clean
+the exact dead job worktree.
+Dead nonterminal records whose worktree is already missing are also marked failed, so they
+enter the bounded terminal history instead of accumulating as misleading active jobs.
+
+Task artifacts default to a 30-day retention window. Collection enumerates `tasks/` on disk,
+not only the capped job history, and preserves active jobs, recent artifacts, and non-empty
+unapplied patches. Configure the standing window with `setup --retention-days <n>` or
+`AGENT_COLLAB_ARTIFACT_RETENTION_DAYS=<n>` (`0` disables expiry). Use `gc --dry-run` to
+preview. `gc --include-unapplied` is intentionally explicit and destructive: it allows old
+unapplied patch artifacts to expire too. Launch-time collection recursively inspects at most
+100 old artifact trees per invocation; explicit `gc` performs the complete pass.
 
 ## Freeze detection (idle watchdog)
 
@@ -191,6 +216,7 @@ read `tasks/<jobId>/reports/<worker>.md`.
 - `AGENT_COLLAB_FALLBACK` — fallback policy: `off` | `on` (rate-limit+auth+timeout+frozen+empty-output) | comma-list. Default: `rate-limit,timeout,frozen,empty-output` (auth surfaces).
 - `AGENT_COLLAB_TIMEOUT=<s>` — per-attempt worker HARD timeout in seconds (default 1200 = 20 min).
 - `AGENT_COLLAB_IDLE_TIMEOUT=<s>` — inactivity timeout in seconds (default 600; 0 = off): no progress (output OR file activity) for this long → killed as `frozen`.
+- `AGENT_COLLAB_ARTIFACT_RETENTION_DAYS=<n>` — artifact retention in days (default 30; 0 disables); active jobs and unapplied patches stay protected by default.
 - `AGENT_COLLAB_BREACH_EXEMPT_PATHS=a,b` — comma-separated real-checkout paths that should be warnings, not hard breaches (for intentional reports/scratch output).
 - `AGENT_COLLAB_BREACH_WARN_CONCURRENT=on` — opt in to downgrading ambiguous concurrent real-checkout edits to warnings. Off by default because they are indistinguishable from a worker escape.
 - `AGENT_COLLAB_CODEX_RESUME=off` — repair with a fresh re-send instead of resuming the codex thread (resume is on by default).

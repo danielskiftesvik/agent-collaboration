@@ -75,7 +75,7 @@ Two delegation paths, chosen automatically:
 
 | Command | Purpose |
 |---|---|
-| `/agent-collab:setup [--gate on\|off] [--sandbox on\|off]` | Detect worker-ready harnesses; toggle the stop-time review gate and the OS sandbox |
+| `/agent-collab:setup [--gate on\|off] [--sandbox on\|off] [--retention-days n]` | Detect worker-ready harnesses; configure gates/sandbox and artifact retention (default 30 days; 0 disables) |
 | `/agent-collab:doctor [--live] [--workers a,b]` | Self-check: config + readiness, and (with `--live`) a review-cycle + worktree-isolation smoke per worker against a throwaway repo |
 | `/agent-collab:recommend --task <type> --driver <self>` (or `--profiles`) | Pick the strongest available worker for a task by underlying-model strength |
 | `/agent-collab:delegate --worker <agy\|claude\|codex> [--background] [--apply] <brief>` | Run a cross-harness **worker** task (produces a patch); `--background` detaches and returns a jobId |
@@ -85,6 +85,7 @@ Two delegation paths, chosen automatically:
 | `/agent-collab:status [jobId\|--latest] [--worker name] [--role role] [--refresh\|--wait] [--active] [--recent n]` | List / inspect jobs with lock-free live health; reads mutate state only when explicitly refreshed or waited |
 | `/agent-collab:result <jobId\|--latest> [--worker name] [--role role]` | Show a terminal job's report, or `ready:false` plus the exact wait command while it runs |
 | `/agent-collab:apply <jobId>` | Apply a worker's patch (3-way) to the working tree |
+| `/agent-collab:gc [--dry-run] [--artifacts-older-than days] [--include-unapplied]` | Reclaim dead/terminal worktrees and expired artifacts; unapplied patches are preserved by default |
 | `/agent-collab:cancel <jobId> [--force]` | Cancel an unhealthy job; healthy within-budget jobs require the explicit `--force` override |
 
 Review commands accept `--surface head|working-tree|diff`. Unified diffs are detected automatically and clean prose defaults to `head`. Dirty prose fails closed until the caller chooses `working-tree` (safely snapshotted with a temporary Git index) or `head` (dirty paths excluded). `review-followup --job <prior-id> ...` runs a focused verification tied to the earlier review.
@@ -165,6 +166,16 @@ driver, `AGENTS.md` for Codex/agy drivers).
   falling back to a fresh re-send if the thread can't be resumed.
 - **State** lives **outside** the repo (keyed by a hash of the workspace root), so it survives
   worktrees and is never committed.
+- **Bounded disk use:** every launch runs a liveness-aware janitor. Terminal worktrees and
+  dead-process worktrees are removed; a live active job is never reaped. A terminal tree
+  whose old PID appears reused converges after a one-hour safety grace, while missing/corrupt
+  state disables destructive collection. Dead nonterminal records are reconciled even when
+  their worktree is already absent. Artifact retention scans the task directories on
+  disk (including records older than the in-memory history), expires them after 30 days by
+  default, and preserves active jobs, recent reports, and unapplied patches. Automatic
+  launch cleanup recursively inspects at most 100 old artifact trees per invocation.
+  Preview the unbounded explicit pass with `gc --dry-run`; change the standing window with
+  `setup --retention-days <n>` or `AGENT_COLLAB_ARTIFACT_RETENTION_DAYS`.
 
 ## Harnesses
 
@@ -272,6 +283,7 @@ They are checked before another isolated worktree is created.
 | `AGENT_COLLAB_FALLBACK` | Auto-fallback policy: `off` \| `on` (rate-limit+auth+timeout+frozen+empty-output) \| comma-list of kinds. Default `rate-limit,timeout,frozen,empty-output` (transient; **auth is surfaced**, not routed around) |
 | `AGENT_COLLAB_TIMEOUT` | Per-attempt worker **hard** timeout in **seconds** (default 1200 = 20 min). Deep reasoners on big diffs need a generous budget — too short kills the run mid-flight |
 | `AGENT_COLLAB_IDLE_TIMEOUT` | **Inactivity** timeout in **seconds** (default 600 = 10 min; `0` disables). If a worker makes **no progress** — neither stdout/stderr **nor file activity** (worktree, agy's log dir, codex log/session dirs) — for this long it's killed as `frozen`. Generous so a slow-but-working worker isn't false-killed. **codex and qwen have more generous built-in defaults (30 min via `MODEL_PROFILES.<worker>.idleMsOverride`) that take precedence over this env var** |
+| `AGENT_COLLAB_ARTIFACT_RETENTION_DAYS` | Override saved artifact retention in days (default 30; `0` disables expiry). Active jobs and unapplied patches remain protected unless `gc --include-unapplied` is explicitly used |
 | `AGENT_COLLAB_BREACH_EXEMPT_PATHS` | Comma-separated real-checkout paths that become `breachWarning` instead of hard `breach` (for intentional report/scratch output) |
 | `AGENT_COLLAB_BREACH_WARN_CONCURRENT=on` | Opt in to downgrading ambiguous concurrent real-checkout edits to `breachWarning`. Off by default because those edits are indistinguishable from a worker escape |
 | `AGENT_COLLAB_CODEX_RESUME=off` | Repair a bad codex reply with a fresh re-send instead of resuming its thread (`task --resume-last`); resume is on by default |
@@ -289,7 +301,8 @@ They are checked before another isolated worktree is created.
 | `AGENT_COLLAB_QWEN_ALLOW_REMOTE=on` | Explicitly permit a non-loopback `AGENT_COLLAB_QWEN_BASE_URL`. Off by default — qwen's entire purpose is keeping a job off the cloud, so a remote endpoint must be opt-in, never silently accepted |
 | `AGENT_COLLAB_<AGY\|CLAUDE\|CODEX\|QWEN>_BIN` | Override a harness binary path |
 
-Plus `setup --gate on|off` (opt-in stop-time review gate) and `setup --sandbox on|off`.
+Plus `setup --gate on|off` (opt-in stop-time review gate), `setup --sandbox on|off`, and
+`setup --retention-days <n>` (30 by default; 0 disables artifact expiry).
 
 ## Versioning
 

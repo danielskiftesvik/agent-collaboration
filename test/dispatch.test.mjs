@@ -23,6 +23,8 @@ import {
 } from "../core/dispatch.mjs";
 import { appendJob, updateJob, getJob } from "../core/state.mjs";
 import { MODEL_PROFILES } from "../core/model-profiles.mjs";
+import { headRef } from "../core/git.mjs";
+import { createWorktree } from "../core/workspace.mjs";
 
 // ---- routing ----
 
@@ -902,11 +904,13 @@ test("waitForJob marks a job stalled when its process is gone without finishing"
 test("refreshJobStatus marks a dead running job stalled without waiting", () => {
   isolateStateRoot();
   const repo = makeRepo();
+  const workspace = createWorktree(repo, "stale-read", headRef(repo));
   appendJob(repo, {
     id: "stale-read",
     worker: "agy",
     status: "running",
     pid: 2147483646,
+    workspace,
     heartbeatAt: new Date().toISOString()
   });
 
@@ -914,6 +918,8 @@ test("refreshJobStatus marks a dead running job stalled without waiting", () => 
 
   assert.equal(job.status, "failed");
   assert.equal(job.failureKind, "stalled");
+  assert.equal(job.worktreeCleanup.removed, true);
+  assert.equal(fs.existsSync(workspace), false);
 });
 
 test("refreshJobStatus does not attach stalled metadata to an already-completed job", () => {

@@ -60,6 +60,30 @@ export function worktreesDir(cwd) {
   return path.join(os.tmpdir(), "agent-collaboration-worktrees", path.basename(resolveStateDir(cwd)));
 }
 
+/** True only for a direct child of this repository's plugin-owned temp root. */
+export function isManagedWorktree(cwd, candidate) {
+  if (!candidate) return false;
+  // macOS exposes TMPDIR through both /var and /private/var. Canonicalize both
+  // sides so the same managed path is not rejected merely because of that alias.
+  const root = canonical(path.resolve(worktreesDir(cwd)));
+  const rawTarget = path.resolve(candidate);
+  const target = fs.existsSync(rawTarget)
+    ? canonical(rawTarget)
+    : path.join(canonical(path.dirname(rawTarget)), path.basename(rawTarget));
+  return target !== root && path.dirname(target) === root;
+}
+
+/** Prune stale linked-worktree administration against the owning repository. */
+export function pruneWorktrees(cwd) {
+  const root = resolveWorkspaceRoot(cwd);
+  try {
+    git(["worktree", "prune"], root);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 /**
  * Create a detached linked worktree at `baseRef`, located outside the repo under
  * the workspace state dir. Detached (not a new branch) so parallel workers never
@@ -82,6 +106,6 @@ export function removeWorktree(cwd, worktreePath) {
   } catch {
     // Already gone, or never registered — fall back to manual cleanup.
     fs.rmSync(worktreePath, { recursive: true, force: true });
-    git(["worktree", "prune"], root);
+    pruneWorktrees(root);
   }
 }

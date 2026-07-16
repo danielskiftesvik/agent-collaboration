@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.6.5 - 2026-07-16
+
+- Add liveness-aware garbage collection on launches, cancellation, and dead-process refresh so terminal/crashed collaboration worktrees cannot accumulate indefinitely while live active jobs remain protected; fail closed on missing/corrupt state and converge terminal PID-reuse debris after a grace period.
+- Cap terminal state history without evicting active jobs, preventing active worktrees from becoming untracked, and reconcile dead nonterminal records whose worktree is already missing.
+- Add configurable 30-day artifact retention that scans task directories on disk and preserves active jobs, recent reports, and unapplied patches by default; bound launch-time recursive scans and add unbounded `gc --dry-run` plus explicit `--include-unapplied` cleanup.
+
 ## 0.6.2 - 2026-07-11
 
 - Review provenance hardening (codex): explicit `head|working-tree|diff` surfaces with fail-closed ambiguity on dirty checkouts, safe working-tree snapshots, default result envelopes with warnings/telemetry, incomplete partial dual reviews (never "approved" on one family), stricter finding contracts (`critical` rank, needs-attention requires a finding, title-similarity dedup), focused `review-followup`, and optional repo-owned worktree/disk preflight limits.

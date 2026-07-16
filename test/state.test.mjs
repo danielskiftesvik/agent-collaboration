@@ -50,6 +50,7 @@ test("loadState returns defaults when nothing is saved", () => {
   const cwd = tmpCwd();
   const state = loadState(cwd);
   assert.equal(state.config.stopReviewGate, false);
+  assert.equal(state.config.artifactRetentionDays, 30);
   assert.deepEqual(state.jobs, []);
 });
 
@@ -124,6 +125,25 @@ test("appendJob prunes to the newest MAX_JOBS records", () => {
   // Oldest five dropped; newest retained.
   assert.equal(getJob(cwd, "job-0"), undefined);
   assert.ok(getJob(cwd, `job-${MAX_JOBS + 4}`));
+});
+
+test("appendJob never evicts active jobs when terminal history is capped", () => {
+  isolateStateRoot();
+  const cwd = tmpCwd();
+  appendJob(cwd, { id: "long-running", status: "running", pid: process.pid });
+  for (let i = 0; i < MAX_JOBS + 5; i++) {
+    appendJob(cwd, { id: `done-${i}`, status: "completed" });
+  }
+
+  const jobs = listJobs(cwd);
+  assert.ok(getJob(cwd, "long-running"), "active jobs must remain addressable for liveness and cleanup");
+  assert.equal(jobs.filter((job) => job.status === "completed").length, MAX_JOBS);
+  assert.equal(jobs.length, MAX_JOBS + 1);
+
+  updateJob(cwd, "long-running", { status: "completed" });
+  assert.ok(getJob(cwd, "long-running"), "a just-finished old job must become the newest terminal result");
+  assert.equal(listJobs(cwd).length, MAX_JOBS);
+  assert.equal(getJob(cwd, "done-5"), undefined, "the least-recent terminal result should be evicted instead");
 });
 
 test("a corrupt state file degrades to defaults instead of throwing", () => {

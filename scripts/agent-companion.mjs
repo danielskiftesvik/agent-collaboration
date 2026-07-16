@@ -14,9 +14,10 @@ import { listJobs, getJob, updateJob, sortJobsNewestFirst, loadState, saveState,
 import { isPidAlive, projectJobHealth } from "../core/heartbeat.mjs";
 import { renderSetup, renderJob, renderJobList, renderRecommendation, renderProfiles } from "../core/render.mjs";
 import { MODEL_PROFILES } from "../core/model-profiles.mjs";
+import { cleanupJobWorktree, collectGarbage, waitForPidExit } from "../core/gc.mjs";
 
-const VALUE_FLAGS = new Set(["worker", "workers", "role", "driver", "base", "timeout", "gate", "sandbox", "focus", "surface", "task", "job", "recent"]);
-const BOOL_FLAGS = new Set(["json", "apply", "wait", "background", "profiles", "no-fallback", "live", "active", "latest", "refresh", "artifact-only", "force"]);
+const VALUE_FLAGS = new Set(["worker", "workers", "role", "driver", "base", "timeout", "gate", "sandbox", "focus", "surface", "task", "job", "recent", "retention-days", "artifacts-older-than"]);
+const BOOL_FLAGS = new Set(["json", "apply", "wait", "background", "profiles", "no-fallback", "live", "active", "latest", "refresh", "artifact-only", "force", "dry-run", "include-unapplied"]);
 
 function parseArgs(tokens) {
   const options = {};
@@ -104,6 +105,18 @@ const [subcommand, ...rest] = process.argv.slice(2);
 const { options, positionals } = parseArgs(rest);
 const cwd = process.cwd();
 
+function automaticGarbageCollection() {
+  try {
+    // Keep housekeeping off the launch critical path: at most 100 old artifact
+    // trees are recursively inspected per invocation. Explicit `gc` is unbounded.
+    return collectGarbage(cwd, { maxArtifactScans: 100 });
+  } catch {
+    // Launches must not fail because best-effort cleanup encountered a transient
+    // filesystem or git error. The explicit `gc` command reports those details.
+    return null;
+  }
+}
+
 // `version` / `--version` — confirm which build is actually running.
 if (subcommand === "version" || subcommand === "--version" || options.version) {
   const info = { name: "agent-collaboration", version: version(), runtimePath: fileURLToPath(import.meta.url), stateDir: resolveStateDir(cwd) };
@@ -113,7 +126,11 @@ if (subcommand === "version" || subcommand === "--version" || options.version) {
 
 switch (subcommand) {
   case "setup": {
-    if (options.gate || options.sandbox) {
+    if (options["retention-days"] !== undefined) {
+      const days = Number(options["retention-days"]);
+      if (!Number.isFinite(days) || days < 0) fail("setup: --retention-days must be a non-negative number (0 disables artifact expiry)");
+    }
+    if (options.gate || options.sandbox || options["retention-days"] !== undefined) {
       const state = loadState(cwd);
       if (options.gate) {
         state.config.stopReviewGate = options.gate === "on";
@@ -121,8 +138,12 @@ switch (subcommand) {
       if (options.sandbox) {
         state.config.sandbox = options.sandbox === "on";
       }
+      if (options["retention-days"] !== undefined) {
+        state.config.artifactRetentionDays = Number(options["retention-days"]);
+      }
       saveState(cwd, state);
     }
+    automaticGarbageCollection();
     const rows = runSetup();
     const hint =
       "\nTip: when driving from a sandboxed harness (e.g. Codex), run the companion " +
@@ -135,6 +156,7 @@ switch (subcommand) {
   case "delegate":
   case "review":
   case "adversarial-review": {
+    automaticGarbageCollection();
     const { driver, source: driverSource } = resolveDriver(options);
     const worker = options.worker;
     // Dual review (`--workers a,b`) has no single --worker; delegate still requires one.
@@ -216,6 +238,7 @@ switch (subcommand) {
   }
 
   case "review-followup": {
+    automaticGarbageCollection();
     const priorId = options.job;
     if (!priorId) fail("review-followup: --job <prior-job-id> is required");
     const prior = getJob(cwd, priorId);
@@ -388,6 +411,31 @@ switch (subcommand) {
     break;
   }
 
+  case "gc": {
+    let artifactRetentionDays;
+    if (options["artifacts-older-than"] !== undefined) {
+      artifactRetentionDays = Number(options["artifacts-older-than"]);
+      if (!Number.isFinite(artifactRetentionDays) || artifactRetentionDays < 0) {
+        fail("gc: --artifacts-older-than must be a non-negative number (0 disables artifact expiry)");
+      }
+    }
+    const result = collectGarbage(cwd, {
+      dryRun: !!options["dry-run"],
+      includeUnapplied: !!options["include-unapplied"],
+      artifactRetentionDays
+    });
+    const bytes = result.worktrees.bytesFreed + result.artifacts.bytesFreed;
+    const human = [
+      `${result.dryRun ? "would reclaim" : "reclaimed"} ${bytes} bytes`,
+      `worktrees: ${result.worktrees.removed.length} removed, ${result.worktrees.reconciled.length} dead records reconciled, ${result.worktrees.skipped.length} preserved`,
+      `artifacts: ${result.artifacts.removed.length} removed, ${result.artifacts.skipped.length} preserved`,
+      result.artifacts.disabled ? "artifact retention is disabled" : `artifact retention: ${result.artifacts.retentionDays} days`,
+      options["include-unapplied"] ? "WARNING: unapplied patches were included" : "unapplied patches were preserved"
+    ].join("\n");
+    out(result, options, human);
+    break;
+  }
+
   case "cancel": {
     const id = positionals[0];
     if (!id) fail("cancel: a job id is required");
@@ -434,7 +482,10 @@ switch (subcommand) {
       }
     }
     const runtimeCleanup = cleanupWorkerRuntime(job.worker, job.workspace ?? cwd, job.artifactDir);
-    const updated = updateJob(cwd, id, { status: "cancelled", runtimeCleanup });
+    const processExited = waitForPidExit(job.pid);
+    let updated = updateJob(cwd, id, { status: "cancelled", runtimeCleanup });
+    const worktreeCleanup = cleanupJobWorktree(cwd, updated);
+    updated = updateJob(cwd, id, { processExited, worktreeCleanup });
     out(updated, options, `cancelled ${id}`);
     break;
   }
@@ -443,7 +494,7 @@ switch (subcommand) {
     fail(
       [
         "usage: agent-companion <command>",
-        "  setup [--json] [--gate on|off] [--sandbox on|off]",
+        "  setup [--json] [--gate on|off] [--sandbox on|off] [--retention-days n]",
         "  doctor [--live] [--workers a,b] [--json]   self-check (config + readiness; --live runs review+isolation smoke)",
         "  recommend --task <type> [--driver <name>] [--json]   |   recommend --profiles",
         "  delegate --worker <name> [--driver <name>] [--role worker|reviewer] [--background] [--apply] [--timeout s] <brief>",
@@ -453,6 +504,7 @@ switch (subcommand) {
         "  status [jobId|--latest] [--worker name] [--role role] [--refresh|--wait] [--timeout s] [--active] [--recent n] [--json]",
         "  result <jobId|--latest> [--worker name] [--role role] [--refresh] [--artifact-only] [--json]",
         "  apply  <jobId>",
+        "  gc [--dry-run] [--artifacts-older-than days] [--include-unapplied] [--json]",
         "  cancel <jobId> [--force]"
       ].join("\n")
     );
