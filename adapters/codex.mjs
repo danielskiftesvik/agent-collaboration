@@ -4,10 +4,22 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 
 import { defineAdapter } from "./contract.mjs";
 import { extractJson } from "../core/schema.mjs";
 import { resolvePin } from "../core/pins.mjs";
+
+const CLEANUP_BROKER = fileURLToPath(new URL("../scripts/cleanup-codex-broker.mjs", import.meta.url));
+
+function scopedDataDir(artifactDir) {
+  return artifactDir ? path.join(artifactDir, "codex-companion") : null;
+}
+
+function scopedEnv(artifactDir) {
+  const dataDir = scopedDataDir(artifactDir);
+  return dataDir ? { CLAUDE_PLUGIN_DATA: dataDir } : {};
+}
 
 // Model/effort resolution. Precedence: the explicit generic env wins (the "this
 // dispatch" escalation lever), then the role-scoped env (a standing default for
@@ -51,7 +63,7 @@ export default defineAdapter({
   name: "codex",
   supportsStructuredOutput: true,
   background: true,
-  buildCommand({ role, brief, workspace, profile }) {
+  buildCommand({ role, brief, workspace, artifactDir, profile }) {
     const companion = resolveCompanion();
     const args = [companion, "task", "--json"];
     if (role !== "reviewer") args.push("--write");
@@ -60,13 +72,13 @@ export default defineAdapter({
     const effort = codexEffort(role, workspace, profile);
     if (effort) args.push("--effort", effort);
     args.push(brief);
-    return { command: process.execPath, args };
+    return { command: process.execPath, args, env: scopedEnv(artifactDir) };
   },
   // Repair by RESUMING the worker's existing thread (`task --resume-last`) instead
   // of re-running the whole task cold — the reference's reliability trait. The
   // thread already holds the diff/context, so we send only a short "emit clean
   // JSON" ask. Disable with AGENT_COLLAB_CODEX_RESUME=off (-> fresh re-send).
-  buildRetryCommand({ role, repairBrief }) {
+  buildRetryCommand({ role, repairBrief, artifactDir }) {
     if (process.env.AGENT_COLLAB_CODEX_RESUME === "off") return null;
     const companion = resolveCompanion();
     if (!companion) return null;
@@ -75,7 +87,26 @@ export default defineAdapter({
     // No --model/--effort on resume: the resumed thread already carries the
     // model it was started with; re-pinning here could conflict with it.
     args.push(repairBrief);
-    return { command: process.execPath, args };
+    return { command: process.execPath, args, env: scopedEnv(artifactDir) };
+  },
+  progressDirs({ artifactDir }) {
+    const dataDir = scopedDataDir(artifactDir);
+    return dataDir ? [dataDir] : [];
+  },
+  buildCleanupCommand({ workspace, artifactDir }) {
+    const companion = resolveCompanion();
+    const dataDir = scopedDataDir(artifactDir);
+    if (!companion || !dataDir || !workspace) return null;
+    return {
+      command: process.execPath,
+      args: [
+        CLEANUP_BROKER,
+        "--companion", companion,
+        "--workspace", workspace,
+        "--plugin-data", dataDir
+      ],
+      env: { CLAUDE_PLUGIN_DATA: dataDir }
+    };
   },
   // codex-companion errors clearly when there's no thread to resume; detect that so
   // dispatch can fall back to a fresh re-send rather than fail the repair.

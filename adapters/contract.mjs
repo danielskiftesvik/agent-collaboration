@@ -20,6 +20,12 @@
 //   isResumeMiss({ stdout, stderr, status }) -> boolean
 //       True when a resume attempt failed because there was no thread to resume;
 //       dispatch then redoes the attempt fresh so resume can never regress.
+//   progressDirs({ workspace, artifactDir }) -> string[]
+//       Worker-specific directories whose activity is evidence of progress for
+//       THIS job. Dispatch creates them before the idle guard starts watching.
+//   buildCleanupCommand({ workspace, artifactDir }) -> { command, args, env? } | null
+//       Targeted lifecycle cleanup run after every terminal attempt and explicit
+//       cancellation. It must affect only resources owned by this job.
 
 const REQUIRED = ["name", "buildCommand", "parseOutput", "probe"];
 

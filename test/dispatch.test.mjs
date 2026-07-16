@@ -1029,7 +1029,33 @@ test("runWithFallback falls back when the first worker FREEZES", () => {
   delete process.env.AGENT_COLLAB_CLAUDE_BIN;
 });
 
-test("codex session log activity counts as progress for the idle watchdog", () => {
+test("job-scoped codex companion activity counts as progress for the idle watchdog", () => {
+  isolateStateRoot();
+  const repo = makeRepo();
+  process.env.AGENT_COLLAB_CODEX_COMPANION = codexCompanionStub(`
+    import fs from 'node:fs';
+    import path from 'node:path';
+    const dir = path.join(process.env.CLAUDE_PLUGIN_DATA, 'state', 'job', 'logs');
+    fs.mkdirSync(dir, { recursive: true });
+    let n = 0;
+    const iv = setInterval(() => fs.writeFileSync(path.join(dir, 'progress-' + (n++) + '.jsonl'), 'x'), 200);
+    await new Promise((r) => setTimeout(r, 1800));
+    clearInterval(iv);
+    const review = JSON.stringify({verdict:'approve',summary:'ok',findings:[]});
+    process.stdout.write(JSON.stringify({ status: 0, rawOutput: review }));
+  `);
+
+  const res = runWorkerSync(repo, { driver: "claude", worker: "codex", role: "reviewer", brief: "review", idleMs: 800, timeoutMs: 60000, maxAttempts: 1 });
+
+  assert.equal(res.status, "completed");
+  assert.notEqual(res.failureKind, "frozen");
+  assert.equal(res.runtimeCleanup.attempted, true, "terminal success must run scoped cleanup");
+  assert.equal(res.runtimeCleanup.ok, true);
+
+  delete process.env.AGENT_COLLAB_CODEX_COMPANION;
+});
+
+test("unrelated global codex activity does NOT keep a silent worker alive", () => {
   isolateStateRoot();
   const repo = makeRepo();
   const oldHome = process.env.HOME;
@@ -1043,17 +1069,27 @@ test("codex session log activity counts as progress for the idle watchdog", () =
     import path from 'node:path';
     const dir = path.join(os.homedir(), '.codex', 'sessions');
     let n = 0;
-    const iv = setInterval(() => fs.writeFileSync(path.join(dir, 'progress-' + (n++) + '.jsonl'), 'x'), 200);
-    await new Promise((r) => setTimeout(r, 1800));
+    const iv = setInterval(() => fs.writeFileSync(path.join(dir, 'unrelated-' + (n++) + '.jsonl'), 'x'), 200);
+    await new Promise((r) => setTimeout(r, 4000));
     clearInterval(iv);
-    const review = JSON.stringify({verdict:'approve',summary:'ok',findings:[]});
+    const review = JSON.stringify({verdict:'approve',summary:'late',findings:[]});
     process.stdout.write(JSON.stringify({ status: 0, rawOutput: review }));
   `);
 
-  const res = runWorkerSync(repo, { driver: "claude", worker: "codex", role: "reviewer", brief: "review", idleMs: 800, timeoutMs: 60000, maxAttempts: 1 });
+  const res = runWorkerSync(repo, {
+    driver: "claude",
+    worker: "codex",
+    role: "reviewer",
+    brief: "review",
+    idleMs: 800,
+    timeoutMs: 60000,
+    maxAttempts: 1
+  });
 
-  assert.equal(res.status, "completed");
-  assert.notEqual(res.failureKind, "frozen");
+  assert.equal(res.status, "failed");
+  assert.equal(res.failureKind, "frozen");
+  assert.equal(res.runtimeCleanup.attempted, true, "terminal failure must also run scoped cleanup");
+  assert.equal(res.runtimeCleanup.ok, true);
 
   if (oldHome === undefined) delete process.env.HOME;
   else process.env.HOME = oldHome;

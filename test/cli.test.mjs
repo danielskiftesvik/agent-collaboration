@@ -339,6 +339,75 @@ test("cancel refuses a healthy live job unless --force is explicit", (t) => {
   assert.equal(getJob(repo, jobId).status, "cancelled");
 });
 
+test("cancel performs targeted codex broker cleanup", () => {
+  const dataDir = isolateStateRoot();
+  const repo = makeRepo();
+  const artifactDir = path.join(dataDir, "cancel-codex-artifact");
+  fs.mkdirSync(artifactDir, { recursive: true });
+  const companionRoot = fs.mkdtempSync(path.join(dataDir, "codex-companion-"));
+  const scriptsDir = path.join(companionRoot, "scripts");
+  const libDir = path.join(scriptsDir, "lib");
+  fs.mkdirSync(libDir, { recursive: true });
+  const companion = path.join(scriptsDir, "codex-companion.mjs");
+  fs.writeFileSync(companion, "// fake codex companion\n");
+  const marker = path.join(dataDir, "cancel-cleanup.marker");
+  fs.writeFileSync(
+    path.join(libDir, "broker-lifecycle.mjs"),
+    `
+      import fs from 'node:fs';
+      const mark = (line) => fs.appendFileSync(process.env.AC_CLEANUP_MARKER, line + '\\n');
+      export function loadBrokerSession(cwd) {
+        mark('load:' + cwd + ':' + process.env.CLAUDE_PLUGIN_DATA);
+        return { pid: 424242, endpoint: 'fake.sock', cwd };
+      }
+      export async function sendBrokerShutdown(endpoint) { mark('shutdown:' + endpoint); }
+      export function teardownBrokerSession({ pid, killProcess }) { mark('teardown:' + pid); killProcess(pid); }
+      export function clearBrokerSession(cwd) { mark('clear:' + cwd); }
+    `
+  );
+  fs.writeFileSync(
+    path.join(libDir, "process.mjs"),
+    `
+      import fs from 'node:fs';
+      export function terminateProcessTree(pid) {
+        fs.appendFileSync(process.env.AC_CLEANUP_MARKER, 'kill:' + pid + '\\n');
+      }
+    `
+  );
+
+  appendJob(repo, {
+    id: "cancel-codex",
+    driver: "claude",
+    worker: "codex",
+    role: "reviewer",
+    status: "running",
+    pid: null,
+    workspace: repo,
+    artifactDir,
+    startedAt: new Date(Date.now() - 60_000).toISOString(),
+    idleMs: 1,
+    timeoutMs: 1
+  });
+
+  const result = cli(["cancel", "cancel-codex", "--json"], {
+    cwd: repo,
+    env: {
+      AGENT_COLLAB_DATA: dataDir,
+      AGENT_COLLAB_CODEX_COMPANION: companion,
+      AC_CLEANUP_MARKER: marker
+    }
+  });
+
+  assert.equal(result.status, 0, result.stderr);
+  const cancelled = JSON.parse(result.stdout);
+  assert.equal(cancelled.status, "cancelled");
+  assert.equal(cancelled.runtimeCleanup.attempted, true);
+  assert.equal(cancelled.runtimeCleanup.ok, true);
+  assert.match(fs.readFileSync(marker, "utf8"), /shutdown:fake\.sock/);
+  assert.match(fs.readFileSync(marker, "utf8"), /teardown:424242/);
+  assert.match(fs.readFileSync(marker, "utf8"), /clear:/);
+});
+
 test("status --refresh only refreshes jobs selected by --recent", () => {
   const dataDir = isolateStateRoot();
   const repo = makeRepo();

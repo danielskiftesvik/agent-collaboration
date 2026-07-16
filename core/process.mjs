@@ -160,6 +160,10 @@ export function run(command, args = [], opts = {}) {
     finalArgs = [IDLE_GUARD, "--idle", String(idleMs), "--timeout", String(hardMs), ...progressArgs, ...watchArgs, "--", finalCommand, ...finalArgs];
     finalCommand = process.execPath;
     spawnOpts.timeout = hardMs ? hardMs + 30000 : undefined;
+    // If the guard's event loop itself wedges, its JS signal handler cannot run.
+    // spawnSync does not escalate its default SIGTERM, so make the documented
+    // +30s outer backstop a real, unconditional ceiling.
+    spawnOpts.killSignal = "SIGKILL";
   }
 
   try {

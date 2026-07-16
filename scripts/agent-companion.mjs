@@ -6,7 +6,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { decideRoute, resolveDriver, isAuthoritativeDriver, runSetup, runWorkerSync, runWithFallback, resolveFallbackKinds, launchBackground, runJob, waitForJob, refreshJobStatus, applyResult, recommendWorker } from "../core/dispatch.mjs";
+import { decideRoute, resolveDriver, isAuthoritativeDriver, runSetup, runWorkerSync, runWithFallback, resolveFallbackKinds, launchBackground, runJob, waitForJob, refreshJobStatus, applyResult, recommendWorker, cleanupWorkerRuntime } from "../core/dispatch.mjs";
 import { runDoctor } from "../core/doctor.mjs";
 import { mergeReviews } from "../core/merge-reviews.mjs";
 import { version } from "../core/version.mjs";
@@ -93,6 +93,7 @@ function resultJobMetadata(job) {
     runtimeVersion: job.runtimeVersion,
     templateDigest: job.templateDigest,
     workerTelemetry: job.workerTelemetry,
+    runtimeCleanup: job.runtimeCleanup,
     startedAt: job.startedAt,
     completedAt: job.completedAt,
     durationMs: job.durationMs
@@ -432,7 +433,8 @@ switch (subcommand) {
         }
       }
     }
-    const updated = updateJob(cwd, id, { status: "cancelled" });
+    const runtimeCleanup = cleanupWorkerRuntime(job.worker, job.workspace ?? cwd, job.artifactDir);
+    const updated = updateJob(cwd, id, { status: "cancelled", runtimeCleanup });
     out(updated, options, `cancelled ${id}`);
     break;
   }

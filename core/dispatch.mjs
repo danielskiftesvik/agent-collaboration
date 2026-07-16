@@ -52,8 +52,8 @@ export function defaultIdleMs() {
   return 600000; // 10 min — generous: only a worker silent AND idle on disk this long is "frozen"
 }
 
-/** Dirs whose file activity counts as worker progress for the idle watchdog. */
-function watchDirsFor(worker, workspace) {
+/** Dirs whose file activity counts as progress for THIS worker job. */
+function watchDirsFor(adapter, worker, workspace, artifactDir) {
   const dirs = [workspace];
   if (worker === "agy") {
     const agyLog = path.join(os.homedir(), ".gemini", "antigravity-cli", "log");
@@ -63,16 +63,48 @@ function watchDirsFor(worker, workspace) {
       /* ignore */
     }
   }
-  if (worker === "codex") {
-    for (const p of [path.join(os.homedir(), ".codex", "log"), path.join(os.homedir(), ".codex", "sessions")]) {
-      try {
-        if (fs.existsSync(p)) dirs.push(p);
-      } catch {
-        /* ignore */
-      }
+  for (const p of adapter.progressDirs?.({ workspace, artifactDir }) ?? []) {
+    try {
+      // Create the job-scoped directory before idle-guard starts. Watching a
+      // missing path is racy and would discard valid companion progress.
+      fs.mkdirSync(p, { recursive: true });
+      dirs.push(p);
+    } catch {
+      /* worker stdout/stderr + workspace activity remain available */
     }
   }
   return dirs;
+}
+
+/** Run a worker adapter's targeted lifecycle teardown and make failure visible. */
+export function cleanupWorkerRuntime(worker, workspace, artifactDir) {
+  const adapter = getAdapter(worker);
+  const cmd = adapter.buildCleanupCommand?.({ workspace, artifactDir });
+  if (!cmd) return { attempted: false, ok: true, reason: "adapter has no scoped runtime cleanup" };
+
+  const cwd = workspace && fs.existsSync(workspace)
+    ? workspace
+    : artifactDir && fs.existsSync(artifactDir)
+      ? artifactDir
+      : process.cwd();
+  const proc = run(cmd.command, cmd.args, {
+    cwd,
+    timeout: 10000,
+    env: { ...process.env, ...(cmd.env ?? {}) }
+  });
+  let detail = null;
+  try {
+    detail = proc.stdout.trim() ? JSON.parse(proc.stdout) : null;
+  } catch {
+    detail = proc.stdout.trim() || null;
+  }
+  return {
+    attempted: true,
+    ok: proc.status === 0,
+    status: proc.status,
+    detail,
+    error: proc.status === 0 ? undefined : (proc.stderr.trim() || proc.error?.message || "runtime cleanup failed")
+  };
 }
 
 function canWrite(worker) {
@@ -608,7 +640,7 @@ export function runWorkerSync(cwd, opts) {
   const wantStrict = process.env.AGENT_COLLAB_SANDBOX_STRICT === "on" || state.config.sandboxStrict === true;
   let sandboxDegraded = false;
 
-  const watchDirs = watchDirsFor(worker, workspace);
+  const watchDirs = watchDirsFor(adapter, worker, workspace, artifactDir);
   const exec = (cmd, sandbox) =>
     run(cmd.command, cmd.args, {
       cwd: workspace,
@@ -656,7 +688,7 @@ export function runWorkerSync(cwd, opts) {
     let proc;
     let cmd;
     if (attempts === 1) {
-      cmd = adapter.buildCommand({ role, brief: basePrompt, workspace, timeoutMs, profile });
+      cmd = adapter.buildCommand({ role, brief: basePrompt, workspace, artifactDir, timeoutMs, profile });
       proc = execGuarded(cmd);
     } else {
       // Repair attempt: prefer RESUMING the worker's thread (cheap continuation,
@@ -666,17 +698,17 @@ export function runWorkerSync(cwd, opts) {
       // the latest thread for the repo, which under concurrency could be a DIFFERENT
       // job's thread. Fall back to a fresh re-send instead.
       const retryCmd = (!noResume && adapter.buildRetryCommand)
-        ? adapter.buildRetryCommand({ role, repairBrief: resumeRepair, workspace, timeoutMs })
+        ? adapter.buildRetryCommand({ role, repairBrief: resumeRepair, workspace, artifactDir, timeoutMs })
         : null;
       if (retryCmd) {
         cmd = retryCmd;
         proc = execGuarded(cmd);
         if (adapter.isResumeMiss && adapter.isResumeMiss(proc)) {
-          cmd = adapter.buildCommand({ role, brief: freshRepair, workspace, timeoutMs, profile });
+          cmd = adapter.buildCommand({ role, brief: freshRepair, workspace, artifactDir, timeoutMs, profile });
           proc = execGuarded(cmd);
         }
       } else {
-        cmd = adapter.buildCommand({ role, brief: freshRepair, workspace, timeoutMs, profile });
+        cmd = adapter.buildCommand({ role, brief: freshRepair, workspace, artifactDir, timeoutMs, profile });
         proc = execGuarded(cmd);
       }
     }
@@ -737,6 +769,11 @@ export function runWorkerSync(cwd, opts) {
     patchPath = path.join(artifactDir, "patches", `${worker}.diff`);
     fs.writeFileSync(patchPath, diff);
   }
+  // Codex's upstream companion detaches an app-server broker. Its normal
+  // SessionEnd hook never fires when agent-collaboration invokes the companion
+  // as a subprocess, so explicitly tear down only this job's scoped broker before
+  // removing the worktree used to derive its state key.
+  const runtimeCleanup = cleanupWorkerRuntime(worker, workspace, artifactDir);
   if (worktree) removeWorktree(cwd, worktree);
 
   if (reviewContext) {
@@ -876,6 +913,10 @@ export function runWorkerSync(cwd, opts) {
     note = (note ? note + " " : "") +
       `The driver checkout changed while the review ran; the verdict applies to the captured ${reviewContext.surface || "review"} surface.`;
   }
+  if (runtimeCleanup.attempted && !runtimeCleanup.ok) {
+    note = (note ? note + " " : "") +
+      `Worker runtime cleanup failed (${runtimeCleanup.error}); inspect the job metadata before launching more ${worker} work.`;
+  }
   const sandboxed = wantSandbox && !sandboxDegraded;
   const completedAt = new Date().toISOString();
   const durationMs = Math.max(0, new Date(completedAt).getTime() - new Date(startedAt).getTime());
@@ -903,6 +944,7 @@ export function runWorkerSync(cwd, opts) {
     durationMs,
     workerTelemetry,
     resolvedModel,
+    runtimeCleanup,
     note,
     errors
   });
@@ -932,6 +974,7 @@ export function runWorkerSync(cwd, opts) {
     durationMs,
     workerTelemetry,
     resolvedModel,
+    runtimeCleanup,
     note,
     errors
   };

@@ -248,6 +248,40 @@ test("codex buildRetryCommand never re-pins model/effort (resumed thread keeps i
   delete process.env.AGENT_COLLAB_CODEX_COMPANION;
 });
 
+test("codex scopes companion state and progress to the current job artifact", () => {
+  clearCodexModelEnv();
+  process.env.AGENT_COLLAB_CODEX_COMPANION = "/stub/scripts/codex-companion.mjs";
+  const artifactDir = "/tmp/agent-collab-task";
+  const expectedDataDir = path.join(artifactDir, "codex-companion");
+  const codex = getAdapter("codex");
+
+  const first = codex.buildCommand({
+    role: "reviewer",
+    brief: "x",
+    workspace: "/tmp/worktree",
+    artifactDir
+  });
+  const retry = codex.buildRetryCommand({
+    role: "reviewer",
+    repairBrief: "fix json",
+    workspace: "/tmp/worktree",
+    artifactDir
+  });
+
+  assert.equal(first.env.CLAUDE_PLUGIN_DATA, expectedDataDir);
+  assert.equal(retry.env.CLAUDE_PLUGIN_DATA, expectedDataDir, "resume must use the same scoped state");
+  assert.deepEqual(codex.progressDirs({ workspace: "/tmp/worktree", artifactDir }), [expectedDataDir]);
+
+  const cleanup = codex.buildCleanupCommand({ workspace: "/tmp/worktree", artifactDir });
+  assert.equal(cleanup.env.CLAUDE_PLUGIN_DATA, expectedDataDir);
+  assert.ok(cleanup.args.includes("--companion"));
+  assert.ok(cleanup.args.includes("/stub/scripts/codex-companion.mjs"));
+  assert.ok(cleanup.args.includes("--workspace"));
+  assert.ok(cleanup.args.includes("/tmp/worktree"));
+
+  delete process.env.AGENT_COLLAB_CODEX_COMPANION;
+});
+
 test("codex parseOutput unwraps rawOutput from the companion envelope", () => {
   const codex = getAdapter("codex");
   const envelope = JSON.stringify({

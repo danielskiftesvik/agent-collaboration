@@ -159,6 +159,27 @@ const timer = setInterval(() => {
   }
 }, 1000);
 
+// The guarded worker has its own process group. If this guard is cancelled by a
+// background-job controller, Node's default signal handling would otherwise
+// terminate only the guard and orphan that detached worker. Forward cancellation
+// first, wait for the child pipes to close, then exit with the conventional code.
+let forwardedSignal = null;
+const signalExitCodes = { SIGHUP: 129, SIGINT: 130, SIGTERM: 143 };
+for (const signal of Object.keys(signalExitCodes)) {
+  process.once(signal, () => {
+    if (forwardedSignal) return;
+    forwardedSignal = signal;
+    clearInterval(timer);
+    closeWatchers();
+    killTree(signal);
+    setTimeout(() => killTree("SIGKILL"), 2000).unref?.();
+    // A double-forked descendant can escape the worker process group while
+    // retaining its stdout/stderr pipes. Do not gate the guard's own lifetime on
+    // those pipes closing: cancellation must reach a terminal state regardless.
+    setTimeout(() => process.exit(signalExitCodes[signal] ?? 1), 2500);
+  });
+}
+
 child.on("error", (e) => {
   clearInterval(timer);
   closeWatchers();
@@ -171,6 +192,9 @@ child.on("error", (e) => {
 child.on("close", (code, signal) => {
   clearInterval(timer);
   closeWatchers();
+  if (forwardedSignal) {
+    process.exit(signalExitCodes[forwardedSignal] ?? 1);
+  }
   if (reason === "idle") {
     process.stderr.write(`\n[idle-guard] no output for ${Math.round(idleMs / 1000)}s — worker appears frozen; killed.\n`);
     process.exit(124);
