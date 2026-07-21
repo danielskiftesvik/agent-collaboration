@@ -19,22 +19,23 @@
 Delegate work to the strongest model for each task and gate hard work behind an independent
 second opinion. Do this without asking.
 
-> **Driver auto-detects** for all three (Codex via `CODEX_THREAD_ID`, agy via
-> `ANTIGRAVITY_*`, Claude Code via `CLAUDECODE`), so no setup is normally needed.
-> `--driver <self>` / `AGENT_COLLAB_DRIVER=<self>` remains the deterministic override if
-> detection ever misses in your environment.
+> **Driver auto-detects** for all four (Codex via `CODEX_THREAD_ID`, agy via
+> `ANTIGRAVITY_*`, OpenCode via `OPENCODE_SESSION`, Claude Code via `CLAUDECODE`), so no setup
+> is normally needed. `--driver <self>` / `AGENT_COLLAB_DRIVER=<self>` remains the
+> deterministic override if detection ever misses in your environment.
 
 ### Route by model strength
 Classify the task type, then let the runtime pick the worker (it excludes you, the driver):
 
 ```
-node "$COMPANION" recommend --task <type> --driver <self> --json   # <self> = codex or agy
+node "$COMPANION" recommend --task <type> --driver <self> --json   # <self> = codex, agy, or opencode
 ```
 Then `node "$COMPANION" delegate --worker <returned> --driver <self> "<brief>"` (or `review`).
 
 - **Hard reasoning / subtle bugs / adversarial review →** `codex`.
 - **Careful refactor / planning / general SWE →** `claude`.
 - **Fast/mechanical/bulk edits, or large-context / whole-repo scans →** `agy` (Gemini).
+- **Multi-provider flexibility →** `opencode` (explicit only; pin a model in `.agent-collab.json`).
 - Full matrix + model profiles: `node "$COMPANION" recommend --profiles`.
 
 ### When a worker hits a subscription / rate limit
