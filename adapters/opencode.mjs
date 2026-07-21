@@ -63,7 +63,11 @@ export default defineAdapter({
   // session ID tracking.
   background: false,
   buildCommand({ role, brief, workspace, profile }) {
-    const args = ["run", "--format", "json", "--auto"];
+    const args = ["run", "--format", "json"];
+    // --auto auto-approves tool permissions. Only pass for workers:
+    // reviewers must NOT have unrestricted write access (codex review finding #3).
+    // Without --auto in headless mode, write tools (bash, edit, write) are denied.
+    if (role !== "reviewer") args.push("--auto");
     // Model selection: opencode requires provider/model format (finding #6)
     // e.g. anthropic/claude-sonnet-4-20250514
     const m = model(role, workspace, profile);
@@ -102,10 +106,7 @@ export default defineAdapter({
     let error = null;
     let telemetry = null;
     let foundFinalStep = false;
-    // Track step boundaries to only collect text from the terminal step.
-    // Walk forward: step_start opens a step; step_finish closes it with
-    // reason="stop" for the final assistant response (vs "tool-calls" for
-    // intermediate tool-using steps).
+    let truncated = false;
     let inStep = false;
     let stepText = "";
     let stepTokens = null;
@@ -113,8 +114,6 @@ export default defineAdapter({
     for (const ev of events) {
       if (ev.type === "step_start") {
         if (inStep) {
-          // Previous step ended without a finish event (malformed stream);
-          // flush accumulated text as the last resort
           if (stepText) answerText = stepText;
         }
         inStep = true;
@@ -133,11 +132,12 @@ export default defineAdapter({
           const cost = ev.part?.cost;
           if (tokens.input !== undefined) stepTokens = tokens;
           if (cost !== undefined) stepCost = cost;
-          // Only the final step (reason="stop") produces the assistant's
-          // answer text. Intermediate steps (reason="tool-calls") contain
-          // only tool results.
-          if (reason === "stop") {
+          // Accept text from any terminal step (stop, length, etc.)
+          // and mark truncation when the model hit length limits.
+          // Only skip intermediate tool-calling steps.
+          if (reason !== "tool-calls") {
             foundFinalStep = true;
+            truncated = reason === "length";
             answerText = stepText;
             telemetry = {
               sessionId: ev.sessionID ?? null,
@@ -153,17 +153,13 @@ export default defineAdapter({
         }
       }
     }
-    // If we saw an error event and no final step completed, signal failure.
-    // The dispatcher checks answerText first; an empty answerText from an
-    // error-only stream would otherwise fall through as "no-changes".
-    if (error && !foundFinalStep) {
-      return { answerText: "", structured: null, error, telemetry };
+    if (error) {
+      return { answerText, structured: null, error, telemetry };
     }
     if (!answerText && !error) {
-      // Fall back to raw trimmed text when no structured events matched
       answerText = (stdout ?? "").trim();
     }
-    return { answerText: answerText || (stdout ?? "").trim(), structured: null, telemetry };
+    return { answerText: answerText || (stdout ?? "").trim(), structured: null, telemetry, truncated: truncated || undefined };
   },
   probe() {
     const r = run(bin(), ["--version"]);

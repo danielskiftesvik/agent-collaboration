@@ -56,7 +56,7 @@ test("buildCommand does NOT use --exclude-tools (opencode lacks that flag)", () 
   assert.ok(args.includes("--auto"), "safety via --auto + worktree isolation");
 });
 
-test("buildCommand reviewer also has no --exclude-tools", () => {
+test("buildCommand reviewer does NOT get --auto (write tools are denied)", () => {
   clearEnv();
   const { args } = opencode.buildCommand({
     role: "reviewer",
@@ -64,7 +64,7 @@ test("buildCommand reviewer also has no --exclude-tools", () => {
     workspace: "/tmp/wt"
   });
   assert.ok(!args.includes("--exclude-tools"), "no --exclude-tools for reviewer");
-  assert.ok(args.includes("--auto"), "safety via --auto + worktree isolation");
+  assert.ok(!args.includes("--auto"), "reviewer has no --auto — write tools denied headlessly");
 });
 
 test("buildCommand omits --model when no env or pin is set", () => {
@@ -118,7 +118,19 @@ test("parseOutput extracts text from a single-step NDJSON stream", () => {
   assert.equal(r.telemetry.costUsd, 0.01);
 });
 
-test("parseOutput only takes text from the final (reason=stop) step", () => {
+test("parseOutput accepts text from non-stop terminal reasons (e.g. length)", () => {
+  const ndjson = [
+    '{"type":"step_start","timestamp":1,"sessionID":"s1","part":{"id":"p1","type":"step-start"}}',
+    '{"type":"text","timestamp":2,"sessionID":"s1","part":{"id":"p2","type":"text","text":"Partial output"}}',
+    '{"type":"step_finish","timestamp":3,"sessionID":"s1","part":{"id":"p3","reason":"length","tokens":{"input":100,"output":50,"total":150}}}',
+  ].join("\n");
+  const r = opencode.parseOutput({ stdout: ndjson });
+  assert.equal(r.answerText, "Partial output");
+  assert.equal(r.structured, null);
+  assert.equal(r.truncated, true);
+});
+
+test("parseOutput skips tool-calling steps, accepts only the final terminal step", () => {
   const ndjson = [
     // Step 1: tool-using step (intermediate — no text)
     '{"type":"step_start","timestamp":1,"sessionID":"s1","part":{"id":"p1","type":"step-start"}}',
@@ -136,7 +148,7 @@ test("parseOutput only takes text from the final (reason=stop) step", () => {
   assert.equal(r.telemetry.costUsd, 0.02);
 });
 
-test("parseOutput returns empty answerText and error when an error event is present", () => {
+test("parseOutput returns error when an error event is present (no text)", () => {
   const ndjson = [
     '{"type":"step_start","timestamp":1,"sessionID":"s1","part":{"id":"p1","type":"step-start"}}',
     '{"type":"error","timestamp":2,"sessionID":"s1","error":{"name":"UnknownError","data":{"message":"API key not configured"}}}',
@@ -144,6 +156,18 @@ test("parseOutput returns empty answerText and error when an error event is pres
   const r = opencode.parseOutput({ stdout: ndjson });
   assert.equal(r.answerText, "");
   assert.equal(r.error, "API key not configured");
+});
+
+test("parseOutput returns error even when answer text exists from a prior terminal step", () => {
+  const ndjson = [
+    '{"type":"step_start","timestamp":1,"sessionID":"s1","part":{"id":"p1","type":"step-start"}}',
+    '{"type":"text","timestamp":2,"sessionID":"s1","part":{"id":"p2","type":"text","text":"Some text "}}',
+    '{"type":"step_finish","timestamp":3,"sessionID":"s1","part":{"id":"p3","reason":"stop","tokens":{"input":50,"output":10,"total":60}}}',
+    '{"type":"error","timestamp":4,"sessionID":"s1","error":{"message":"API error after completion"}}',
+  ].join("\n");
+  const r = opencode.parseOutput({ stdout: ndjson });
+  assert.equal(r.answerText, "Some text ");
+  assert.equal(r.error, "API error after completion");
 });
 
 test("parseOutput returns error from a plain error.message format", () => {

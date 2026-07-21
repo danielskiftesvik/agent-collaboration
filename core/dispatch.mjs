@@ -268,10 +268,7 @@ export function detectDriver(env = process.env) {
   if (env.ANTIGRAVITY_AGENT || env.ANTIGRAVITY_CONVERSATION_ID || env.ANTIGRAVITY_PROJECT_ID)
     return "agy";
   if (env.CLAUDECODE || env.CLAUDE_CODE || env.CLAUDE_PLUGIN_ROOT) return "claude";
-  // OpenCode: OPENCODE_SESSION is set inside an opencode-run process; OPENCODE_HOME
-  // is always set for the installed CLI. Check session first (specific to active run)
-  // then home (always present when opencode is installed).
-  if (env.OPENCODE_SESSION || env.OPENCODE_SERVER) return "opencode";
+  if (env.OPENCODE_SESSION || env.OPENCODE_SERVER || env.OPENCODE_HOME) return "opencode";
   return null;
 }
 

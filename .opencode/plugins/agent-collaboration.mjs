@@ -21,15 +21,43 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 const PROJECT_ROOT = resolve(__dirname, "../..");
 const COMPANION = resolve(PROJECT_ROOT, "scripts/agent-companion.mjs");
 
+// Shell-aware tokenizer: splits on whitespace but preserves quoted strings
+// as single arguments with quotes stripped. Handles both single and double quotes.
+function splitArgs(str) {
+  const args = [];
+  let current = "";
+  let inQuote = false;
+  let quoteChar = "";
+  for (let i = 0; i < str.length; i++) {
+    const c = str[i];
+    if (inQuote) {
+      if (c === quoteChar) {
+        inQuote = false;
+      } else {
+        current += c;
+      }
+    } else if (c === '"' || c === "'") {
+      inQuote = true;
+      quoteChar = c;
+    } else if (c === " ") {
+      if (current) {
+        args.push(current);
+        current = "";
+      }
+    } else {
+      current += c;
+    }
+  }
+  if (current) args.push(current);
+  return args;
+}
+
 export const AgentCollaborationPlugin = async ({ project, client, $, directory, worktree }) => {
   return {
-    // Provide a slash command that users can type in the TUI prompt line.
-    // The command executes the companion CLI via bun's shell API.
     "tui.command.execute": async (input, output) => {
       const cmd = input.text?.trim();
       if (!cmd || !cmd.startsWith("/agent-collab")) return;
 
-      // Strip the leading "/agent-collab:" prefix to get the subcommand
       const args = cmd.replace(/^\/agent-collab:?\s*/, "").trim();
       if (!args) {
         output.text =
@@ -39,9 +67,9 @@ export const AgentCollaborationPlugin = async ({ project, client, $, directory, 
         return;
       }
 
-      // Run the companion CLI — use `node` since opencode provides Bun's `$`
       try {
-        const result = await $`node ${COMPANION} ${args.split(/\s+/)}`;
+        const parsed = splitArgs(args);
+        const result = await $`node ${COMPANION} ${parsed}`;
         output.text = result.stdout || result.stderr || "(no output)";
       } catch (e) {
         output.text = `agent-collaboration error: ${e.message || e}`;
