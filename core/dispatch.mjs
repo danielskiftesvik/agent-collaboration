@@ -864,8 +864,18 @@ export function runWorkerSync(cwd, opts) {
   if (escapedPaths.length) status = "breach";
 
   // Terminal adapter-level error (e.g. API failure) overrides status to failed,
-  // even if the output happened to contain coercible JSON.
-  if (adapterError) status = "failed";
+  // but only when no valid deliverable was produced (a trailing/non-fatal error
+  // after a completed step must not discard a valid patch or coercible artifact).
+  // Breach always takes precedence regardless of adapter errors.
+  if (adapterError && status !== "breach") {
+    if (role === "reviewer" && coerce.ok) {
+      // Reviewer produced a valid artifact — keep existing status
+    } else if (role === "worker" && changed && patchApplies) {
+      // Worker produced a valid, cleanly-applying patch — keep existing status
+    } else {
+      status = "failed";
+    }
+  }
 
   let failureKind;
   let resetAt = null;

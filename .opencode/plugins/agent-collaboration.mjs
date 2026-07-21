@@ -31,7 +31,7 @@ function splitArgs(str) {
   let quoteChar = "";
   for (let i = 0; i < str.length; i++) {
     const c = str[i];
-    if (c === "\\" && i + 1 < str.length) {
+    if (c === "\\" && i + 1 < str.length && (str[i + 1] === '"' || str[i + 1] === "'" || str[i + 1] === "\\")) {
       current += str[++i];
     } else if (inQuote) {
       if (c === quoteChar) {
