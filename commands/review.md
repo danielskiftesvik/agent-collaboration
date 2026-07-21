@@ -1,6 +1,6 @@
 ---
 description: Get a read-only correctness review from another harness against an explicit change surface
-argument-hint: '--worker <codex|claude|agy> [--surface head|working-tree|diff] [--focus <text>] <diff / what to review>'
+argument-hint: '--worker <codex|claude|agy|opencode> [--surface head|working-tree|diff] [--focus <text>] <diff / what to review>'
 disable-model-invocation: true
 allowed-tools: Bash(node:*), Bash(git:*), Read
 ---
@@ -10,7 +10,7 @@ Request a cross-harness review. Review-only: do not fix issues or apply patches.
 Raw arguments:
 `$ARGUMENTS`
 
-Any worker (**codex**, **claude**, or **agy**) can review — agy uses its
+Any worker (**codex**, **claude**, **agy**, or **opencode**) can review — agy uses its
 configured Gemini model (Flash by default). Gather the diff (`git diff` / `git diff --cached`) and pass
 it as the brief; it becomes the review template's `{{REVIEW_INPUT}}`. Use `--focus`
 to weight an area.

@@ -11,9 +11,9 @@ investigates first; an **independent reviewer on a different harness** validates
 parties agree on the approach and no high-severity objection remains unresolved.
 Record each party's confidence for the log — the number itself is not the gate.
 
-This skill is harness-agnostic: whichever harness is driving (Claude Code, Codex, or
-Antigravity) forms the hypothesis, and the second opinion comes from another harness via
-the `agent-collaboration` runtime.
+This skill is harness-agnostic: whichever harness is driving (Claude Code, Codex,
+Antigravity, or OpenCode) forms the hypothesis, and the second opinion comes from
+another harness via the `agent-collaboration` runtime.
 
 ## When this applies
 
@@ -74,7 +74,7 @@ node "${CLAUDE_PLUGIN_ROOT}/scripts/agent-companion.mjs" recommend --task second
 ```
 
 Defaults to the other strong reasoner — **codex if Claude is driving, claude if Codex is
-driving** (agy driving → codex). Use the returned `worker`.
+driving** (agy driving → codex, opencode driving → codex). Use the returned `worker`.
 
 For an investigation touching sensitive/local-only data, use
 `recommend --task local-only` instead — this routes to `qwen` (local, never a

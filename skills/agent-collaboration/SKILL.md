@@ -1,14 +1,14 @@
 ---
 name: agent-collaboration
-description: Use cross-harness delegation to ask other agent harnesses (Claude, Codex, or Antigravity) to perform subtasks or code reviews.
+description: Use cross-harness delegation to ask other agent harnesses (Claude, Codex, Antigravity, or OpenCode) to perform subtasks or code reviews.
 ---
 
 # Agent Collaboration Skill
 
-This skill allows a driving agent to delegate tasks or code reviews to a worker agent running on a different harness (such as Claude Code, Codex, or Antigravity).
+This skill allows a driving agent to delegate tasks or code reviews to a worker agent running on a different harness (such as Claude Code, Codex, Antigravity, or OpenCode).
 
 ## When to Delegate
-- **Cross-Harness Strengths**: Use Codex/Cursor when you need IDE-specific code understanding, Claude Code for general software engineering, or Antigravity for specific Google Cloud or enterprise tools.
+- **Cross-Harness Strengths**: Use Codex/Cursor when you need IDE-specific code understanding, Claude Code for general software engineering, Antigravity for specific Google Cloud or enterprise tools, or OpenCode for multi-provider flexibility (any underlying model).
 - **Parallel Reviews**: Use `/review` to launch a secondary agent to audit your proposed changes before they are committed.
 - **Isolated Execution**: Workers run in isolated workspaces/worktrees, ensuring they do not pollute your main branch until you explicitly approve and apply the patch.
 
@@ -28,16 +28,17 @@ Rough guide (full matrix + model profiles: [`harness-prompting/references/model-
 - **Fast/mechanical/bulk edits, visual/multimodal work, large-context or whole-repo scans** → **agy** (Gemini Flash speed/cost; use Claude/codex review for high-risk changes).
 - **Independent second opinion** → the *other* reasoner (codex↔claude); see the
   `collaborative-investigation` skill.
+- **Multi-provider flexibility / specific model** → **opencode** (explicit only; pick the model that fits).
 
 ## How to Delegate
 
 ### Claude Code
 Use the custom slash commands:
-- `/agent-collab:delegate --worker <agy|claude|codex> "<task_brief>"`
-- `/agent-collab:review --worker <codex|agy> "<review_brief>"`
+- `/agent-collab:delegate --worker <agy|claude|codex|opencode> "<task_brief>"`
+- `/agent-collab:review --worker <codex|agy|opencode> "<review_brief>"`
 - `/agent-collab:apply <jobId>`
 
-### Codex & Antigravity (Gemini CLI)
+### Codex & Antigravity & OpenCode
 Run the companion CLI:
 ```bash
 node scripts/agent-companion.mjs delegate --worker <worker> "<task_brief>"

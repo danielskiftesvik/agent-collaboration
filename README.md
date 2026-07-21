@@ -142,7 +142,8 @@ Review commands accept `--surface head|working-tree|diff`. Unified diffs are det
 
 Classify the task; `recommend` maps it to the strongest **available** worker (excluding the
 driver) by the underlying model's strengths — codex for hard reasoning/review, claude for
-careful SWE/planning, agy (Gemini) for speed + large-context. See
+careful SWE/planning, agy (Gemini) for speed + large-context, opencode for multi-provider
+flexibility. See
 [`skills/harness-prompting/references/model-strengths.md`](./skills/harness-prompting/references/model-strengths.md)
 or run `recommend --profiles`. Wire it (and the investigation gate) into your project
 autonomously with the templates in [`examples/`](./examples/) (`CLAUDE.md` for a Claude Code
@@ -184,7 +185,7 @@ driver, `AGENTS.md` for Codex/agy drivers).
 - **Freeze detection:** every worker runs under an inactivity watchdog (`idle-guard`). Progress
   = stdout/stderr **or** file activity (worktree, agy's log dir, and codex's `.codex` log/session dirs) — workers often log/write
   files rather than streaming to the pipe (claude is run in streaming mode to provide a
-  heartbeat). Only a worker making NO progress for `AGENT_COLLAB_IDLE_TIMEOUT` (default 10 min)
+  heartbeat; opencode streams NDJSON progress). Only a worker making NO progress for `AGENT_COLLAB_IDLE_TIMEOUT` (default 10 min)
   is killed as `failureKind: "frozen"` (and falls back), so a real hang surfaces before the
   20-min hard ceiling without false-killing a slow-but-working run.
 - **Limit & timeout handling:** a failed run is classified (`failureKind` = `rate-limit` |
@@ -227,7 +228,7 @@ driver, `AGENTS.md` for Codex/agy drivers).
 
 ## Driving from any harness
 
-The companion is one harness-agnostic CLI. From Codex or Antigravity you delegate by running
+The companion is one harness-agnostic CLI. From Codex, Antigravity, or OpenCode you delegate by running
 it over the shell (this is what the slash commands do under the hood):
 
 ```
@@ -248,7 +249,7 @@ carefully-chosen review model silently follows your interactive habits.
 
 **The fix:** commit a `.agent-collab.json` at your repo root. It pins standing models per
 worker and role, and the runtime reads it on every dispatch — no matter which harness is
-driving (Claude Code, Codex, or Antigravity shells all get the same pins), no env vars, no
+driving (Claude Code, Codex, Antigravity, or OpenCode shells all get the same pins), no env vars, no
 shell-profile exports.
 
 ```json

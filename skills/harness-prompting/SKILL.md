@@ -1,6 +1,6 @@
 ---
 name: harness-prompting
-description: How to compose an effective brief for a cross-harness worker or reviewer. Use when delegating a task to codex, agy (Antigravity/Gemini), or claude and you want reliable, well-shaped output.
+description: How to compose an effective brief for a cross-harness worker or reviewer. Use when delegating a task to codex, agy (Antigravity/Gemini), claude, or opencode and you want reliable, well-shaped output.
 ---
 
 # Harness Prompting
@@ -36,6 +36,7 @@ The companion appends the harness's output contract automatically — don't hand
 | **codex** | reviewer / analyst; reliable deep review, quiet on long runs | [references/codex.md](references/codex.md) |
 | **claude** | reviewer **and** worker; native `Agent` tool when same-harness | [references/claude.md](references/claude.md) |
 | **agy** (Gemini) | reviewer **and** worker; pinned to latest Gemini **Flash** for speed (`AGENT_COLLAB_AGY_CLASS=Pro` for stronger reasoning) | [references/agy.md](references/agy.md) |
+| **opencode** (multi-provider) | reviewer **and** worker — any model behind the opencode CLI. Always explicit (never auto-recommended). Write safety via worktree isolation + breach detection | [references/opencode.md](references/opencode.md) |
 | **qwen** (local) | `local-only` sensitive review and `plan-execution` implementation ONLY — always explicit, never in default routing | [references/qwen.md](references/qwen.md) |
 
 Each guide has the model-specific style, copy-paste recipes, and anti-patterns.

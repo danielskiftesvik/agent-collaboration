@@ -1,6 +1,6 @@
 ---
-description: Get an adversarial ("try to break it") review from another harness (codex, claude, or agy) against the current changes
-argument-hint: '--worker <codex|claude|agy> [--focus <text>] <what to review>'
+description: Get an adversarial ("try to break it") review from another harness (codex, claude, agy, or opencode) against the current changes
+argument-hint: '--worker <codex|claude|agy|opencode> [--focus <text>] <what to review>'
 disable-model-invocation: true
 allowed-tools: Bash(node:*), Bash(git:*), Read
 ---
@@ -11,7 +11,7 @@ strongest reasons the change should NOT ship. Review-only: do not fix or apply.
 Raw arguments:
 `$ARGUMENTS`
 
-Any worker (**codex**, **claude**, or **agy**) can review. Gather the diff to review
+Any worker (**codex**, **claude**, **agy**, or **opencode**) can review. Gather the diff to review
 (`git diff` / `git diff --cached`) and pass it as the brief; it becomes the
 template's `{{REVIEW_INPUT}}`. Use `--focus` to weight an area.
 

@@ -1,13 +1,13 @@
 {
   "name": "agent-collaboration",
   "version": "0.7.1",
-  "description": "Delegate work to a worker/reviewer on another harness (Claude Code or Antigravity) and apply the result.",
+  "description": "Delegate work to a worker/reviewer on another harness (Claude Code, Antigravity, OpenCode, or Codex) and apply the result.",
   "author": {
     "name": "Daniel Skiftesvik"
   },
   "homepage": "https://github.com/danielskiftesvik/agent-collaboration",
   "repository": "https://github.com/danielskiftesvik/agent-collaboration",
   "license": "Apache-2.0",
-  "keywords": ["claude", "antigravity", "gemini", "code-review", "delegation", "multi-agent"],
+  "keywords": ["claude", "antigravity", "gemini", "opencode", "code-review", "delegation", "multi-agent"],
   "skills": "./skills/"
 }

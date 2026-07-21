@@ -1,6 +1,6 @@
 ---
-description: Delegate a write task to a worker on another harness (Codex or Antigravity), producing a patch the driver can apply
-argument-hint: '--worker <agy|codex|claude> [--role worker|reviewer] [--apply] [--timeout <seconds>] <brief>'
+description: Delegate a write task to a worker on another harness (Codex, Antigravity, Claude Code, or OpenCode), producing a patch the driver can apply
+argument-hint: '--worker <agy|codex|claude|opencode> [--role worker|reviewer] [--apply] [--timeout <seconds>] <brief>'
 disable-model-invocation: true
 allowed-tools: Bash(node:*), Bash(git:*), Read
 ---
@@ -11,7 +11,7 @@ Raw arguments:
 `$ARGUMENTS`
 
 Compose the brief using the `harness-prompting` skill — pick the right blocks for
-the task and read the target harness's guide (codex/claude/agy). For a concrete
+the task and read the target harness's guide (codex/claude/agy/opencode). For a concrete
 fix, agy is a strong worker; for anything needing structured review output, prefer
 codex or claude. The companion appends the harness's output contract automatically.
 

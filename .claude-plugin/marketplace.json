@@ -5,20 +5,20 @@
     "name": "Daniel Skiftesvik"
   },
   "metadata": {
-    "description": "Cross-harness agent collaboration: drive Codex, Antigravity (agy), or Claude Code as workers/reviewers from any of them.",
+    "description": "Cross-harness agent collaboration: drive Codex, Antigravity (agy), OpenCode, or Claude Code as workers/reviewers from any of them.",
     "version": "0.7.1"
   },
   "plugins": [
     {
       "name": "agent-collaboration",
       "source": ".",
-      "description": "Delegate a task to a worker/reviewer on another harness (Codex or Antigravity) and apply the result.",
+      "description": "Delegate a task to a worker/reviewer on another harness (Codex, Antigravity, OpenCode, or Claude Code) and apply the result.",
       "version": "0.7.1",
       "author": {
         "name": "Daniel Skiftesvik"
       },
       "license": "Apache-2.0",
-      "keywords": ["codex", "antigravity", "gemini", "code-review", "delegation", "multi-agent"],
+      "keywords": ["codex", "antigravity", "gemini", "opencode", "code-review", "delegation", "multi-agent"],
       "strict": true
     }
   ]

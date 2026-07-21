@@ -16,7 +16,7 @@ generalization of codex-plugin-cc's `codex-cli-runtime` skill.
 ```
 setup [--json] [--gate on|off] [--sandbox on|off] [--retention-days <n>]
 doctor [--live] [--workers a,b] [--json]
-delegate --worker <agy|codex|claude> [--driver <name>] [--role worker|reviewer] [--profile <name>] [--background] [--apply] [--timeout <s>] [--no-fallback] <brief>
+delegate --worker <agy|codex|claude|opencode> [--driver <name>] [--role worker|reviewer] [--profile <name>] [--background] [--apply] [--timeout <s>] [--no-fallback] <brief>
 review  --worker <name> | --workers a,b [--focus <text>] [--profile <name>] [--background] [--no-fallback] [--json] <diff/context>
 adversarial-review --worker <name> | --workers a,b [--surface head|working-tree|diff] [--focus <text>] [--profile <name>] [--background] [--no-fallback] [--json] <diff/context>
 review-followup --job <prior-id> [--worker <name>] [--surface head|working-tree|diff] <focused diff/context>
@@ -53,12 +53,13 @@ would otherwise default to `claude`, so `--worker claude` would look like
 `driver === worker` and return a "use your own subagent" no-op **instead of
 actually delegating**. So a guessed driver always takes the cross-harness path.
 
-Auto-detection status (verified from live sessions) — all three now
+Auto-detection status (verified from live sessions) — all four now
 auto-detect, so `--driver`/`AGENT_COLLAB_DRIVER` is only an override:
 - **Codex** — `CODEX_THREAD_ID` (every session) / `CODEX_MANAGED_*`.
 - **agy** — `ANTIGRAVITY_AGENT` / `ANTIGRAVITY_CONVERSATION_ID` / `ANTIGRAVITY_PROJECT_ID`.
+- **OpenCode** — `OPENCODE_SESSION` / `OPENCODE_SERVER`.
 - **Claude Code** — `CLAUDECODE` / `CLAUDE_PLUGIN_ROOT` (its slash commands also pass
-  `--driver claude`). Checked last, so an actively-running Codex/agy beats an
+  `--driver claude`). Checked last, so an actively-running Codex/agy/opencode beats an
   inherited Claude env.
 
 ## Roles & kinds
@@ -163,7 +164,8 @@ unapplied patch artifacts to expire too. Launch-time collection recursively insp
 Every worker runs under an inactivity guard. **Progress** = stdout/stderr OR file
 activity under the worktree, agy's log dir, or codex's `~/.codex/log` /
 `~/.codex/sessions` dirs — because workers often log/write files instead of
-streaming to the pipe (claude runs in streaming mode to provide a heartbeat). Only
+streaming to the pipe (claude runs in streaming mode to provide a heartbeat;
+opencode streams NDJSON progress). Only
 NO-progress for `AGENT_COLLAB_IDLE_TIMEOUT` (default 600s; `0` disables) trips it
 → killed, surfaced as `failureKind: "frozen"`, and fallback-eligible. Codex and
 qwen also have wider profile idle budgets for quiet long-running work. Separate
@@ -209,6 +211,7 @@ read `tasks/<jobId>/reports/<worker>.md`.
 - `AGENT_COLLAB_SANDBOX` — OS-sandbox: `on` (all non-codex) | `off`. Default: opt-in
   for non-codex workers; **never codex** (it self-sandboxes). If it can't be applied,
   the run degrades to unsandboxed (`sandboxed:false` + a note) — breach detection still active.
+  OpenCode delegates write safety to worktree isolation + breach detection.
 - `AGENT_COLLAB_SANDBOX_STRICT=on` — tighten the macOS profile to **deny file-write by
   default** (confine writes to the work area + temp + harness state; blocks /tmp, other
   volumes, real repos). Default profile only blocks `$HOME`. Linux bwrap is already strict.
@@ -221,21 +224,22 @@ read `tasks/<jobId>/reports/<worker>.md`.
 - `AGENT_COLLAB_BREACH_WARN_CONCURRENT=on` — opt in to downgrading ambiguous concurrent real-checkout edits to warnings. Off by default because they are indistinguishable from a worker escape.
 - `AGENT_COLLAB_CODEX_RESUME=off` — repair with a fresh re-send instead of resuming the codex thread (resume is on by default).
 - `AGENT_COLLAB_ALLOW_INPLACE=on` — allow an UNISOLATED in-place run when a worktree can't be created (off by default → such a job is `blocked`, never run in the real cwd).
-- `AGENT_COLLAB_<AGY|CLAUDE|CODEX>_BIN` — override a harness binary.
+- `AGENT_COLLAB_<AGY|CLAUDE|CODEX|OPENCODE>_BIN` — override a harness binary.
 - `AGENT_COLLAB_AGY_MODEL[_PRO|_FLASH]` — explicit agy model id (default: unset).
 
 ## Repo-level model pins (`.agent-collab.json`)
 
 A tracked file at the repo root pins standing models per worker+role, readable by EVERY
-driver harness (claude/codex/agy shells) — unlike env vars, it can't drift with interactive
-sessions (the codex TUI rewrites `~/.codex/config.toml` with the last-used model) and it
-version-controls the pinned reviewer instrument with the repo:
+driver harness (claude/codex/agy/opencode shells) — unlike env vars, it can't drift
+with interactive sessions (the codex TUI rewrites `~/.codex/config.toml` with the
+last-used model) and it version-controls the pinned reviewer instrument with the repo:
 
 ```json
 {
   "workers": {
     "codex":  { "reviewer": { "model": "gpt-5.6-terra", "effort": "high" } },
-    "claude": { "worker":   { "model": "sonnet" } }
+    "claude": { "worker":   { "model": "sonnet" } },
+    "opencode": { "reviewer": { "model": "anthropic/claude-sonnet-4-20250514" } }
   }
 }
 ```

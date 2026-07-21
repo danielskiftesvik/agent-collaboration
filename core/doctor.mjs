@@ -41,7 +41,9 @@ const REVIEW_BRIEF =
 // Keep the run cross-harness (worker != driver label); runWorkerSync executes the
 // worker regardless, but a distinct label keeps recommend/fallback semantics sane.
 function pickDriver(worker) {
-  return worker === "claude" ? "codex" : "claude";
+  if (worker === "claude") return "codex";
+  if (worker === "opencode") return "claude";
+  return "claude";
 }
 
 function liveReviewCheck(worker) {

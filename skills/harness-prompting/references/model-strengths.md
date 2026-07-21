@@ -12,7 +12,7 @@ Which underlying model is strongest at what, and how that maps to worker choice.
 >    release — edit
 >    `core/model-profiles.mjs` as they evolve, and weigh task fit over vendor.
 
-## The three underlying models
+## The underlying models
 
 ### Claude (Anthropic — Claude 5 / Opus 4.8 + Sonnet) — agentic engineer
 - **Stronger at:** general SWE & careful refactoring, long-horizon agentic terminal work,
@@ -38,6 +38,13 @@ Which underlying model is strongest at what, and how that maps to worker choice.
   adversarial verification** (0-3) — Gemini has large context, but "bigger than rivals" is
   unconfirmed.
 
+### OpenCode (multi-provider — any model behind the CLI)
+- **Stronger at:** flexibility — the underlying model (Anthropic, OpenAI, Google, DeepSeek, local)
+  is chosen per dispatch via env var or pin. Can match any task profile by model selection.
+- **Weaker at:** no thread-resume (retry is a full re-send); no per-role tool exclusion
+  (`--exclude-tools`). Write safety is via worktree isolation + breach detection.
+- **Always explicit** — never auto-selected by `recommend`. You must name it explicitly.
+
 ## Task → worker
 
 `agent-companion.mjs recommend --task <type> --driver <self>` returns the strongest *available*
@@ -53,6 +60,7 @@ worker (excluding the driver) + the model's profile + a reason. The mapping:
 | `mechanical`, `bulk-edit`, `quick-fix` | agy, claude, codex | Gemini Flash speed/cost first; Claude/codex remain available |
 | `large-context`, `broad-scan` | agy, codex | Gemini on cost — context-size advantage **unconfirmed** |
 | `visual`, `multimodal` | agy | Gemini multimodal strengths |
+| general | opencode (explicit) | flexible multi-provider; pick model that fits the task |
 
 `recommend --profiles` prints the full matrix.
 

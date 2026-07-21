@@ -143,7 +143,7 @@ set `AGENT_COLLAB_FALLBACK=off`); then the limit just surfaces for you to relay.
 
 ## By harness
 
-- **codex / claude / agy** — emit structured findings/result JSON: present findings by
+- **codex / claude / agy / opencode** — emit structured findings/result JSON: present findings by
   severity, preserve evidence boundaries.
 - **agy** — usable as reviewer and write-worker (default **Gemini Flash**;
   `AGENT_COLLAB_AGY_CLASS=Pro` for deeper passes). Its adapter pins model flags before
@@ -153,6 +153,9 @@ set `AGENT_COLLAB_FALLBACK=off`); then the limit just surfaces for you to relay.
   stretches, so the runtime gives it a wider idle budget.
 - **claude** — usable as a write-worker; when Claude Code is also the driver, use the
   native Agent tool.
+- **opencode** — usable as reviewer and write-worker; multi-provider flexibility. Always
+  explicit (never auto-recommended). No thread resume — retry is a full re-send. Model
+  chosen per dispatch via `AGENT_COLLAB_OPENCODE_MODEL` env var or `.agent-collab.json` pin.
 
 Observed reliability: **agy is the dependable workhorse** for fast patch delivery
 and **codex is the specialist** for the hardest review reasoning — high signal but

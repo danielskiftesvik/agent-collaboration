@@ -1,6 +1,6 @@
 ---
 description: Self-check the collaboration runtime — config + worker readiness, and (with --live) a review-cycle + worktree-isolation smoke test per worker against a throwaway repo
-argument-hint: '[--live] [--workers agy,codex,claude]'
+argument-hint: '[--live] [--workers agy,codex,claude,opencode]'
 disable-model-invocation: true
 allowed-tools: Bash(node:*)
 ---
