@@ -877,6 +877,16 @@ export function runWorkerSync(cwd, opts) {
     }
   }
 
+  // Diagnostic: a truncated model response (reason="length") means the worker's
+  // output may be incomplete. Flag it so callers can decide whether to trust it.
+  if (adapterError && (status === "completed" || status === "no-changes")) {
+    // Adapter error occurred but a valid deliverable was produced — annotate
+    // the result so consumers know the run wasn't pristine.
+    note = (note ? note + " " : "") +
+      "The worker encountered a terminal adapter error but produced a valid deliverable " +
+      "(patch or artifact). Inspect the errors field and verify completeness.";
+  }
+
   let failureKind;
   let resetAt = null;
   let errors = coerce.ok ? undefined : coerce.errors;
