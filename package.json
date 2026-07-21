@@ -8,6 +8,9 @@
   "bin": {
     "agent-companion": "scripts/agent-companion.mjs"
   },
+  "exports": {
+    "./tui": ".opencode/plugins/agent-collaboration.mjs"
+  },
   "scripts": {
     "test": "node --test test/*.test.mjs",
     "bump": "node scripts/bump-version.mjs"
