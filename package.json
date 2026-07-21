@@ -4,12 +4,9 @@
   "description": "Cross-harness agent collaboration: any of Claude Code, Codex, or Antigravity can drive workers/reviewers on the others.",
   "type": "module",
   "license": "Apache-2.0",
-  "main": ".opencode/plugins/agent-collaboration.mjs",
+  "main": ".opencode/plugins/agent-collaboration.js",
   "bin": {
     "agent-companion": "scripts/agent-companion.mjs"
-  },
-  "exports": {
-    "./tui": ".opencode/plugins/agent-collaboration.mjs"
   },
   "scripts": {
     "test": "node --test test/*.test.mjs",
