@@ -140,3 +140,20 @@ export const TASK_ROUTING = {
 export const DEFAULT_ROUTING = { workers: ["claude", "codex", "agy"], why: "general default" };
 
 export const TASK_TYPES = Object.keys(TASK_ROUTING);
+
+// Per-model default timeout (seconds). Free/rate-limited models should use
+// short timeouts — they either work quickly or are rate-limited; 20 min is
+// wasteful for the latter. Paid models use the system default (20 min).
+// Keyed by model name substring (matched against the resolved model string).
+export const MODEL_TIMEOUTS = {
+  "deepseek-v4-flash-free": 180,
+  "deepseek-v4-pro-free": 300,
+};
+
+export function resolveModelTimeout(model) {
+  if (!model) return null;
+  for (const [key, seconds] of Object.entries(MODEL_TIMEOUTS)) {
+    if (model.includes(key)) return seconds * 1000;
+  }
+  return null;
+}

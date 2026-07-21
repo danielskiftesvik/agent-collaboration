@@ -17,7 +17,7 @@ import { isPidAlive, isStalled, touchHeartbeat } from "./heartbeat.mjs";
 import { coerceArtifact, normalizeReviewArtifact } from "./schema.mjs";
 import { buildFromTemplate, templateDigest } from "./prompts.mjs";
 import { classifyFailure, FALLBACK_KINDS } from "./failures.mjs";
-import { MODEL_PROFILES, TASK_ROUTING, DEFAULT_ROUTING, WRITE_TASKS } from "./model-profiles.mjs";
+import { MODEL_PROFILES, TASK_ROUTING, DEFAULT_ROUTING, WRITE_TASKS, resolveModelTimeout } from "./model-profiles.mjs";
 import { version } from "./version.mjs";
 import { checkPreflight } from "./preflight.mjs";
 import { cleanupJobWorktree } from "./gc.mjs";
@@ -415,8 +415,16 @@ function readProgress(progressFile) {
  * here (only the driver applies). Returns a summary including the artifact.
  */
 export function runWorkerSync(cwd, opts) {
-  const { driver, worker, role = "worker", brief, kind, focus, targetLabel, profile, surface, followupOf, timeoutMs = defaultTimeoutMs(), idleMs = MODEL_PROFILES[worker]?.idleMsOverride ?? defaultIdleMs(), maxAttempts = 2, noResume = false } = opts;
+  const { driver, worker, role = "worker", brief, kind, focus, targetLabel, profile, surface, followupOf, idleMs = MODEL_PROFILES[worker]?.idleMsOverride ?? defaultIdleMs(), maxAttempts = 2, noResume = false } = opts;
+  let timeoutMs = opts.timeoutMs ?? defaultTimeoutMs();
   const adapter = getAdapter(worker);
+  // Shorter timeout for known free / rate-limited models — they either work
+  // quickly or are throttled; the 20 min default just wastes time.
+  if (adapter.resolveModel) {
+    const m = adapter.resolveModel({ role, workspace: cwd, profile });
+    const mt = resolveModelTimeout(m);
+    if (mt !== null) timeoutMs = Math.min(timeoutMs, mt);
+  }
   const schema = role === "reviewer" ? reviewSchema : resultSchema;
 
   // A jobId may be supplied (background runs pre-create the record, then a detached

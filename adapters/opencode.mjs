@@ -37,9 +37,13 @@ const model = (role, workspace, profile) =>
   (role === "reviewer" ? process.env.AGENT_COLLAB_OPENCODE_MODEL_REVIEW : null) ||
   resolvePin("opencode", role, workspace, profile).model;
 
-// Opencode has no --exclude-tools flag. The full tool set (live-confirmed) is:
+// OpenCode has no --exclude-tools flag. The full tool set (live-confirmed) is:
 // bash, edit, glob, grep, read, skill, task, todowrite, webfetch, write.
 // Safety relies on --auto + worktree isolation + breach detection.
+
+function resolveModel({ role, workspace, profile } = {}) {
+  return model(role, workspace, profile);
+}
 
 function parseNdjson(stdout) {
   const events = [];
@@ -174,5 +178,9 @@ export default defineAdapter({
     // configured a provider/model or that --format json works. The doctor
     // --live flag exercises those. (Finding #10)
     return { available: true, version: r.stdout.trim() };
-  }
+  },
+  // Resolve the model that would be used for a dispatch. Used by the runtime
+  // to apply per-model timeout policies (e.g. 3 min for free models instead of
+  // the 20 min default).
+  resolveModel
 });
