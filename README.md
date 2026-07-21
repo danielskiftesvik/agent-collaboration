@@ -38,7 +38,15 @@ installed it in Claude Code.)
 
 ### Opencode
 
-Add to your `opencode.json` (global or project-level):
+```bash
+# Global (recommended)
+opencode plugin "agent-collaboration@git+https://github.com/danielskiftesvik/agent-collaboration.git" -g
+
+# Or project-local
+opencode plugin "agent-collaboration@git+https://github.com/danielskiftesvik/agent-collaboration.git"
+```
+
+Alternatively, add to your `opencode.json` / `opencode.jsonc` (global or project-level):
 
 ```json
 {
@@ -53,6 +61,13 @@ Verify by running `setup`:
 
 ```
 /agent-collab:setup
+```
+
+If an update does not appear after reinstall, clear the package cache and reinstall with `--force`:
+
+```bash
+rm -rf ~/.cache/opencode/packages/agent-collaboration*
+opencode plugin "agent-collaboration@git+https://github.com/danielskiftesvik/agent-collaboration.git" -g --force
 ```
 
 > Codex, Antigravity, and opencode plugin support is newer than Claude Code's and the exact marketplace
