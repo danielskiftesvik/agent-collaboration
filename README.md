@@ -38,20 +38,22 @@ installed it in Claude Code.)
 
 ### Opencode
 
-Add to your project's `opencode.json` (or global `~/.config/opencode/opencode.json`):
+Add to your `opencode.json` (global or project-level):
 
 ```json
 {
-  "plugin": [".opencode/plugins/agent-collaboration.mjs"]
+  "plugin": ["agent-collaboration@git+https://github.com/danielskiftesvik/agent-collaboration.git"]
 }
 ```
 
-Restart OpenCode. The plugin registers the slash commands (`/agent-collab:delegate`,
-`/agent-collab:review`, `/agent-collab:setup`, etc.).
+Restart OpenCode. The plugin installs through OpenCode's plugin manager and registers
+the slash commands (`/agent-collab:delegate`, `/agent-collab:review`, `/agent-collab:setup`, etc.).
 
-> The repo also ships the plugin at `.opencode/plugins/agent-collaboration.mjs`, which
-> OpenCode auto-loads when running inside the project directory — the `opencode.json`
-> entry above makes it explicit and ensures it loads regardless of the working directory.
+Verify by running `setup`:
+
+```
+/agent-collab:setup
+```
 
 > Codex, Antigravity, and opencode plugin support is newer than Claude Code's and the exact marketplace
 > resolution can vary by CLI version — if a command above doesn't resolve, check
