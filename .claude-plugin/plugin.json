@@ -1,6 +1,6 @@
 {
   "name": "agent-collaboration",
-  "version": "0.7.0",
+  "version": "0.7.1",
   "description": "Delegate work to a worker/reviewer on another harness (Codex or Antigravity) and apply the result.",
   "author": {
     "name": "Daniel Skiftesvik"

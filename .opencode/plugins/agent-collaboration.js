@@ -16,10 +16,12 @@
 //   /agent-collab:recommend --task <type>               — get worker recommendation
 import { fileURLToPath } from "url";
 import { dirname, resolve } from "path";
+import fs from "fs";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const PROJECT_ROOT = resolve(__dirname, "../..");
 const COMPANION = resolve(PROJECT_ROOT, "scripts/agent-companion.mjs");
+const SKILLS_DIR = resolve(PROJECT_ROOT, "skills");
 
 // Shell-aware tokenizer: splits on whitespace but preserves quoted strings
 // as single arguments with quotes stripped. Handles single and double quotes,
@@ -57,8 +59,14 @@ function splitArgs(str) {
 
 export const AgentCollaborationPlugin = async ({ project, client, $, directory, worktree }) => {
   return {
-    config: async (_config) => {
-      // No-op: satisfies server-plugin validation so install via "main" works.
+    config: async (config) => {
+      if (fs.existsSync(SKILLS_DIR)) {
+        config.skills = config.skills || {};
+        config.skills.paths = config.skills.paths || [];
+        if (!config.skills.paths.includes(SKILLS_DIR)) {
+          config.skills.paths.push(SKILLS_DIR);
+        }
+      }
     },
     "tui.command.execute": async (input, output) => {
       const cmd = input.text?.trim();
