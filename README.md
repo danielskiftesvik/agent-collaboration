@@ -337,6 +337,7 @@ They are checked before another isolated worktree is created.
 | `AGENT_COLLAB_CLAUDE_MODEL` | Pin the model passed to `claude --model` (default: `default`, Claude Code's account-tier recommendation — never Fable/Haiku) |
 | `AGENT_COLLAB_OPENCODE_BIN` | Override the `opencode` binary path |
 | `AGENT_COLLAB_OPENCODE_MODEL` | Per-dispatch opencode model override in `provider/model` format (e.g. `anthropic/claude-sonnet-4-20250514`). `_MODEL_REVIEW` variant applies to reviewers only; generic wins |
+| `AGENT_COLLAB_OPENCODE_VARIANT` | Per-dispatch reasoning-effort override (e.g. `high`, `max`, `minimal` — passed as `--variant`). `_VARIANT_REVIEW` variant applies to reviewers only; generic wins |
 | `AGENT_COLLAB_QWEN_BIN` | Override the `qwen` binary path |
 | `AGENT_COLLAB_QWEN_MODEL` | Pin a specific local model via `-m` (default: none — inherits qwen's own configured default in `~/.qwen/settings.json`, since LM Studio serves one model at a time and can't be reliably auto-detected) |
 | `AGENT_COLLAB_QWEN_BASE_URL` | Override the local LM Studio endpoint (default `http://127.0.0.1:1234/v1`). Must be loopback (`127.0.0.1`/`localhost`/`::1`) — a non-loopback value is refused unless `AGENT_COLLAB_QWEN_ALLOW_REMOTE=on` |

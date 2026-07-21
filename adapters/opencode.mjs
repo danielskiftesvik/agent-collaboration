@@ -37,6 +37,12 @@ const model = (role, workspace, profile) =>
   (role === "reviewer" ? process.env.AGENT_COLLAB_OPENCODE_MODEL_REVIEW : null) ||
   resolvePin("opencode", role, workspace, profile).model;
 
+// Variant (reasoning effort) precedence: env > repo .agent-collab.json pin > null
+const variant = (role, workspace, profile) =>
+  process.env.AGENT_COLLAB_OPENCODE_VARIANT ||
+  (role === "reviewer" ? process.env.AGENT_COLLAB_OPENCODE_VARIANT_REVIEW : null) ||
+  resolvePin("opencode", role, workspace, profile).effort;
+
 // OpenCode has no --exclude-tools flag. The full tool set (live-confirmed) is:
 // bash, edit, glob, grep, read, skill, task, todowrite, webfetch, write.
 // Safety relies on --auto + worktree isolation + breach detection.
@@ -80,6 +86,8 @@ export default defineAdapter({
     // e.g. anthropic/claude-sonnet-4-20250514
     const m = model(role, workspace, profile);
     if (m) args.push("--model", m);
+    const v = variant(role, workspace, profile);
+    if (v) args.push("--variant", v);
     if (workspace) args.push(`--dir=${workspace}`);
     args.push(brief);
     return { command: bin(), args };

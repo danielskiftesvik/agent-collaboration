@@ -23,6 +23,8 @@ Model is in `provider/model` format (e.g. `anthropic/claude-sonnet-4-20250514`):
 |---|---|
 | `AGENT_COLLAB_OPENCODE_MODEL` | Per-dispatch model override |
 | `AGENT_COLLAB_OPENCODE_MODEL_REVIEW` | Reviewer-only model; generic `_MODEL` wins if both set |
+| `AGENT_COLLAB_OPENCODE_VARIANT` | Reasoning effort (`high`, `max`, `minimal` — passed as `--variant`) |
+| `AGENT_COLLAB_OPENCODE_VARIANT_REVIEW` | Reviewer-only variant; generic `_VARIANT` wins if both set |
 | `AGENT_COLLAB_OPENCODE_BIN` | Override the `opencode` binary path |
 
 Or pin standing models in `.agent-collab.json`:
@@ -30,7 +32,7 @@ Or pin standing models in `.agent-collab.json`:
 ```json
 {
   "workers": {
-    "opencode": { "reviewer": { "model": "anthropic/claude-sonnet-4-20250514" } }
+    "opencode": { "reviewer": { "model": "anthropic/claude-sonnet-4-20250514", "effort": "high" } }
   }
 }
 ```
