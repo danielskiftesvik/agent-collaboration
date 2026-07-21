@@ -11,6 +11,6 @@ temp_*/
 # Scratch cross-harness review reports (written by codex/agy review prompts).
 reviews/
 
-docs/
+docs/reports/
 
 .worktrees/

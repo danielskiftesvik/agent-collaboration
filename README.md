@@ -70,6 +70,8 @@ rm -rf ~/.cache/opencode/packages/agent-collaboration*
 opencode plugin "agent-collaboration@git+https://github.com/danielskiftesvik/agent-collaboration.git" -g --force
 ```
 
+Full OpenCode guide: [`docs/README.opencode.md`](./docs/README.opencode.md).
+
 > Codex, Antigravity, and opencode plugin support is newer than Claude Code's and the exact marketplace
 > resolution can vary by CLI version — if a command above doesn't resolve, check
 > `codex plugin --help` / `agy plugin --help`. You can always skip install entirely and
