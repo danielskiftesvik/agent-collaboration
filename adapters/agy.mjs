@@ -61,6 +61,10 @@ function resolveModel(role, workspace, profile) {
   return pickLatestModel(listModels(), "Flash") || null;
 }
 
+const effort = (role, workspace, profile) =>
+  process.env.AGENT_COLLAB_AGY_EFFORT ||
+  resolvePin("agy", role, workspace, profile).effort;
+
 export default defineAdapter({
   name: "agy",
   supportsStructuredOutput: false,
@@ -78,6 +82,8 @@ export default defineAdapter({
     // label with AGENT_COLLAB_AGY_MODEL.
     const model = resolveModel(role, workspace, profile);
     if (model) args.push("--model", model);
+    const e = effort(role, workspace, profile);
+    if (e) args.push("--effort", e);
 
     if (workspace) {
       args.push("--add-dir", workspace);

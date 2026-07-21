@@ -13,6 +13,10 @@ const model = (role, workspace, profile) =>
   resolvePin("claude", role, workspace, profile).model ||
   "default";
 
+const effort = (role, workspace, profile) =>
+  process.env.AGENT_COLLAB_CLAUDE_EFFORT ||
+  resolvePin("claude", role, workspace, profile).effort;
+
 export default defineAdapter({
   name: "claude",
   supportsStructuredOutput: false, // envelope is JSON; the answer inside is text
@@ -22,6 +26,8 @@ export default defineAdapter({
     // idle watchdog can't tell "working" from "frozen" (claude is silent until
     // done in plain --output-format json). stream-json needs --verbose headless.
     const args = ["-p", brief, "--output-format", "stream-json", "--verbose", "--model", model(role, workspace, profile)];
+    const e = effort(role, workspace, profile);
+    if (e) args.push("--effort", e);
     args.push("--permission-mode", role === "reviewer" ? "plan" : "acceptEdits");
     if (workspace) args.push("--add-dir", workspace);
     return { command: bin(), args };
