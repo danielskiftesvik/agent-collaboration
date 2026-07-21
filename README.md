@@ -37,20 +37,21 @@ Reinstall with the same command to update. (Or `agy plugin import claude` if you
 installed it in Claude Code.)
 
 ### Opencode
-```
-git clone https://github.com/danielskiftesvik/agent-collaboration
-```
-Opencode auto-loads `.mjs` files from `.opencode/plugins/` at startup. The repo ships
-one at `.opencode/plugins/agent-collaboration.mjs` — run opencode from the cloned
-directory and the slash commands (`/agent-collab:delegate`, etc.) become available.
-To make it available globally, symlink the plugin into a project that uses it:
 
-```
-ln -s /path/to/agent-collaboration/.opencode/plugins/agent-collaboration.mjs .opencode/plugins/
+Add to your project's `opencode.json` (or global `~/.config/opencode/opencode.json`):
+
+```json
+{
+  "plugin": [".opencode/plugins/agent-collaboration.mjs"]
+}
 ```
 
-Or install manually with `opencode plugin <path>` (pass `--global` for all directories).
-Re-pull the repo and restart opencode to update.
+Restart OpenCode. The plugin registers the slash commands (`/agent-collab:delegate`,
+`/agent-collab:review`, `/agent-collab:setup`, etc.).
+
+> The repo also ships the plugin at `.opencode/plugins/agent-collaboration.mjs`, which
+> OpenCode auto-loads when running inside the project directory — the `opencode.json`
+> entry above makes it explicit and ensures it loads regardless of the working directory.
 
 > Codex, Antigravity, and opencode plugin support is newer than Claude Code's and the exact marketplace
 > resolution can vary by CLI version — if a command above doesn't resolve, check
