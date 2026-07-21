@@ -18,9 +18,9 @@ function stubBin(body) {
   return sh;
 }
 
-test("registry exposes claude, agy, codex and qwen", () => {
+test("registry exposes all harnesses including opencode", () => {
   const names = listAdapters().map((a) => a.name).sort();
-  assert.deepEqual(names, ["agy", "claude", "codex", "qwen"]);
+  assert.deepEqual(names, ["agy", "claude", "codex", "opencode", "qwen"]);
   assert.throws(() => getAdapter("nope"), /unknown adapter/i);
 });
 

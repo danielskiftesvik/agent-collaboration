@@ -61,6 +61,25 @@ export const MODEL_PROFILES = {
       "its often-cited 1M-token context *advantage* over rivals did NOT survive verification"
     ]
   },
+  opencode: {
+    harness: "opencode",
+    model: "varies (user-configured provider/model — set via AGENT_COLLAB_OPENCODE_MODEL or --model)",
+    vendor: "multi-provider (Anthropic, OpenAI, Google, DeepSeek, local, etc.)",
+    canWrite: true,
+    explicitOnly: true,
+    cleanEnv: false,
+    strongerAt: [
+      "multi-provider flexibility — can route to any configured model",
+      "works with any provider the user has configured in opencode",
+      "ideal when you want to use a specific model not available through the other harnesses"
+    ],
+    weakerAt: [
+      "model capability varies entirely by user config — not deterministic",
+      "explicitOnly: true — never auto-selected; requires --worker opencode or a dedicated routing entry",
+      "no thread-resume mechanism (buildRetryCommand); retry is always a full re-send that repeats side effects",
+      "--auto permission model is broader than other harnesses' per-role permission scoping"
+    ]
+  },
   qwen: {
     harness: "qwen",
     model: "local (LM Studio, whatever's currently loaded — Qwen Code CLI as agent scaffold)",

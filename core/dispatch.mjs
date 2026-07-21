@@ -268,6 +268,10 @@ export function detectDriver(env = process.env) {
   if (env.ANTIGRAVITY_AGENT || env.ANTIGRAVITY_CONVERSATION_ID || env.ANTIGRAVITY_PROJECT_ID)
     return "agy";
   if (env.CLAUDECODE || env.CLAUDE_CODE || env.CLAUDE_PLUGIN_ROOT) return "claude";
+  // OpenCode: OPENCODE_SESSION is set inside an opencode-run process; OPENCODE_HOME
+  // is always set for the installed CLI. Check session first (specific to active run)
+  // then home (always present when opencode is installed).
+  if (env.OPENCODE_SESSION || env.OPENCODE_SERVER) return "opencode";
   return null;
 }
 
@@ -304,7 +308,8 @@ const resultSchema = JSON.parse(
 const NATIVE_INSTRUCTION = {
   claude: "Use the Agent tool (a Claude Code subagent) instead of a cross-harness job.",
   agy: "Use Antigravity's invoke_subagent instead of a cross-harness job.",
-  codex: "Use Codex's native subagent instead of a cross-harness job."
+  codex: "Use Codex's native subagent instead of a cross-harness job.",
+  opencode: "Use opencode's built-in subagent/task capabilities instead of a cross-harness job."
 };
 
 function schemaInstruction(role) {

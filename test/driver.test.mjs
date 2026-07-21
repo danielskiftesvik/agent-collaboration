@@ -68,6 +68,18 @@ test("detectDriver recognizes agy via Antigravity's env (confirmed from a live s
   assert.equal(isAuthoritativeDriver(r.source), false);
 });
 
+test("detectDriver recognizes opencode via OPENCODE_SESSION", () => {
+  assert.equal(detectDriver({ OPENCODE_SESSION: "ses_abc123" }), "opencode");
+});
+
+test("detectDriver recognizes opencode via OPENCODE_SERVER", () => {
+  assert.equal(detectDriver({ OPENCODE_SERVER: "http://localhost:4096" }), "opencode");
+});
+
+test("codex/anty env beats a stale inherited OPENCODE_SESSION", () => {
+  assert.equal(detectDriver({ OPENCODE_SESSION: "x", CODEX_THREAD_ID: "y" }), "codex");
+});
+
 test("detectDriver returns null when no harness signal is present", () => {
   assert.equal(detectDriver({ PATH: "/usr/bin" }), null);
   assert.equal(detectDriver({}), null);

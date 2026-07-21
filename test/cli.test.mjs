@@ -16,11 +16,11 @@ function cli(args, { cwd, env } = {}) {
   return run(process.execPath, [CLI, ...args], { cwd, env: { ...process.env, ...env } });
 }
 
-test("setup --json lists the four adapters", () => {
+test("setup --json lists all adapters", () => {
   const r = cli(["setup", "--json"]);
   assert.equal(r.status, 0, r.stderr);
   const rows = JSON.parse(r.stdout);
-  assert.deepEqual(rows.map((x) => x.name).sort(), ["agy", "claude", "codex", "qwen"]);
+  assert.deepEqual(rows.map((x) => x.name).sort(), ["agy", "claude", "codex", "opencode", "qwen"]);
 });
 
 test("version --json reports runtime path and state dir", () => {
@@ -80,8 +80,9 @@ test("recommend --profiles --json dumps the model profiles", () => {
   const r = cli(["recommend", "--profiles", "--json"]);
   assert.equal(r.status, 0, r.stderr);
   const profiles = JSON.parse(r.stdout);
-  assert.deepEqual(Object.keys(profiles).sort(), ["agy", "claude", "codex", "qwen"]);
+  assert.deepEqual(Object.keys(profiles).sort(), ["agy", "claude", "codex", "opencode", "qwen"]);
   assert.ok(profiles.agy.strongerAt.length > 0);
+  assert.ok(profiles.opencode.explicitOnly);
 });
 
 test("recommend --task --json returns a worker (or native) with a reason", () => {
