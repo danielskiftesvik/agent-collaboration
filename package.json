@@ -1,6 +1,6 @@
 {
   "name": "agent-collaboration",
-  "version": "0.6.5",
+  "version": "0.7.0",
   "description": "Cross-harness agent collaboration: any of Claude Code, Codex, or Antigravity can drive workers/reviewers on the others.",
   "type": "module",
   "license": "Apache-2.0",

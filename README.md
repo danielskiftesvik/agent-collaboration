@@ -1,11 +1,12 @@
 # agent-collaboration
 
-Cross-harness agent collaboration. A driver harness — **Claude Code**, **Codex**, or
-**Antigravity (`agy`)** — can delegate a task to a **worker** or **reviewer** running on
-another harness, then apply the result to the working tree. Any of the three can drive;
-any of the three can do the work. A fourth harness, **`qwen`** (local, via a local LM
-Studio server), can also work or review — but only as an explicit, opt-in choice for
-sensitive/local-only tasks, never as a driver and never auto-selected.
+Cross-harness agent collaboration. A driver harness — **Claude Code**, **Codex**,
+**Antigravity (`agy`)**, or **opencode** — can delegate a task to a **worker** or
+**reviewer** running on another harness, then apply the result to the working tree.
+Any of the four can drive; any of the four can do the work. A fifth harness,
+**`qwen`** (local, via a local LM Studio server), can also work or review — but only
+as an explicit, opt-in choice for sensitive/local-only tasks, never as a driver and
+never auto-selected.
 
 This is a generalization of OpenAI's Apache-2.0 [`codex-plugin-cc`](https://github.com/openai/codex-plugin-cc)
 (see [`NOTICE`](./NOTICE)): its single Claude Code → Codex direction is widened into a
@@ -50,11 +51,11 @@ node <plugin-dir>/scripts/agent-companion.mjs setup   # Codex / agy / any shell
 ### Prerequisites
 - **Node ≥ 20.**
 - The worker CLIs you want to delegate to, on your `PATH`: `codex`, `agy` (Antigravity),
-  and/or `claude`.
+  `claude`, and/or `opencode`.
 - For the local `qwen` harness specifically: the `qwen` CLI (Qwen Code) on your `PATH`,
   **and** a local LM Studio server running an OpenAI-compatible endpoint (default
   `http://127.0.0.1:1234/v1`) with a model loaded — `qwen` is the only harness with this
-  extra, separately-running-process dependency; the other three are self-contained CLIs.
+  extra, separately-running-process dependency; the other four are self-contained CLIs.
 
 ## What it does
 
@@ -62,8 +63,9 @@ Two delegation paths, chosen automatically:
 
 - **Native (same harness)** — when driver and worker are the same harness, use that
   harness's own subagent primitive (Claude Code `Agent` tool, Antigravity `invoke_subagent`,
-  Codex's native subagent). No worktree, no shell, no companion job. The companion returns
-  `{"mode":"native", instruction}` telling the driver to do this.
+  Codex's native subagent, opencode's built-in task capabilities). No worktree, no shell,
+  no companion job. The companion returns `{"mode":"native", instruction}` telling the
+  driver to do this.
 - **Cross-harness** — when driver ≠ worker, the `agent-companion` runtime creates an
   isolated git worktree, writes a brief, spawns the target harness **unattended**, monitors
   it, and collects validated artifacts. The driver — and only the driver — applies the patch.
@@ -78,7 +80,7 @@ Two delegation paths, chosen automatically:
 | `/agent-collab:setup [--gate on\|off] [--sandbox on\|off] [--retention-days n]` | Detect worker-ready harnesses; configure gates/sandbox and artifact retention (default 30 days; 0 disables) |
 | `/agent-collab:doctor [--live] [--workers a,b]` | Self-check: config + readiness, and (with `--live`) a review-cycle + worktree-isolation smoke per worker against a throwaway repo |
 | `/agent-collab:recommend --task <type> --driver <self>` (or `--profiles`) | Pick the strongest available worker for a task by underlying-model strength |
-| `/agent-collab:delegate --worker <agy\|claude\|codex> [--background] [--apply] <brief>` | Run a cross-harness **worker** task (produces a patch); `--background` detaches and returns a jobId |
+| `/agent-collab:delegate --worker <agy\|claude\|codex\|opencode> [--background] [--apply] <brief>` | Run a cross-harness **worker** task (produces a patch); `--background` detaches and returns a jobId |
 | `/agent-collab:review --worker <name> [--focus <text>] <diff>` | Read-only cross-harness **review** |
 | `/agent-collab:adversarial-review --worker <name> <diff>` | "Try to break it" review |
 | `/agent-collab:review-followup --job <prior-id> [--worker <name>] <focused diff/context>` | Recheck a focused fix against a prior review |
@@ -184,6 +186,7 @@ driver, `AGENTS.md` for Codex/agy drivers).
 | **codex** | ✓ | ✓ | Deepest review reasoning and hard-debug implementation; prefers XML-block prompts. Slower and often quiet — it has a wider idle budget and `.codex` log/session activity counts as progress |
 | **claude** | ✓ | ✓ | Use the native `Agent` tool when Claude Code is also the driver |
 | **agy** (Gemini) | ✓ | ✓ | Fast reviewer and implementer (Flash by default; `AGENT_COLLAB_AGY_CLASS=Pro` for depth). The adapter pins model flags before the prompt and harvests patches from agy's internal worktree when needed |
+| **opencode** | ✓ | ✓ | Multi-provider harness (Anthropic, OpenAI, Google, DeepSeek, local, etc.). Model configured per dispatch via env var or pin. **Always explicit** — never auto-selected. No per-tool exclusion (`--exclude-tools`); write safety via worktree isolation + breach detection. Has no thread-resume mechanism; retry is always a full re-send |
 | **qwen** (local) | ✓ (local-only tasks) | ✓ (plan-execution only) | Local-only, via a local LM Studio server. **Always explicit** — never in `recommend`'s default rotation, never a fallback target, never falls back away from itself on failure. Two routes only: `local-only` (sensitive-data review) and `plan-execution` (implementing a pre-written plan). See [Configuration](#configuration) for the `AGENT_COLLAB_QWEN_*` env vars. Local-only means the *worker run* stays local — compose briefs as file paths, not pasted content, and see the harness-prompting qwen guide for the full privacy boundary |
 
 ## Driving from any harness
@@ -217,7 +220,8 @@ shell-profile exports.
   "workers": {
     "codex":  { "reviewer": { "model": "gpt-5.6-terra", "effort": "high" } },
     "agy":    { "reviewer": { "model": "Gemini 3.5 Flash (High)" } },
-    "claude": { "worker":   { "model": "sonnet" } }
+    "claude": { "worker":   { "model": "sonnet" } },
+    "opencode": { "reviewer": { "model": "anthropic/claude-sonnet-4-20250514" } }
   }
 }
 ```
@@ -294,12 +298,14 @@ They are checked before another isolated worktree is created.
 | `.agent-collab.json` (repo root, tracked) | Standing per-worker+role model/effort pins read by every driver harness; env vars above always win per-dispatch. See skills/companion-runtime |
 | `AGENT_COLLAB_CODEX_MODEL` / `_EFFORT` | Per-dispatch codex model/effort override (e.g. escalate one boundary review to `gpt-5.6-sol` while base config stays on a cheaper tier). `_MODEL_REVIEW` / `_EFFORT_REVIEW` variants apply to reviewers only; generic wins. Unset = base `~/.codex/config.toml` governs |
 | `AGENT_COLLAB_CLAUDE_MODEL` | Pin the model passed to `claude --model` (default: `default`, Claude Code's account-tier recommendation — never Fable/Haiku) |
+| `AGENT_COLLAB_OPENCODE_BIN` | Override the `opencode` binary path |
+| `AGENT_COLLAB_OPENCODE_MODEL` | Per-dispatch opencode model override in `provider/model` format (e.g. `anthropic/claude-sonnet-4-20250514`). `_MODEL_REVIEW` variant applies to reviewers only; generic wins |
 | `AGENT_COLLAB_QWEN_BIN` | Override the `qwen` binary path |
 | `AGENT_COLLAB_QWEN_MODEL` | Pin a specific local model via `-m` (default: none — inherits qwen's own configured default in `~/.qwen/settings.json`, since LM Studio serves one model at a time and can't be reliably auto-detected) |
 | `AGENT_COLLAB_QWEN_BASE_URL` | Override the local LM Studio endpoint (default `http://127.0.0.1:1234/v1`). Must be loopback (`127.0.0.1`/`localhost`/`::1`) — a non-loopback value is refused unless `AGENT_COLLAB_QWEN_ALLOW_REMOTE=on` |
 | `AGENT_COLLAB_QWEN_API_KEY` | Override the local endpoint's API key (default `lm-studio` — LM Studio doesn't validate it, it just needs to be present) |
 | `AGENT_COLLAB_QWEN_ALLOW_REMOTE=on` | Explicitly permit a non-loopback `AGENT_COLLAB_QWEN_BASE_URL`. Off by default — qwen's entire purpose is keeping a job off the cloud, so a remote endpoint must be opt-in, never silently accepted |
-| `AGENT_COLLAB_<AGY\|CLAUDE\|CODEX\|QWEN>_BIN` | Override a harness binary path |
+| `AGENT_COLLAB_<AGY\|CLAUDE\|CODEX\|OPENCODE\|QWEN>_BIN` | Override a harness binary path |
 
 Plus `setup --gate on|off` (opt-in stop-time review gate), `setup --sandbox on|off`, and
 `setup --retention-days <n>` (30 by default; 0 disables artifact expiry).
@@ -334,7 +340,7 @@ npm test        # node --test — the full suite
 ```
 
 Layout: `scripts/agent-companion.mjs` (CLI/dispatch) · `core/` (state, jobs, worktree,
-heartbeat, git, prompts, schema, dispatch) · `adapters/` (`claude`/`codex`/`agy`/`qwen`) ·
+heartbeat, git, prompts, schema, dispatch) · `adapters/` (`claude`/`codex`/`agy`/`opencode`/`qwen`) ·
 `prompts/` (review templates) · `schemas/` (artifact contracts) ·
 `commands/` `hooks/` `skills/` `.claude-plugin/` `.codex-plugin/` (harness surface).
 
