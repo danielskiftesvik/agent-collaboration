@@ -61,10 +61,6 @@ function resolveModel(role, workspace, profile) {
   return pickLatestModel(listModels(), "Flash") || null;
 }
 
-const effort = (role, workspace, profile) =>
-  process.env.AGENT_COLLAB_AGY_EFFORT ||
-  resolvePin("agy", role, workspace, profile).effort;
-
 export default defineAdapter({
   name: "agy",
   supportsStructuredOutput: false,
@@ -79,11 +75,10 @@ export default defineAdapter({
     // Pin the latest label in the configured class — Flash by default (see
     // resolveModel), before -p. Robust against the shared default being changed
     // externally; force a class with AGENT_COLLAB_AGY_CLASS=Pro or pin an exact
-    // label with AGENT_COLLAB_AGY_MODEL.
+    // label with AGENT_COLLAB_AGY_MODEL. Thinking tier (High/Medium) is encoded
+    // in the model label itself — no separate --effort needed.
     const model = resolveModel(role, workspace, profile);
     if (model) args.push("--model", model);
-    const e = effort(role, workspace, profile);
-    if (e) args.push("--effort", e);
 
     if (workspace) {
       args.push("--add-dir", workspace);
