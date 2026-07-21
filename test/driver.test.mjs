@@ -76,8 +76,8 @@ test("detectDriver recognizes opencode via OPENCODE_SERVER", () => {
   assert.equal(detectDriver({ OPENCODE_SERVER: "http://localhost:4096" }), "opencode");
 });
 
-test("detectDriver recognizes opencode via OPENCODE_HOME", () => {
-  assert.equal(detectDriver({ OPENCODE_HOME: "/home/user/.opencode" }), "opencode");
+test("detectDriver does NOT match on OPENCODE_HOME alone (install-time var, not a runtime signal)", () => {
+  assert.equal(detectDriver({ OPENCODE_HOME: "/home/user/.opencode" }), null);
 });
 
 test("codex/anty env beats a stale inherited OPENCODE_SESSION", () => {

@@ -268,7 +268,11 @@ export function detectDriver(env = process.env) {
   if (env.ANTIGRAVITY_AGENT || env.ANTIGRAVITY_CONVERSATION_ID || env.ANTIGRAVITY_PROJECT_ID)
     return "agy";
   if (env.CLAUDECODE || env.CLAUDE_CODE || env.CLAUDE_PLUGIN_ROOT) return "claude";
-  if (env.OPENCODE_SESSION || env.OPENCODE_SERVER || env.OPENCODE_HOME) return "opencode";
+  // OPENCODE_SESSION and OPENCODE_SERVER are per-run signals; OPENCODE_HOME is
+  // deliberately excluded — it's a globally-set install path, not a runtime token,
+  // so checking it would cause false-positive detection in any shell where opencode
+  // is installed (see codex adversarial review finding #4).
+  if (env.OPENCODE_SESSION || env.OPENCODE_SERVER) return "opencode";
   return null;
 }
 
@@ -570,6 +574,7 @@ export function runWorkerSync(cwd, opts) {
   let lastStderr = "";
   let timedOut = false;
   let frozen = false;
+  let adapterError = null;
   let workerTelemetry = null;
   let resolvedModel = null;
   // Reviewers' output is normalized (severity case, etc.) before validation so a
@@ -752,8 +757,12 @@ export function runWorkerSync(cwd, opts) {
     answerText = parsed.answerText ?? "";
     const candidate = parsed.structured ? JSON.stringify(parsed.structured) : answerText;
     coerce = coerceArtifact(schema, candidate, normalize);
+    if (parsed.error) {
+      adapterError = parsed.error;
+      break;
+    }
     if (coerce.ok) break;
-    if (timedOut || frozen) break; // re-sending a frozen/too-slow prompt just hangs again — let the caller fall back
+    if (timedOut || frozen) break;
   }
 
   // Capture the worker's patch, then tear down the worktree (the diff is the artifact).
@@ -854,13 +863,14 @@ export function runWorkerSync(cwd, opts) {
   // status, even a clean patch, so a non-compliant worker can never look "completed".
   if (escapedPaths.length) status = "breach";
 
-  // On a failed run, classify WHY from the worker's last output: a timeout, a
-  // subscription/rate limit, or an auth problem each makes the worker unusable
-  // right now and is what the driver acts on (auto-fallback). A genuine task
-  // failure stays `other`.
+  // Terminal adapter-level error (e.g. API failure) overrides status to failed,
+  // even if the output happened to contain coercible JSON.
+  if (adapterError) status = "failed";
+
   let failureKind;
   let resetAt = null;
   let errors = coerce.ok ? undefined : coerce.errors;
+  if (adapterError) errors = [adapterError];
   if (status === "failed") {
     if (frozen) {
       failureKind = "frozen";

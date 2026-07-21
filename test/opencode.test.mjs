@@ -56,7 +56,7 @@ test("buildCommand does NOT use --exclude-tools (opencode lacks that flag)", () 
   assert.ok(args.includes("--auto"), "safety via --auto + worktree isolation");
 });
 
-test("buildCommand reviewer does NOT get --auto (write tools are denied)", () => {
+test("buildCommand reviewer also gets --auto (opencode has no per-role tool gating)", () => {
   clearEnv();
   const { args } = opencode.buildCommand({
     role: "reviewer",
@@ -64,7 +64,7 @@ test("buildCommand reviewer does NOT get --auto (write tools are denied)", () =>
     workspace: "/tmp/wt"
   });
   assert.ok(!args.includes("--exclude-tools"), "no --exclude-tools for reviewer");
-  assert.ok(!args.includes("--auto"), "reviewer has no --auto — write tools denied headlessly");
+  assert.ok(args.includes("--auto"), "reviewer gets --auto — write safety via worktree isolation + breach detection");
 });
 
 test("buildCommand omits --model when no env or pin is set", () => {

@@ -5,8 +5,10 @@
 //
 // Permission model: opencode has no per-tool exclusion flag (unlike Claude Code's
 // --exclude-tools). Safety relies on --auto (auto-approve allowed tools) combined
-// with worktree isolation + breach detection. The worker has full tool access
-// within the worktree; network access is gated by the sandbox (if enabled).
+// with worktree isolation + breach detection. Workers have full tool access
+// including webfetch (network); the OS sandbox (opt-in) is the only network gate.
+// Reviewers are NOT tool-restricted — write safety is by worktree isolation alone
+// (codex adversarial review — acknowledged limitation).
 //
 // Plugin mechanism (finding #1): opencode does NOT use .opencode/plugin.json.
 // See .opencode/plugins/agent-collaboration.mjs for the driver-side integration.
@@ -63,11 +65,13 @@ export default defineAdapter({
   // session ID tracking.
   background: false,
   buildCommand({ role, brief, workspace, profile }) {
-    const args = ["run", "--format", "json"];
-    // --auto auto-approves tool permissions. Only pass for workers:
-    // reviewers must NOT have unrestricted write access (codex review finding #3).
-    // Without --auto in headless mode, write tools (bash, edit, write) are denied.
-    if (role !== "reviewer") args.push("--auto");
+    const args = ["run", "--format", "json", "--auto"];
+    // NOTE: opencode has no --exclude-tools flag, so --auto applies to ALL roles.
+    // Reviewer write-safety relies on worktree isolation + breach detection, not
+    // tool-level gating (codex adversarial review — acknowledged limitation).
+    // Removing --auto for reviewers would NOT restrict tools (opencode defaults
+    // most permissions to allow); it would only suppress auto-approval of prompts
+    // that can't be answered in headless mode.
     // Model selection: opencode requires provider/model format (finding #6)
     // e.g. anthropic/claude-sonnet-4-20250514
     const m = model(role, workspace, profile);

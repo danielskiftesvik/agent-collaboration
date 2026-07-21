@@ -22,7 +22,8 @@ const PROJECT_ROOT = resolve(__dirname, "../..");
 const COMPANION = resolve(PROJECT_ROOT, "scripts/agent-companion.mjs");
 
 // Shell-aware tokenizer: splits on whitespace but preserves quoted strings
-// as single arguments with quotes stripped. Handles both single and double quotes.
+// as single arguments with quotes stripped. Handles single and double quotes,
+// escaped characters (\\\", \\', \\ ), and unmatched quotes.
 function splitArgs(str) {
   const args = [];
   let current = "";
@@ -30,7 +31,9 @@ function splitArgs(str) {
   let quoteChar = "";
   for (let i = 0; i < str.length; i++) {
     const c = str[i];
-    if (inQuote) {
+    if (c === "\\" && i + 1 < str.length) {
+      current += str[++i];
+    } else if (inQuote) {
       if (c === quoteChar) {
         inQuote = false;
       } else {
@@ -39,7 +42,7 @@ function splitArgs(str) {
     } else if (c === '"' || c === "'") {
       inQuote = true;
       quoteChar = c;
-    } else if (c === " ") {
+    } else if (c === " " || c === "\t" || c === "\n") {
       if (current) {
         args.push(current);
         current = "";
@@ -48,7 +51,7 @@ function splitArgs(str) {
       current += c;
     }
   }
-  if (current) args.push(current);
+  if (current || inQuote) args.push(current);
   return args;
 }
 
