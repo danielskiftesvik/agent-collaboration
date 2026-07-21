@@ -57,6 +57,9 @@ function splitArgs(str) {
 
 export const AgentCollaborationPlugin = async ({ project, client, $, directory, worktree }) => {
   return {
+    config: async (_config) => {
+      // No-op: satisfies server-plugin validation so install via "main" works.
+    },
     "tui.command.execute": async (input, output) => {
       const cmd = input.text?.trim();
       if (!cmd || !cmd.startsWith("/agent-collab")) return;
