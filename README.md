@@ -14,8 +14,8 @@ harness-agnostic core plus per-harness adapters, prompt templates, and prompting
 
 ## Install
 
-The repo is a self-contained plugin marketplace (it ships `.claude-plugin/` and
-`.codex-plugin/` manifests), so it installs natively per harness.
+The repo is a self-contained plugin marketplace (it ships `.claude-plugin/`,
+`.codex-plugin/`, and `.opencode/plugins/`), so it installs natively per harness.
 
 ### Claude Code
 ```
@@ -36,7 +36,23 @@ agy plugin install https://github.com/danielskiftesvik/agent-collaboration
 Reinstall with the same command to update. (Or `agy plugin import claude` if you've already
 installed it in Claude Code.)
 
-> Codex and Antigravity plugin support is newer than Claude Code's and the exact marketplace
+### Opencode
+```
+git clone https://github.com/danielskiftesvik/agent-collaboration
+```
+Opencode auto-loads `.mjs` files from `.opencode/plugins/` at startup. The repo ships
+one at `.opencode/plugins/agent-collaboration.mjs` — run opencode from the cloned
+directory and the slash commands (`/agent-collab:delegate`, etc.) become available.
+To make it available globally, symlink the plugin into a project that uses it:
+
+```
+ln -s /path/to/agent-collaboration/.opencode/plugins/agent-collaboration.mjs .opencode/plugins/
+```
+
+Or install manually with `opencode plugin <path>` (pass `--global` for all directories).
+Re-pull the repo and restart opencode to update.
+
+> Codex, Antigravity, and opencode plugin support is newer than Claude Code's and the exact marketplace
 > resolution can vary by CLI version — if a command above doesn't resolve, check
 > `codex plugin --help` / `agy plugin --help`. You can always skip install entirely and
 > [drive the runtime over the shell](#driving-from-any-harness).
