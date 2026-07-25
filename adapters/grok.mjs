@@ -1,6 +1,8 @@
 // Grok Build (xAI `grok` CLI) as a worker/reviewer. Headless `--single` with
 // `--output-format streaming-json`. Reviewers run read-only via
-// `--permission-mode plan`; workers may edit via `--permission-mode acceptEdits`.
+// `--permission-mode plan`; workers run `--permission-mode bypassPermissions`
+// (every weaker mode cancels on the first shell tool call headlessly — see
+// buildCommand).
 // Product: Grok Build. Binary / adapter id: grok. Home state: ~/.grok.
 import os from "node:os";
 import path from "node:path";
