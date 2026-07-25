@@ -12,7 +12,7 @@ parties agree on the approach and no high-severity objection remains unresolved.
 Record each party's confidence for the log — the number itself is not the gate.
 
 This skill is harness-agnostic: whichever harness is driving (Claude Code, Codex,
-Antigravity, or OpenCode) forms the hypothesis, and the second opinion comes from
+Antigravity, Grok Build, or OpenCode) forms the hypothesis, and the second opinion comes from
 another harness via the `agent-collaboration` runtime.
 
 ## When this applies

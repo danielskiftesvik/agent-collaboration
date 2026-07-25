@@ -143,7 +143,7 @@ set `AGENT_COLLAB_FALLBACK=off`); then the limit just surfaces for you to relay.
 
 ## By harness
 
-- **codex / claude / agy / opencode** — emit structured findings/result JSON: present findings by
+- **codex / claude / agy / grok / opencode** — emit structured findings/result JSON: present findings by
   severity, preserve evidence boundaries.
 - **agy** — usable as reviewer and write-worker (default **Gemini Flash**;
   `AGENT_COLLAB_AGY_CLASS=Pro` for deeper passes). Its adapter pins model flags before
@@ -156,6 +156,8 @@ set `AGENT_COLLAB_FALLBACK=off`); then the limit just surfaces for you to relay.
 - **opencode** — usable as reviewer and write-worker; multi-provider flexibility. Always
   explicit (never auto-recommended). No thread resume — retry is a full re-send. Model
   chosen per dispatch via `AGENT_COLLAB_OPENCODE_MODEL` env var or `.agent-collab.json` pin.
+- **grok** (Grok Build) — usable as reviewer and write-worker; broad general-purpose with a fast,
+  lightweight CLI (default `grok-4.5`). Always explicit. Free-tier Grok Build usage limits apply.
 
 Observed reliability: **agy is the dependable workhorse** for fast patch delivery
 and **codex is the specialist** for the hardest review reasoning — high signal but

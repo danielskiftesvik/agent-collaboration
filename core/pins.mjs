@@ -7,6 +7,7 @@
 //     "codex":  { "reviewer": { "model": "gpt-5.6-terra", "effort": "high" } },
 //     "agy":    { "reviewer": { "model": "Gemini 3.5 Flash (High)" } },
 //     "claude": { "worker":   { "model": "sonnet" } },
+//     "grok":   { "reviewer": { "model": "grok-4.5" } },
 //     "opencode": { "reviewer": { "model": "anthropic/claude-sonnet-4-20250514" } }
 //     }
 //   }
@@ -15,7 +16,7 @@
 // sessions rewriting harness base configs — the codex TUI persists the last-used
 // model back to ~/.codex/config.toml, so base config is drift, not doctrine;
 // (b) be version-controlled alongside the repo's conventions; and (c) apply
-// identically no matter which harness drives the dispatch (claude, codex, agy,
+// identically no matter which harness drives the dispatch (claude, codex, agy, grok,
 // opencode shells). A tracked repo file is the only surface with all three properties.
 //
 // PRECEDENCE (enforced by the adapters): explicit env vars — the per-dispatch

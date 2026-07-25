@@ -30,6 +30,16 @@ test("agy RESOURCE_EXHAUSTED / quota is a rate-limit", () => {
   assert.equal(c.kind, "rate-limit");
 });
 
+test("Grok Build free usage limit is a rate-limit", () => {
+  const c = classifyFailure({
+    stdout: '{"type":"error","message":"You\\u2019ve reached your free Grok Build usage limit for now."}',
+    stderr: "Error: You've reached your free Grok Build usage limit for now.",
+    exitCode: 1,
+    worker: "grok"
+  });
+  assert.equal(c.kind, "rate-limit");
+});
+
 test("a 'retry-after' hint is captured as resetAt", () => {
   const c = classifyFailure({ stderr: "rate limit exceeded; retry-after: 42", exitCode: 1, worker: "codex" });
   assert.equal(c.kind, "rate-limit");

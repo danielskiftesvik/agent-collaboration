@@ -20,7 +20,7 @@ function stubBin(body) {
 
 test("registry exposes all harnesses including opencode", () => {
   const names = listAdapters().map((a) => a.name).sort();
-  assert.deepEqual(names, ["agy", "claude", "codex", "opencode", "qwen"]);
+  assert.deepEqual(names, ["agy", "claude", "codex", "grok", "opencode", "qwen"]);
   assert.throws(() => getAdapter("nope"), /unknown adapter/i);
 });
 

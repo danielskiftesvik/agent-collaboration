@@ -68,6 +68,23 @@ test("detectDriver recognizes agy via Antigravity's env (confirmed from a live s
   assert.equal(isAuthoritativeDriver(r.source), false);
 });
 
+test("detectDriver recognizes Grok Build via GROK_SESSION_ID", () => {
+  assert.equal(detectDriver({ GROK_SESSION_ID: "019f95d1-cca2-7dd2-9a53-2cdebbb4106e" }), "grok");
+});
+
+test("detectDriver recognizes Grok Build via GROK_PLUGIN_ROOT / GROK_PLUGIN_DATA", () => {
+  assert.equal(detectDriver({ GROK_PLUGIN_ROOT: "/x/plugins/agent-collaboration" }), "grok");
+  assert.equal(detectDriver({ GROK_PLUGIN_DATA: "/x/plugin-data" }), "grok");
+});
+
+test("detectDriver does NOT match on GROK_HOME alone (install-time var, not a runtime signal)", () => {
+  assert.equal(detectDriver({ GROK_HOME: "/home/user/.grok" }), null);
+});
+
+test("an actively-running Grok Build beats an inherited Claude env", () => {
+  assert.equal(detectDriver({ CLAUDECODE: "1", GROK_SESSION_ID: "s1" }), "grok");
+});
+
 test("detectDriver recognizes opencode via OPENCODE_SESSION", () => {
   assert.equal(detectDriver({ OPENCODE_SESSION: "ses_abc123" }), "opencode");
 });

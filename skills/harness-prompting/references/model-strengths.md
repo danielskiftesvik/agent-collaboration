@@ -38,6 +38,13 @@ Which underlying model is strongest at what, and how that maps to worker choice.
   adversarial verification** (0-3) — Gemini has large context, but "bigger than rivals" is
   unconfirmed.
 
+### Grok Build (xAI — `grok` CLI / grok-4.5) — general-purpose with a fast CLI
+- **Stronger at:** general SWE, fast turnaround on mechanical/bulk edits, broad capability
+  across writing and reviewing tasks. Lightweight CLI with streaming JSON output.
+- **Weaker at:** fewer model-tier options than multi-model harnesses. Free-tier Grok Build
+  usage limits apply, so long runs may be throttled. Still a relatively new agent scaffold.
+- **Always explicit** — never auto-selected by `recommend`. You must name `--worker grok`.
+
 ### OpenCode (multi-provider — any model behind the CLI)
 - **Stronger at:** flexibility — the underlying model (Anthropic, OpenAI, Google, DeepSeek, local)
   is chosen per dispatch via env var or pin. Can match any task profile by model selection.
@@ -60,7 +67,7 @@ worker (excluding the driver) + the model's profile + a reason. The mapping:
 | `mechanical`, `bulk-edit`, `quick-fix` | agy, claude, codex | Gemini Flash speed/cost first; Claude/codex remain available |
 | `large-context`, `broad-scan` | agy, codex | Gemini on cost — context-size advantage **unconfirmed** |
 | `visual`, `multimodal` | agy | Gemini multimodal strengths |
-| general | opencode (explicit) | flexible multi-provider; pick model that fits the task |
+| general | opencode / grok (explicit) | multi-provider flexibility (opencode) or Grok Build (grok); both require explicit `--worker` |
 
 `recommend --profiles` prints the full matrix.
 

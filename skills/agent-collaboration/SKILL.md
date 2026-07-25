@@ -1,14 +1,14 @@
 ---
 name: agent-collaboration
-description: Use cross-harness delegation to ask other agent harnesses (Claude, Codex, Antigravity, or OpenCode) to perform subtasks or code reviews.
+description: Use cross-harness delegation to ask other agent harnesses (Claude, Codex, Antigravity, Grok Build, or OpenCode) to perform subtasks or code reviews.
 ---
 
 # Agent Collaboration Skill
 
-This skill allows a driving agent to delegate tasks or code reviews to a worker agent running on a different harness (such as Claude Code, Codex, Antigravity, or OpenCode).
+This skill allows a driving agent to delegate tasks or code reviews to a worker agent running on a different harness (such as Claude Code, Codex, Antigravity, Grok Build, or OpenCode).
 
 ## When to Delegate
-- **Cross-Harness Strengths**: Use Codex/Cursor when you need IDE-specific code understanding, Claude Code for general software engineering, Antigravity for specific Google Cloud or enterprise tools, or OpenCode for multi-provider flexibility (any underlying model).
+- **Cross-Harness Strengths**: Use Codex/Cursor when you need IDE-specific code understanding, Claude Code for general software engineering, Antigravity for specific Google Cloud or enterprise tools, Grok Build for fast general-purpose work with a lightweight CLI, or OpenCode for multi-provider flexibility (any underlying model).
 - **Parallel Reviews**: Use `/review` to launch a secondary agent to audit your proposed changes before they are committed.
 - **Isolated Execution**: Workers run in isolated workspaces/worktrees, ensuring they do not pollute your main branch until you explicitly approve and apply the patch.
 
@@ -29,13 +29,14 @@ Rough guide (full matrix + model profiles: [`harness-prompting/references/model-
 - **Independent second opinion** → the *other* reasoner (codex↔claude); see the
   `collaborative-investigation` skill.
 - **Multi-provider flexibility / specific model** → **opencode** (explicit only; pick the model that fits).
+- **General-purpose SWE / fast iteration** → **grok** (Grok Build; explicit only).
 
 ## How to Delegate
 
 ### Claude Code
 Use the custom slash commands:
-- `/agent-collab:delegate --worker <agy|claude|codex|opencode> "<task_brief>"`
-- `/agent-collab:review --worker <codex|agy|opencode> "<review_brief>"`
+- `/agent-collab:delegate --worker <agy|claude|codex|grok|opencode> "<task_brief>"`
+- `/agent-collab:review --worker <codex|agy|grok|opencode> "<review_brief>"`
 - `/agent-collab:apply <jobId>`
 
 ### Codex & Antigravity & OpenCode

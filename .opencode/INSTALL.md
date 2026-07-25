@@ -4,7 +4,7 @@
 
 - [OpenCode.ai](https://opencode.ai) installed
 - Node ≥ 20
-- Worker CLIs you want to delegate to, on your `PATH` (`claude`, `codex`, `agy`, and/or `opencode`)
+- Worker CLIs you want to delegate to, on your `PATH` (`claude`, `codex`, `agy`, `grok` / Grok Build, and/or `opencode`)
 
 ## Installation
 

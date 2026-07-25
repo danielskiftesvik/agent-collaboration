@@ -53,7 +53,7 @@ install agent-collaboration separately for each harness.
 | `/agent-collab:result <jobId>` | Fetch a completed artifact |
 | `/agent-collab:apply <jobId>` | Apply a worker patch |
 
-Workers: `claude`, `codex`, `agy`, `opencode`, `qwen` (qwen is explicit/local-only).
+Workers: `claude`, `codex`, `agy`, `grok` (Grok Build; explicit), `opencode` (explicit), `qwen` (explicit/local-only).
 
 ### Shell / headless
 
@@ -193,7 +193,7 @@ Then use the installed package path in `opencode.json`:
 ### Worker harness not found
 
 1. Run `/agent-collab:setup` — it reports which CLIs are worker-ready
-2. Ensure `claude`, `codex`, `agy`, and/or `opencode` are on your `PATH`
+2. Ensure `claude`, `codex`, `agy`, `grok` (Grok Build), and/or `opencode` are on your `PATH`
 3. For `qwen`: local LM Studio must be running at the configured base URL
 
 ## Getting Help

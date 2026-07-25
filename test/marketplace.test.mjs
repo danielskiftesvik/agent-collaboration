@@ -26,11 +26,19 @@ test("ships a .codex-plugin manifest for multi-harness install", () => {
   assert.equal(cx.skills, "./skills/", "declares skills for Codex");
 });
 
+test("ships a .grok-plugin manifest for Grok Build install", () => {
+  const gk = read("../.grok-plugin/plugin.json");
+  assert.equal(gk.name, "agent-collaboration");
+  assert.equal(gk.skills, "./skills/", "declares skills for Grok Build");
+  assert.ok(gk.keywords.includes("grok-build") || gk.keywords.includes("grok"));
+});
+
 test("version is consistent across package.json + all manifests (so `update` sees bumps)", () => {
   const v = read("../package.json").version;
   assert.match(v, /^\d+\.\d+\.\d+/, "package.json has a semver version");
   assert.equal(read("../.claude-plugin/plugin.json").version, v, "claude plugin.json matches");
   assert.equal(read("../.codex-plugin/plugin.json").version, v, "codex plugin.json matches");
+  assert.equal(read("../.grok-plugin/plugin.json").version, v, "grok plugin.json matches");
   const m = read("../.claude-plugin/marketplace.json");
   assert.equal(m.metadata?.version ?? m.version, v, "marketplace version matches");
   assert.equal(m.plugins.find((p) => p.name === "agent-collaboration").version, v, "marketplace plugin entry matches");

@@ -17,6 +17,7 @@ const files = [
   "package.json",
   ".claude-plugin/plugin.json",
   ".codex-plugin/plugin.json",
+  ".grok-plugin/plugin.json",
   ".claude-plugin/marketplace.json" // has two "version" fields (marketplace + plugin entry)
 ];
 

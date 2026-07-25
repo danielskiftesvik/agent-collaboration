@@ -80,6 +80,24 @@ export const MODEL_PROFILES = {
       "--auto permission model is broader than other harnesses' per-role permission scoping"
     ]
   },
+  grok: {
+    harness: "grok",
+    model: "Grok Build / grok-4.5 (xAI, current)",
+    vendor: "xAI",
+    canWrite: true,
+    explicitOnly: true,
+    strongerAt: [
+      "general software engineering with Grok Build's lightweight CLI",
+      "fast turnaround on mechanical/bulk edits",
+      "broad model — capable on both writing and reviewing"
+    ],
+    weakerAt: [
+      "single default model tier (grok-4.5 / grok-build) — fewer pin options than multi-model harnesses",
+      "free-tier Grok Build usage limits apply, so long runs may be throttled",
+      "still a relatively new agent scaffold — fewer field-hardened patterns than Claude/codex",
+      "explicitOnly: true — never auto-selected; requires --worker grok"
+    ]
+  },
   qwen: {
     harness: "qwen",
     model: "local (LM Studio, whatever's currently loaded — Qwen Code CLI as agent scaffold)",
@@ -148,6 +166,8 @@ export const TASK_TYPES = Object.keys(TASK_ROUTING);
 export const MODEL_TIMEOUTS = {
   "deepseek-v4-flash-free": 180,
   "deepseek-v4-pro-free": 300,
+  "grok-4.5-build-free": 300,
+  "grok-build-free": 300,
 };
 
 export function resolveModelTimeout(model) {

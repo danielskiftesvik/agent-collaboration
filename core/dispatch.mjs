@@ -267,6 +267,10 @@ export function detectDriver(env = process.env) {
     return "codex";
   if (env.ANTIGRAVITY_AGENT || env.ANTIGRAVITY_CONVERSATION_ID || env.ANTIGRAVITY_PROJECT_ID)
     return "agy";
+  // Grok Build: GROK_SESSION_ID (hooks/session) and GROK_PLUGIN_ROOT/DATA (plugin
+  // context). GROK_HOME is deliberately excluded — install path, not a runtime token.
+  if (env.GROK_SESSION_ID || env.GROK_PLUGIN_ROOT || env.GROK_PLUGIN_DATA)
+    return "grok";
   if (env.CLAUDECODE || env.CLAUDE_CODE || env.CLAUDE_PLUGIN_ROOT) return "claude";
   // OPENCODE_SESSION and OPENCODE_SERVER are per-run signals; OPENCODE_HOME is
   // deliberately excluded — it's a globally-set install path, not a runtime token,
@@ -310,6 +314,7 @@ const NATIVE_INSTRUCTION = {
   claude: "Use the Agent tool (a Claude Code subagent) instead of a cross-harness job.",
   agy: "Use Antigravity's invoke_subagent instead of a cross-harness job.",
   codex: "Use Codex's native subagent instead of a cross-harness job.",
+  grok: "Use Grok Build's native subagent capabilities instead of a cross-harness job.",
   opencode: "Use opencode's built-in subagent/task capabilities instead of a cross-harness job."
 };
 
