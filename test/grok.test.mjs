@@ -41,7 +41,7 @@ test("buildCommand runs headless Grok Build with streaming-json and workspace cw
   assert.ok(args.includes("do the thing"));
   assert.ok(args.includes("--output-format") && args.includes("streaming-json"));
   assert.ok(args.includes("--model") && args.includes("grok-4.5"));
-  assert.ok(args.includes("--permission-mode") && args.includes("acceptEdits"));
+  assert.ok(args.includes("--permission-mode") && args.includes("bypassPermissions"));
   assert.ok(args.includes("--cwd") && args.includes("/tmp/wt"));
 });
 
@@ -106,6 +106,22 @@ test("parseOutput accumulates streaming-json text events and end telemetry", () 
   assert.equal(out.telemetry.sessionId, "s1");
   assert.equal(out.telemetry.requestId, "r1");
   assert.deepEqual(out.telemetry.resolvedModels, ["grok-4.5-build"]);
+});
+
+test("worker runs with bypassPermissions so shell tools (build/test) can execute", () => {
+  // Measured 2026-07-25 against grok-4.5: every other permission mode cancels
+  // on the FIRST shell tool call in a headless run (no TTY to approve it).
+  //   default | acceptEdits | auto | dontAsk -> stopReason=Cancelled, turn 1, nothing ran
+  //   bypassPermissions                      -> stopReason=EndTurn, command executed
+  // acceptEdits let grok edit files but never build or test, so it could not
+  // verify its own work and the run died at the verification step.
+  const { args } = grok.buildCommand({ role: "worker", brief: "x" });
+  assert.equal(args[args.indexOf("--permission-mode") + 1], "bypassPermissions");
+});
+
+test("reviewer stays read-only in plan mode", () => {
+  const { args } = grok.buildCommand({ role: "reviewer", brief: "x" });
+  assert.equal(args[args.indexOf("--permission-mode") + 1], "plan");
 });
 
 test("parseOutput keeps only the final segment's text, not narration from earlier turns", () => {

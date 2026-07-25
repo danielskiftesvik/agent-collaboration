@@ -34,7 +34,15 @@ export default defineAdapter({
     ];
     const e = effort(role, workspace, profile);
     if (e) args.push("--effort", e);
-    args.push("--permission-mode", role === "reviewer" ? "plan" : "acceptEdits");
+    // Reviewers are read-only (`plan`). Workers need `bypassPermissions`: measured
+    // 2026-07-25 against grok-4.5, EVERY other mode (default/acceptEdits/auto/
+    // dontAsk) cancels on the first shell tool call in a headless run — there's no
+    // TTY to approve it, so the run ends with stopReason=Cancelled on turn 1 and
+    // the command never executes. Under `acceptEdits` grok could edit files but
+    // never build or test, so it could not verify its own work and died at the
+    // verification step. Write safety comes from the isolated worktree + breach
+    // detection (and the optional sandbox profile), not from this flag.
+    args.push("--permission-mode", role === "reviewer" ? "plan" : "bypassPermissions");
     if (workspace) args.push("--cwd", workspace);
     return { command: bin(), args };
   },

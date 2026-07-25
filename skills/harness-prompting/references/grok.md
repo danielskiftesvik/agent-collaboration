@@ -8,8 +8,20 @@ also `grok-build`). The same [prompt-blocks.md](prompt-blocks.md) apply.
 - **Always explicit** — never auto-selected by `recommend`. Pass `--worker grok`.
 - **Good at both reviewer and worker**, and produces reliable JSON when asked. The
   companion fills `{{OUTPUT_CONTRACT}}` with a concise `<output_contract>` block.
-- **Reviewer runs read-only** (`--permission-mode plan`); **worker can edit**
-  (`acceptEdits`) inside its worktree.
+- **Reviewer runs read-only** (`--permission-mode plan`); **worker runs
+  `bypassPermissions`** inside its worktree. This is required, not a convenience:
+  measured 2026-07-25 against `grok-4.5`, every other mode
+  (`default` / `acceptEdits` / `auto` / `dontAsk`) **cancels on the first shell
+  tool call** in a headless run — there is no TTY to approve it, so the run ends
+  `stopReason=Cancelled` on turn 1 and the command never executes. Under
+  `acceptEdits` a worker could edit files but never build or test, so it could not
+  verify its own work and died at the verification step. Write safety comes from
+  the isolated worktree + breach detection, not from the permission flag.
+- **A cancelled run can still produce an applicable patch.** Because dispatch
+  derives worker success from `changed && patchApplies`, a partially-finished run
+  reads as success. The adapter now prefixes such reports with an
+  `⚠️ INCOMPLETE RUN` banner — treat that as "verify every step against the brief
+  before trusting the diff".
 - **Same-harness shortcut:** when the *driver is Grok Build*, do NOT delegate to
   grok through the companion — use Grok Build's native subagent capabilities instead.
 - Free-tier Grok Build usage limits apply; rate-limit failures auto-fall back when
