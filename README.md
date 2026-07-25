@@ -270,6 +270,50 @@ node /path/to/agent-collaboration/scripts/agent-companion.mjs \
 > **escalated / network-enabled** permissions — it spawns a worker that calls an external
 > API, which a default sandbox will block.
 
+## Instance aliases — multiple accounts / binaries
+
+If you run more than one identity of the same harness (personal vs business Codex,
+`claude` vs `claude-local`), define **instance aliases** in user config:
+
+**`~/.agent-collaboration/config.json`** (machine-local — do not commit homes/bins):
+
+```json
+{
+  "instances": {
+    "codex-business": {
+      "harness": "codex",
+      "env": { "CODEX_HOME": "~/.codex-business" }
+    },
+    "claude-local": {
+      "harness": "claude",
+      "bin": "/path/to/claude-local"
+    }
+  },
+  "defaults": {
+    "codex": "codex-business"
+  }
+}
+```
+
+Then:
+
+```bash
+# explicit alias
+node …/agent-companion.mjs delegate --worker codex-business "…"
+
+# bare --worker codex uses defaults.codex when set
+node …/agent-companion.mjs review --worker codex "…"
+```
+
+- **`harness`** — which adapter runs (codex/claude/agy/…).
+- **`env`** — allowlisted only (`CODEX_HOME`, `CLAUDE_CONFIG_DIR`, `AGENT_COLLAB_*_BIN`, …).
+- **`bin`** — alternate binary (sets `AGENT_COLLAB_<HARNESS>_BIN` for that dispatch).
+- **`defaults.<harness>`** — redirect bare harness names; missing targets **fail loud** (never silently bill the personal account).
+- Job records store `worker` (alias label) + `harness` (adapter). Fallback / recommend stay on harness families; instances are not auto-recommended as separate workers.
+- Override config path: `AGENT_COLLAB_INSTANCE_CONFIG=/path/to.json`.
+
+Repo `.agent-collab.json` may also declare `instances`/`defaults` (user file wins on key collision). Prefer keeping machine paths in the user file only.
+
 ## Model pins — `.agent-collab.json`
 
 **The problem:** the model your reviews run on shouldn't depend on what you last did in a

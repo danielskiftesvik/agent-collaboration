@@ -29,9 +29,13 @@ export function generateMacSandboxProfile(workspace, artifactDir, opts = {}) {
   // Cross-cutting secrets that no worker should read.
   const secretDirs = [".ssh", ".aws", ".kube", ".gnupg"].map((d) => path.join(home, d));
   // The harness's own state dirs — needed for auth, logs, conversation history.
-  const harnessDirs = [".gemini", ".claude", ".codex", ".config/gcloud", ".qwen", ".grok"].map((d) =>
-    path.join(home, d)
-  );
+  // extraHarnessDirs: instance overlays (e.g. CODEX_HOME=~/.codex-business).
+  const harnessDirs = [
+    ...[".gemini", ".claude", ".codex", ".config/gcloud", ".qwen", ".grok"].map((d) =>
+      path.join(home, d)
+    ),
+    ...(opts.extraHarnessDirs || []).filter(Boolean)
+  ];
 
   if (opts.strict) {
     // STRICT: deny FILE-WRITE by default (reads/process/mmap still allowed, so it
@@ -94,7 +98,10 @@ export function run(command, args = [], opts = {}) {
     if (platform === "darwin") {
       const workspace = opts.sandboxWorkspace || opts.cwd || process.cwd();
       const artifactDir = opts.sandboxArtifactDir || workspace;
-      const profile = generateMacSandboxProfile(workspace, artifactDir, { strict: opts.sandboxStrict });
+      const profile = generateMacSandboxProfile(workspace, artifactDir, {
+        strict: opts.sandboxStrict,
+        extraHarnessDirs: opts.extraHarnessDirs
+      });
 
       tempProfileFile = writeTempSandboxProfile(profile);
 
@@ -105,6 +112,10 @@ export function run(command, args = [], opts = {}) {
       if (isBwrapAvailable()) {
         const workspace = opts.sandboxWorkspace || opts.cwd || process.cwd();
         const artifactDir = opts.sandboxArtifactDir || workspace;
+        const extraBinds = [];
+        for (const d of opts.extraHarnessDirs || []) {
+          if (d) extraBinds.push("--bind", d, d);
+        }
 
         sandboxApplied = true;
         finalCommand = "bwrap";
@@ -123,6 +134,7 @@ export function run(command, args = [], opts = {}) {
           "--dir", "/tmp",
           "--bind", workspace, workspace,
           "--bind", artifactDir, artifactDir,
+          ...extraBinds,
           "--unshare-all",
           "--share-net",
           command,
@@ -139,6 +151,7 @@ export function run(command, args = [], opts = {}) {
   delete spawnOpts.sandboxWorkspace;
   delete spawnOpts.sandboxArtifactDir;
   delete spawnOpts.sandboxStrict;
+  delete spawnOpts.extraHarnessDirs;
   delete spawnOpts.idleMs;
   delete spawnOpts.watchDirs;
   delete spawnOpts.progressFile;

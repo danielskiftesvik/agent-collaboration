@@ -111,7 +111,9 @@ function limitStubFor(worker) {
   fs.chmodSync(file, 0o755);
   return {
     file,
-    envKey: worker === "codex" ? "AGENT_COLLAB_CODEX_COMPANION" : `AGENT_COLLAB_${worker.toUpperCase()}_BIN`
+    envKey: worker === "codex"
+      ? "AGENT_COLLAB_CODEX_COMPANION"
+      : `AGENT_COLLAB_${String(worker).toUpperCase()}_BIN`
   };
 }
 
@@ -162,8 +164,9 @@ function liveFallbackCheck(targets) {
  * possible escape conditions.
  */
 export function runDoctor(cwd, { live = false, workers } = {}) {
-  const setup = runSetup();
-  const ready = setup.filter((r) => r.validWorker).map((r) => r.name);
+  const setup = runSetup(undefined, { workspace: cwd });
+  const ready = setup.filter((r) => r.validWorker && !r.instance).map((r) => r.name);
+  const instances = setup.filter((r) => r.instance);
   const checks = [];
   checks.push({ name: "version", ok: true, detail: version() });
 
@@ -181,16 +184,30 @@ export function runDoctor(cwd, { live = false, workers } = {}) {
   checks.push({ name: "state-dir-writable", ok: stateOk, detail: stateDir });
 
   checks.push({ name: "workers-ready", ok: ready.length > 0, detail: ready.join(", ") || "none" });
+  if (instances.length) {
+    const bad = instances.filter((i) => !i.validWorker);
+    checks.push({
+      name: "instances",
+      ok: bad.length === 0,
+      detail: instances
+        .map((i) => `${i.name}→${i.harness}${i.validWorker ? "" : ` (${i.reason || "unavailable"})`}`)
+        .join(", ")
+    });
+  }
 
   if (live) {
-    const targets = (workers && workers.length ? workers : ready).filter((w) => ready.includes(w));
+    const readyOrInst = [
+      ...ready,
+      ...instances.filter((i) => i.validWorker).map((i) => i.name)
+    ];
+    const targets = (workers && workers.length ? workers : ready).filter((w) => readyOrInst.includes(w) || ready.includes(w));
     for (const w of targets) {
       checks.push(liveReviewCheck(w));
       checks.push(liveIsolationCheck(w));
     }
-    const fallback = liveFallbackCheck(targets);
+    const fallback = liveFallbackCheck(targets.filter((w) => ready.includes(w)));
     if (fallback) checks.push(fallback);
   }
 
-  return { ready, live, checks, ok: checks.every((c) => c.ok) };
+  return { ready, instances: instances.map((i) => i.name), live, checks, ok: checks.every((c) => c.ok) };
 }

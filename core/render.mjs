@@ -10,7 +10,10 @@ export function renderSetup(rows) {
     .map((r) => {
       const mark = !r.available ? "✗ unavailable" : r.validWorker ? "✓ worker-ready" : "⚠ interactive-only";
       const detail = r.version ? ` (${r.version})` : r.reason ? ` — ${r.reason}` : "";
-      return `${r.name.padEnd(8)} ${mark}${detail}`;
+      const label = r.instance
+        ? `${r.name}→${r.harness}${r.defaultFor?.length ? ` [default:${r.defaultFor.join(",")}]` : ""}`
+        : r.name;
+      return `${label.padEnd(28)} ${mark}${detail}`;
     })
     .join("\n");
 }
@@ -23,7 +26,7 @@ export function renderJob(job) {
   const hardLeft = health?.hardSecondsRemaining ?? (running ? secondsLeft(job.startedAt || job.createdAt, job.timeoutMs) : null);
   return [
     `job      ${job.id}`,
-    `route    ${job.driver} → ${job.worker} (${job.role})`,
+    `route    ${job.driver} → ${job.worker}${job.harness && job.harness !== job.worker ? ` (${job.harness})` : ""} (${job.role})`,
     `status   ${job.status}${job.valid === false ? " (invalid output)" : ""}`,
     running && job.pid ? `pid      ${job.pid}` : null,
     running && health ? `health   ${health.healthy ? "live and within budget (not stalled)" : health.state}` : null,

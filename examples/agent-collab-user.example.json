@@ -1,0 +1,15 @@
+{
+  "instances": {
+    "codex-business": {
+      "harness": "codex",
+      "env": { "CODEX_HOME": "~/.codex-business" }
+    },
+    "claude-local": {
+      "harness": "claude",
+      "bin": "/path/to/claude-local"
+    }
+  },
+  "defaults": {
+    "codex": "codex-business"
+  }
+}

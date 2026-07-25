@@ -15,6 +15,7 @@ import { isPidAlive, projectJobHealth } from "../core/heartbeat.mjs";
 import { renderSetup, renderJob, renderJobList, renderRecommendation, renderProfiles } from "../core/render.mjs";
 import { MODEL_PROFILES } from "../core/model-profiles.mjs";
 import { cleanupJobWorktree, collectGarbage, waitForPidExit } from "../core/gc.mjs";
+import { resolveWorkerRef } from "../core/instances.mjs";
 
 const VALUE_FLAGS = new Set(["worker", "workers", "role", "driver", "base", "timeout", "gate", "sandbox", "focus", "surface", "task", "job", "recent", "retention-days", "artifacts-older-than"]);
 const BOOL_FLAGS = new Set(["json", "apply", "wait", "background", "profiles", "no-fallback", "live", "active", "latest", "refresh", "artifact-only", "force", "dry-run", "include-unapplied"]);
@@ -52,7 +53,10 @@ function fail(message) {
 
 function filterJobs(jobs, options) {
   return jobs.filter((job) =>
-    (!options.worker || job.worker === options.worker) &&
+    (!options.worker ||
+      job.worker === options.worker ||
+      job.harness === options.worker ||
+      job.instance === options.worker) &&
     (!options.role || job.role === options.role) &&
     (!options.active || !isTerminalStatus(job.status))
   );
@@ -144,11 +148,12 @@ switch (subcommand) {
       saveState(cwd, state);
     }
     automaticGarbageCollection();
-    const rows = runSetup();
+    const rows = runSetup(undefined, { workspace: cwd });
     const hint =
       "\nTip: when driving from a sandboxed harness (e.g. Codex), run the companion " +
       "with escalated/network-enabled permissions — it spawns a worker that calls an " +
-      "external API, which a default sandbox will block.";
+      "external API, which a default sandbox will block.\n" +
+      "Instance aliases (multi-account): ~/.agent-collaboration/config.json — see README.";
     out(rows, options, `agent-collaboration v${version()}\n\n` + renderSetup(rows) + "\n" + hint);
     break;
   }
@@ -172,7 +177,7 @@ switch (subcommand) {
     // known (explicit --driver or AGENT_COLLAB_DRIVER). A guessed/fallback driver
     // must never turn a real cross-harness delegation into a "use your own
     // subagent" no-op — the Codex/agy raw-CLI footgun.
-    const route = worker ? decideRoute({ driver, worker }) : null;
+    const route = worker ? decideRoute({ driver, worker, workspace: cwd }) : null;
     if (route && route.mode === "native" && isAuthoritativeDriver(driverSource)) {
       out({ mode: "native", harness: route.harness, instruction: route.instruction }, options);
       break;
@@ -189,6 +194,22 @@ switch (subcommand) {
       if (options.background) fail(`${subcommand}: --workers (dual review) does not support --background — legs run synchronously`);
       const workers = String(options.workers).split(",").map((s) => s.trim()).filter(Boolean);
       if (workers.length < 2) fail(`${subcommand}: --workers needs >=2 comma-separated harnesses`);
+      const harnesses = [];
+      for (const w of workers) {
+        let ref;
+        try {
+          ref = resolveWorkerRef(w, { workspace: cwd });
+        } catch (err) {
+          fail(`${subcommand}: ${err.message}`);
+        }
+        if (harnesses.includes(ref.harness)) {
+          fail(
+            `${subcommand}: --workers entries must be different harness families ` +
+              `(got multiple resolving to "${ref.harness}")`
+          );
+        }
+        harnesses.push(ref.harness);
+      }
       const legs = workers.map((w) => ({
         worker: w,
         result: runWithFallback(cwd, {
@@ -481,7 +502,17 @@ switch (subcommand) {
         }
       }
     }
-    const runtimeCleanup = cleanupWorkerRuntime(job.worker, job.workspace ?? cwd, job.artifactDir);
+    const runtimeCleanup = cleanupWorkerRuntime(job.worker, job.workspace ?? cwd, job.artifactDir, {
+      workerRef: job.harness
+        ? {
+            label: job.worker,
+            harness: job.harness,
+            instance: job.instance ?? null,
+            overlay: {},
+            hasOverlay: false
+          }
+        : undefined
+    });
     const processExited = waitForPidExit(job.pid);
     let updated = updateJob(cwd, id, { status: "cancelled", runtimeCleanup });
     const worktreeCleanup = cleanupJobWorktree(cwd, updated);
@@ -497,9 +528,9 @@ switch (subcommand) {
         "  setup [--json] [--gate on|off] [--sandbox on|off] [--retention-days n]",
         "  doctor [--live] [--workers a,b] [--json]   self-check (config + readiness; --live runs review+isolation smoke)",
         "  recommend --task <type> [--driver <name>] [--json]   |   recommend --profiles",
-        "  delegate --worker <name> [--driver <name>] [--role worker|reviewer] [--background] [--apply] [--timeout s] <brief>",
-        "  review  --worker <name> | --workers a,b [--surface head|working-tree|diff] [--focus <text>] [--profile <name>] [--background] <diff/context>",
-        "  adversarial-review --worker <name> | --workers a,b [--surface head|working-tree|diff] [--focus <text>] [--profile <name>] [--background] <diff/context>",
+        "  delegate --worker <name|instance> [--driver <name>] [--role worker|reviewer] [--background] [--apply] [--timeout s] <brief>",
+        "  review  --worker <name|instance> | --workers a,b [--surface head|working-tree|diff] [--focus <text>] [--profile <name>] [--background] <diff/context>",
+        "  adversarial-review --worker <name|instance> | --workers a,b [--surface head|working-tree|diff] [--focus <text>] [--profile <name>] [--background] <diff/context>",
         "  review-followup --job <prior-id> [--worker <name>] [--surface head|working-tree|diff] <focused diff/context>",
         "  status [jobId|--latest] [--worker name] [--role role] [--refresh|--wait] [--timeout s] [--active] [--recent n] [--json]",
         "  result <jobId|--latest> [--worker name] [--role role] [--refresh] [--artifact-only] [--json]",

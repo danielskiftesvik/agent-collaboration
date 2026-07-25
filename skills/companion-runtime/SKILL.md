@@ -16,7 +16,7 @@ generalization of codex-plugin-cc's `codex-cli-runtime` skill.
 ```
 setup [--json] [--gate on|off] [--sandbox on|off] [--retention-days <n>]
 doctor [--live] [--workers a,b] [--json]
-delegate --worker <agy|codex|claude|grok|opencode> [--driver <name>] [--role worker|reviewer] [--profile <name>] [--background] [--apply] [--timeout <s>] [--no-fallback] <brief>
+delegate --worker <agy|codex|claude|grok|opencode|instance-alias> [--driver <name>] [--role worker|reviewer] [--profile <name>] [--background] [--apply] [--timeout <s>] [--no-fallback] <brief>
 review  --worker <name> | --workers a,b [--focus <text>] [--profile <name>] [--background] [--no-fallback] [--json] <diff/context>
 adversarial-review --worker <name> | --workers a,b [--surface head|working-tree|diff] [--focus <text>] [--profile <name>] [--background] [--no-fallback] [--json] <diff/context>
 review-followup --job <prior-id> [--worker <name>] [--surface head|working-tree|diff] <focused diff/context>
@@ -230,6 +230,24 @@ read `tasks/<jobId>/reports/<worker>.md`.
 - `AGENT_COLLAB_GROK_MODEL` / `_MODEL_REVIEW` — Grok Build model pin (default `grok-4.5`).
 - `AGENT_COLLAB_GROK_EFFORT` / `_EFFORT_REVIEW` — Grok Build reasoning effort (`--effort`).
 - `AGENT_COLLAB_AGY_MODEL[_PRO|_FLASH]` — explicit agy model id (default: unset).
+
+## Instance aliases (multi-account / multi-binary)
+
+`~/.agent-collaboration/config.json` (or `AGENT_COLLAB_INSTANCE_CONFIG`):
+
+```json
+{
+  "instances": {
+    "codex-business": { "harness": "codex", "env": { "CODEX_HOME": "~/.codex-business" } },
+    "claude-local": { "harness": "claude", "bin": "/path/to/claude-local" }
+  },
+  "defaults": { "codex": "codex-business" }
+}
+```
+
+`--worker codex-business` (or bare `codex` when defaulted) runs the same adapter with
+that env/bin overlay. Job records expose `worker` (label) + `harness`. Native short-circuit
+only when driver harness matches and the worker has **no** instance overlay.
 
 ## Repo-level model pins (`.agent-collab.json`)
 

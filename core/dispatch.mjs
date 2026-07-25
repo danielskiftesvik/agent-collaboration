@@ -21,6 +21,12 @@ import { MODEL_PROFILES, TASK_ROUTING, DEFAULT_ROUTING, WRITE_TASKS, resolveMode
 import { version } from "./version.mjs";
 import { checkPreflight } from "./preflight.mjs";
 import { cleanupJobWorktree } from "./gc.mjs";
+import {
+  resolveWorkerRef,
+  withEnvOverlay,
+  sandboxDirsFromOverlay,
+  listConfiguredInstances
+} from "./instances.mjs";
 
 const TEMPLATE_KINDS = new Set(["review", "adversarial-review"]);
 
@@ -54,12 +60,19 @@ export function defaultIdleMs() {
 }
 
 /** Dirs whose file activity counts as progress for THIS worker job. */
-function watchDirsFor(adapter, worker, workspace, artifactDir) {
+function watchDirsFor(adapter, harness, workspace, artifactDir, overlay = {}) {
   const dirs = [workspace];
-  if (worker === "agy") {
+  if (harness === "agy") {
     const agyLog = path.join(os.homedir(), ".gemini", "antigravity-cli", "log");
     try {
       if (fs.existsSync(agyLog)) dirs.push(agyLog);
+    } catch {
+      /* ignore */
+    }
+  }
+  for (const p of sandboxDirsFromOverlay(overlay)) {
+    try {
+      if (fs.existsSync(p)) dirs.push(p);
     } catch {
       /* ignore */
     }
@@ -77,11 +90,20 @@ function watchDirsFor(adapter, worker, workspace, artifactDir) {
   return dirs;
 }
 
+function resolveRefForDispatch(worker, opts = {}) {
+  if (opts.workerRef && opts.workerRef.harness) return opts.workerRef;
+  return resolveWorkerRef(worker, { workspace: opts.workspace || opts.cwd });
+}
+
 /** Run a worker adapter's targeted lifecycle teardown and make failure visible. */
-export function cleanupWorkerRuntime(worker, workspace, artifactDir) {
-  const adapter = getAdapter(worker);
-  const cmd = adapter.buildCleanupCommand?.({ workspace, artifactDir });
+export function cleanupWorkerRuntime(worker, workspace, artifactDir, opts = {}) {
+  const ref = resolveRefForDispatch(worker, { ...opts, workspace });
+  const adapter = getAdapter(ref.harness);
+  const cmd = withEnvOverlay(ref.overlay, () =>
+    adapter.buildCleanupCommand?.({ workspace, artifactDir })
+  );
   if (!cmd) return { attempted: false, ok: true, reason: "adapter has no scoped runtime cleanup" };
+  cmd.env = { ...(ref.overlay || {}), ...(cmd.env ?? {}) };
 
   const cwd = workspace && fs.existsSync(workspace)
     ? workspace
@@ -334,19 +356,34 @@ function schemaInstruction(role) {
   );
 }
 
-export function decideRoute({ driver, worker }) {
-  if (driver && worker && driver === worker) {
+/**
+ * Native short-circuit only when driver and worker are the same harness AND the
+ * worker has no instance overlay (a business CODEX_HOME is a different identity
+ * than the driver's personal session — must stay cross-harness).
+ */
+export function decideRoute({ driver, worker, workerRef, workspace }) {
+  let ref = workerRef;
+  if (!ref && worker) {
+    try {
+      ref = resolveWorkerRef(worker, { workspace });
+    } catch {
+      ref = null;
+    }
+  }
+  const harness = ref?.harness || worker;
+  const hasOverlay = ref?.hasOverlay === true;
+  if (driver && harness && driver === harness && !hasOverlay) {
     return {
       mode: "native",
       harness: driver,
       instruction: NATIVE_INSTRUCTION[driver] ?? "Use this harness's native subagent."
     };
   }
-  return { mode: "cross", worker };
+  return { mode: "cross", worker: ref?.label || worker, harness, instance: ref?.instance || null };
 }
 
-export function runSetup(adapters = listAdapters()) {
-  return adapters.map((a) => {
+export function runSetup(adapters = listAdapters(), opts = {}) {
+  const rows = adapters.map((a) => {
     const p = a.probe();
     if (!p.available) {
       return { name: a.name, available: false, validWorker: false, reason: p.error };
@@ -360,6 +397,38 @@ export function runSetup(adapters = listAdapters()) {
       reason: u.ok ? undefined : u.detail
     };
   });
+  const instances = listConfiguredInstances(opts).map((inst) => {
+    if (inst.error) {
+      return {
+        name: inst.name,
+        instance: true,
+        available: false,
+        validWorker: false,
+        reason: inst.error
+      };
+    }
+    const base = rows.find((r) => r.name === inst.harness);
+    let probe = { available: base?.available ?? false, version: base?.version, error: base?.reason };
+    if (inst.bin || Object.keys(inst.env || {}).length) {
+      try {
+        const ref = resolveWorkerRef(inst.name, opts);
+        probe = withEnvOverlay(ref.overlay, () => getAdapter(ref.harness).probe());
+      } catch (err) {
+        probe = { available: false, error: err.message };
+      }
+    }
+    return {
+      name: inst.name,
+      instance: true,
+      harness: inst.harness,
+      defaultFor: inst.defaultFor,
+      available: !!probe.available,
+      version: probe.version,
+      validWorker: !!probe.available && (base?.validWorker !== false),
+      reason: probe.available ? undefined : (probe.error || "base harness unavailable")
+    };
+  });
+  return [...rows, ...instances];
 }
 
 function ensureDirs(base, role) {
@@ -420,13 +489,18 @@ function readProgress(progressFile) {
  * here (only the driver applies). Returns a summary including the artifact.
  */
 export function runWorkerSync(cwd, opts) {
-  const { driver, worker, role = "worker", brief, kind, focus, targetLabel, profile, surface, followupOf, idleMs = MODEL_PROFILES[worker]?.idleMsOverride ?? defaultIdleMs(), maxAttempts = 2, noResume = false } = opts;
+  const ref = resolveRefForDispatch(opts.worker, { workerRef: opts.workerRef, workspace: cwd });
+  const worker = ref.label; // job/artifact identity (alias or harness)
+  const harness = ref.harness;
+  const overlay = ref.overlay || {};
+  const { driver, role = "worker", brief, kind, focus, targetLabel, profile, surface, followupOf, maxAttempts = 2, noResume = false } = opts;
+  const idleMs = opts.idleMs ?? MODEL_PROFILES[harness]?.idleMsOverride ?? defaultIdleMs();
   let timeoutMs = opts.timeoutMs ?? defaultTimeoutMs();
-  const adapter = getAdapter(worker);
+  const adapter = getAdapter(harness);
   // Shorter timeout for known free / rate-limited models — they either work
   // quickly or are throttled; the 20 min default just wastes time.
   if (adapter.resolveModel) {
-    const m = adapter.resolveModel({ role, workspace: cwd, profile });
+    const m = withEnvOverlay(overlay, () => adapter.resolveModel({ role, workspace: cwd, profile }));
     const mt = resolveModelTimeout(m);
     if (mt !== null) timeoutMs = Math.min(timeoutMs, mt);
   }
@@ -459,20 +533,20 @@ export function runWorkerSync(cwd, opts) {
   const blocked = (reason, failureKind = "isolation") => {
     const errors = [reason];
     writeInitial({
-      id: jobId, driver, worker, role, status: "blocked", pid: process.pid,
+      id: jobId, driver, worker, harness, instance: ref.instance, role, status: "blocked", pid: process.pid,
       baseRef: null, workspace: cwd, artifactDir, logs, heartbeatAt: new Date().toISOString()
     });
     updateJob(cwd, jobId, { errors, failureKind });
     return {
-      jobId, worker, status: "blocked", resultValid: false, valid: false,
+      jobId, worker, harness, instance: ref.instance, status: "blocked", resultValid: false, valid: false,
       changed: false, patchApplies: null, artifact: null, artifactDir,
       patchPath: null, isolated: false, failureKind, errors
     };
   };
 
-  if (role === "worker" && !canRunAsWriter(worker)) {
+  if (role === "worker" && !canRunAsWriter(harness)) {
     return blocked(
-      `${worker} is reviewer-only through this runtime and cannot deliver patches as a write-worker. ` +
+      `${worker} (${harness}) is reviewer-only through this runtime and cannot deliver patches as a write-worker. ` +
         "Route implementation work to a worker with canWrite:true.",
       "unsupported-worker"
     );
@@ -560,6 +634,8 @@ export function runWorkerSync(cwd, opts) {
     id: jobId,
     driver,
     worker,
+    harness,
+    instance: ref.instance,
     role,
     status: "running",
     pid: process.pid,
@@ -659,24 +735,26 @@ export function runWorkerSync(cwd, opts) {
   // resolveSandbox). If it can't actually be applied
   // we degrade to an unsandboxed run (breach detection stays active).
   const state = loadState(cwd);
-  const wantSandbox = resolveSandbox({ worker, role, config: state.config, env: process.env }).sandbox;
+  const wantSandbox = resolveSandbox({ worker: harness, role, config: state.config, env: process.env }).sandbox;
   const wantStrict = process.env.AGENT_COLLAB_SANDBOX_STRICT === "on" || state.config.sandboxStrict === true;
+  const extraHarnessDirs = sandboxDirsFromOverlay(overlay);
   let sandboxDegraded = false;
 
-  const watchDirs = watchDirsFor(adapter, worker, workspace, artifactDir);
+  const watchDirs = watchDirsFor(adapter, harness, workspace, artifactDir, overlay);
   const exec = (cmd, sandbox) =>
     run(cmd.command, cmd.args, {
       cwd: workspace,
       timeout: timeoutMs,
       idleMs,
       watchDirs,
-      env: MODEL_PROFILES[worker]?.cleanEnv
+      env: MODEL_PROFILES[harness]?.cleanEnv
         ? { PATH: process.env.PATH, HOME: process.env.HOME, ...(cmd.env ?? {}) }
         : { ...process.env, ...(cmd.env ?? {}) },
       sandbox,
       sandboxStrict: wantStrict,
       sandboxWorkspace: workspace,
       sandboxArtifactDir: artifactDir,
+      extraHarnessDirs,
       progressFile: logs.progress
     });
   // Run with the sandbox; degrade to unsandboxed if it couldn't be applied
@@ -704,6 +782,13 @@ export function runWorkerSync(cwd, opts) {
     "Your previous reply was not valid for the required schema. Re-send ONLY a " +
     "single JSON object matching that schema — no prose, nothing else.";
 
+  const buildCmd = (fn) => {
+    const cmd = withEnvOverlay(overlay, fn);
+    if (!cmd) return null;
+    cmd.env = { ...overlay, ...(cmd.env ?? {}) };
+    return cmd;
+  };
+
   let attempts = 0;
   while (attempts < maxAttempts) {
     attempts += 1;
@@ -711,7 +796,9 @@ export function runWorkerSync(cwd, opts) {
     let proc;
     let cmd;
     if (attempts === 1) {
-      cmd = adapter.buildCommand({ role, brief: basePrompt, workspace, artifactDir, timeoutMs, profile });
+      cmd = buildCmd(() =>
+        adapter.buildCommand({ role, brief: basePrompt, workspace, artifactDir, timeoutMs, profile })
+      );
       proc = execGuarded(cmd);
     } else {
       // Repair attempt: prefer RESUMING the worker's thread (cheap continuation,
@@ -721,17 +808,23 @@ export function runWorkerSync(cwd, opts) {
       // the latest thread for the repo, which under concurrency could be a DIFFERENT
       // job's thread. Fall back to a fresh re-send instead.
       const retryCmd = (!noResume && adapter.buildRetryCommand)
-        ? adapter.buildRetryCommand({ role, repairBrief: resumeRepair, workspace, artifactDir, timeoutMs })
+        ? buildCmd(() =>
+            adapter.buildRetryCommand({ role, repairBrief: resumeRepair, workspace, artifactDir, timeoutMs })
+          )
         : null;
       if (retryCmd) {
         cmd = retryCmd;
         proc = execGuarded(cmd);
         if (adapter.isResumeMiss && adapter.isResumeMiss(proc)) {
-          cmd = adapter.buildCommand({ role, brief: freshRepair, workspace, artifactDir, timeoutMs, profile });
+          cmd = buildCmd(() =>
+            adapter.buildCommand({ role, brief: freshRepair, workspace, artifactDir, timeoutMs, profile })
+          );
           proc = execGuarded(cmd);
         }
       } else {
-        cmd = adapter.buildCommand({ role, brief: freshRepair, workspace, artifactDir, timeoutMs, profile });
+        cmd = buildCmd(() =>
+          adapter.buildCommand({ role, brief: freshRepair, workspace, artifactDir, timeoutMs, profile })
+        );
         proc = execGuarded(cmd);
       }
     }
@@ -800,7 +893,7 @@ export function runWorkerSync(cwd, opts) {
   // SessionEnd hook never fires when agent-collaboration invokes the companion
   // as a subprocess, so explicitly tear down only this job's scoped broker before
   // removing the worktree used to derive its state key.
-  const runtimeCleanup = cleanupWorkerRuntime(worker, workspace, artifactDir);
+  const runtimeCleanup = cleanupWorkerRuntime(worker, workspace, artifactDir, { workerRef: ref });
   if (worktree) removeWorktree(cwd, worktree);
 
   if (reviewContext) {
@@ -890,6 +983,10 @@ export function runWorkerSync(cwd, opts) {
     }
   }
 
+  // Diagnostic: a worker that self-reports it changed files but left an EMPTY
+  // captured diff likely wrote somewhere other than the isolated worktree. Make
+  // the silent no-changes actionable instead of a filesystem hunt.
+  let note;
   // Diagnostic: a truncated model response (reason="length") means the worker's
   // output may be incomplete. Flag it so callers can decide whether to trust it.
   if (adapterError && (status === "completed" || status === "no-changes")) {
@@ -919,7 +1016,7 @@ export function runWorkerSync(cwd, opts) {
           `Raise the budget with --timeout / AGENT_COLLAB_TIMEOUT, or let it auto-fall-back to a faster worker.`
       ];
     } else {
-      const cls = classifyFailure({ stdout: lastStdout, stderr: lastStderr, exitCode, worker });
+      const cls = classifyFailure({ stdout: lastStdout, stderr: lastStderr, exitCode, worker: harness });
       failureKind = cls.kind;
       resetAt = cls.resetAt;
     }
@@ -932,10 +1029,6 @@ export function runWorkerSync(cwd, opts) {
     ];
   }
 
-  // Diagnostic: a worker that self-reports it changed files but left an EMPTY
-  // captured diff likely wrote somewhere other than the isolated worktree. Make
-  // the silent no-changes actionable instead of a filesystem hunt.
-  let note;
   if (status === "no-changes" && coerce.ok && coerce.value.changed === true) {
     note =
       "the worker reported it changed files, but nothing was captured in its isolated worktree — " +
@@ -972,6 +1065,8 @@ export function runWorkerSync(cwd, opts) {
   const breach = escapedPaths.length > 0;
   updateJob(cwd, jobId, {
     status,
+    harness,
+    instance: ref.instance,
     exitCode,
     resultValid: coerce.ok,
     changed,
@@ -1000,6 +1095,8 @@ export function runWorkerSync(cwd, opts) {
   return {
     jobId,
     worker,
+    harness,
+    instance: ref.instance,
     status,
     resultValid: coerce.ok,
     valid: coerce.ok, // back-compat alias for resultValid
@@ -1065,27 +1162,61 @@ export function runWithFallback(cwd, opts) {
       : fallback === false
         ? new Set()
         : resolveFallbackKinds();
+  // Auto-fallback candidates are base harnesses only (not instance aliases).
   const avail =
-    available || runSetup().filter((r) => r.validWorker).map((r) => r.name);
+    available ||
+    runSetup(undefined, { workspace: cwd })
+      .filter((r) => r.validWorker && !r.instance)
+      .map((r) => r.name);
 
   // Candidate order: the EXPLICITLY-requested worker first — always honored, even
   // if it equals the (possibly merely guessed) driver label — then the remaining
   // worker-ready harnesses as auto-fallbacks, which DO exclude the driver so a
   // fallback never spawns the driver's own harness behind its back.
+  // Dedupe by resolved harness so codex-business does not fall back to bare codex.
   const candidates = [];
-  if (worker) candidates.push(worker);
+  const seenHarness = new Set();
+  const pushCandidate = (name) => {
+    if (!name || candidates.includes(name)) return;
+    let ref;
+    try {
+      ref = resolveWorkerRef(name, { workspace: cwd });
+    } catch {
+      return;
+    }
+    if (seenHarness.has(ref.harness)) return;
+    seenHarness.add(ref.harness);
+    candidates.push(name);
+  };
+  if (worker) pushCandidate(worker);
+  let primaryHarness = null;
+  try {
+    primaryHarness = worker ? resolveWorkerRef(worker, { workspace: cwd }).harness : null;
+  } catch {
+    primaryHarness = null;
+  }
   const isWrite = (rest.role ?? "worker") === "worker" || (task && WRITE_TASKS.has(task));
-  const explicitWorkerIsExclusive = worker && MODEL_PROFILES[worker]?.explicitOnly === true;
+  const explicitWorkerIsExclusive =
+    primaryHarness && MODEL_PROFILES[primaryHarness]?.explicitOnly === true;
+  let driverHarness = driver;
+  try {
+    if (driver) driverHarness = resolveWorkerRef(driver, { workspace: cwd }).harness;
+  } catch {
+    driverHarness = driver;
+  }
   if (!explicitWorkerIsExclusive) {
     for (const w of avail) {
-      if (
-        w &&
-        w !== driver &&
-        !candidates.includes(w) &&
-        !MODEL_PROFILES[w]?.explicitOnly &&
-        (!isWrite || canRunAsWriter(w))
-      )
-        candidates.push(w);
+      if (!w) continue;
+      let wh;
+      try {
+        wh = resolveWorkerRef(w, { workspace: cwd }).harness;
+      } catch {
+        continue;
+      }
+      if (wh === driverHarness) continue;
+      if (MODEL_PROFILES[wh]?.explicitOnly) continue;
+      if (isWrite && !canRunAsWriter(wh)) continue;
+      pushCandidate(w);
     }
   }
 
@@ -1143,9 +1274,12 @@ const COMPANION = fileURLToPath(new URL("../scripts/agent-companion.mjs", import
  * stays a synchronous-path convenience).
  */
 export function launchBackground(cwd, opts) {
-  const { driver, worker, role = "worker", brief, kind, focus, targetLabel, profile, surface, timeoutMs, maxAttempts } = opts;
+  const ref = resolveRefForDispatch(opts.worker, { workerRef: opts.workerRef, workspace: cwd });
+  const worker = ref.label;
+  const harness = ref.harness;
+  const { driver, role = "worker", brief, kind, focus, targetLabel, profile, surface, timeoutMs, maxAttempts } = opts;
   const resolvedTimeoutMs = timeoutMs ?? defaultTimeoutMs();
-  const resolvedIdleMs = opts.idleMs ?? MODEL_PROFILES[worker]?.idleMsOverride ?? defaultIdleMs();
+  const resolvedIdleMs = opts.idleMs ?? MODEL_PROFILES[harness]?.idleMsOverride ?? defaultIdleMs();
   const launchedAt = new Date().toISOString();
   const jobId = randomUUID();
   const artifactDir = path.join(resolveStateDir(cwd), "tasks", jobId);
@@ -1161,16 +1295,30 @@ export function launchBackground(cwd, opts) {
     // best-effort; runWorkerSync will snapshot if this failed
   }
 
+  // Persist the resolved identity so run-job re-applies the same overlay without
+  // depending on ambient process env (background child starts clean).
+  const workerRef = {
+    label: ref.label,
+    harness: ref.harness,
+    instance: ref.instance,
+    env: ref.env,
+    bin: ref.bin,
+    overlay: ref.overlay,
+    hasOverlay: ref.hasOverlay
+  };
+
   appendJob(cwd, {
     id: jobId,
     driver,
     worker,
+    harness,
+    instance: ref.instance,
     role,
     status: "queued",
     background: true,
     artifactDir,
     request: {
-      driver, worker, role, brief, kind, focus, targetLabel, profile, surface,
+      driver, worker, workerRef, role, brief, kind, focus, targetLabel, profile, surface,
       timeoutMs: resolvedTimeoutMs, idleMs: resolvedIdleMs, maxAttempts,
       breachHeadBefore, breachBefore
     },
@@ -1193,7 +1341,7 @@ export function launchBackground(cwd, opts) {
   fs.closeSync(logFd);
   updateJob(cwd, jobId, { pid: child.pid, status: "running" });
 
-  return { jobId, worker, status: "running", background: true, artifactDir };
+  return { jobId, worker, harness, instance: ref.instance, status: "running", background: true, artifactDir };
 }
 
 /** Detached-worker entrypoint: load the persisted request and run it under jobId. */

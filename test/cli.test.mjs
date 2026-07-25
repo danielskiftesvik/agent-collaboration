@@ -620,14 +620,14 @@ test("review-followup rejects a prior review that did not complete", () => {
 test("review --workers a,b reaches the dual branch (no --worker required)", () => {
   const dataDir = isolateStateRoot();
   const repo = makeRepo();
-  // Bogus harness names: the dual branch must be REACHED (failing later on
-  // "unknown adapter"), not rejected up front with "--worker <name> is required".
+  // Bogus harness names: the dual branch must be REACHED (failing on
+  // "unknown worker"), not rejected up front with "--worker <name> is required".
   const r = cli(["review", "--workers", "nopeA,nopeB", "--driver", "claude", "--json", "some diff"], {
     cwd: repo,
     env: { AGENT_COLLAB_DATA: dataDir }
   });
   assert.ok(!/--worker <name> is required/.test(r.stderr), r.stderr);
-  assert.match(r.stderr + r.stdout, /unknown adapter/i, "dual branch dispatched to the (bogus) workers");
+  assert.match(r.stderr + r.stdout, /unknown worker/i, "dual branch validates workers");
 });
 
 test("review --workers rejects --background and single-entry lists explicitly", () => {

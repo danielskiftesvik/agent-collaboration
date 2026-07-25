@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.9.0 - 2026-07-25
+
+- **Instance aliases** for multi-account / multi-binary harnesses: `~/.agent-collaboration/config.json` defines named identities (`codex-business` → `CODEX_HOME=~/.codex-business`, `claude-local` → alternate bin) and optional `defaults.codex` redirects. Jobs store `worker` (label) + `harness`; sandbox allows instance home dirs; missing defaults fail loud; fallback dedupes by harness family.
+
 ## 0.6.5 - 2026-07-16
 
 - Add liveness-aware garbage collection on launches, cancellation, and dead-process refresh so terminal/crashed collaboration worktrees cannot accumulate indefinitely while live active jobs remain protected; fail closed on missing/corrupt state and converge terminal PID-reuse debris after a grace period.
