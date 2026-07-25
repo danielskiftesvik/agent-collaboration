@@ -38,19 +38,23 @@ installed it in Claude Code.)
 
 ### Grok Build (`grok`)
 
-Grok Build accepts Claude-compatible plugin layouts (this repo ships both
-`.claude-plugin/` and `.grok-plugin/`). Install the CLI first if needed:
-
 ```bash
+# CLI (if needed)
 curl -fsSL https://x.ai/cli/install.sh | bash
-grok --version
-```
 
-Then install the plugin (exact subcommands vary by Grok Build version — check `grok plugin --help`):
-
-```bash
+# First-time plugin install — required (marketplace cache alone is not enough)
 grok plugin install https://github.com/danielskiftesvik/agent-collaboration --trust
+
+# Later updates (only works after a formal install)
+grok plugin update agent-collaboration
 ```
+
+Reload the Grok session after install/update so skills and hooks load.
+
+> **Gotcha:** `grok plugin update` does nothing if the plugin was never formally
+> installed — only a stale opaque `enabled` id (e.g. `user/<hash>/agent-collaboration`)
+> in `~/.grok/config.toml`. Run `install … --trust` once; then `update` works.
+> You can drop leftover `user/…` entries from `[plugins] enabled` for a clean list.
 
 Or drive the companion over the shell without a plugin install:
 
@@ -58,6 +62,8 @@ Or drive the companion over the shell without a plugin install:
 node /path/to/agent-collaboration/scripts/agent-companion.mjs setup
 node /path/to/agent-collaboration/scripts/agent-companion.mjs delegate --worker claude --driver grok "…"
 ```
+
+Full Grok Build guide: [`docs/README.grok.md`](./docs/README.grok.md).
 
 ### Opencode
 
@@ -95,9 +101,9 @@ opencode plugin "agent-collaboration@git+https://github.com/danielskiftesvik/age
 
 Full OpenCode guide: [`docs/README.opencode.md`](./docs/README.opencode.md).
 
-> Codex, Antigravity, and opencode plugin support is newer than Claude Code's and the exact marketplace
+> Codex, Antigravity, Grok Build, and opencode plugin support is newer than Claude Code's and the exact marketplace
 > resolution can vary by CLI version — if a command above doesn't resolve, check
-> `codex plugin --help` / `agy plugin --help`. You can always skip install entirely and
+> `codex plugin --help` / `agy plugin --help` / `grok plugin --help`. You can always skip install entirely and
 > [drive the runtime over the shell](#driving-from-any-harness).
 
 ### After installing — detect your workers

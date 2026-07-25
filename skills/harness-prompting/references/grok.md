@@ -25,7 +25,9 @@ also `grok-build`). The same [prompt-blocks.md](prompt-blocks.md) apply.
 | `AGENT_COLLAB_GROK_EFFORT` | Reasoning effort (`none`…`max` → `--effort`) |
 | `.agent-collab.json` `workers.grok` | Standing pin for model/effort |
 
-Install: `curl -fsSL https://x.ai/cli/install.sh | bash` — state lives under `~/.grok`.
+Install CLI: `curl -fsSL https://x.ai/cli/install.sh | bash` — state lives under `~/.grok`.  
+Plugin: `grok plugin install https://github.com/danielskiftesvik/agent-collaboration --trust`  
+(then `grok plugin update agent-collaboration`). Full guide: [`docs/README.grok.md`](../../../docs/README.grok.md).
 
 ## Recipes
 
