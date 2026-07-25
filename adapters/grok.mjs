@@ -61,15 +61,24 @@ export default defineAdapter({
       try { return JSON.parse(s); } catch { return null; }
     };
     const lines = text.split(/\r?\n/).filter((l) => l.trim());
+    // Grok streams interim narration as `text` events and closes each agentic
+    // segment with an `end`. Accumulating across segments yields run-on progress
+    // notes rather than the answer, so keep only the final segment's text —
+    // the same "last terminal step wins" shape claude/opencode use.
+    let segmentText = "";
     let answerText = "";
+    let sawSegment = false;
     let telemetry = null;
     let error = null;
     for (const line of lines) {
       const ev = tryParse(line);
       if (!ev) continue;
       if (ev.type === "text" && typeof ev.data === "string") {
-        answerText += ev.data;
+        segmentText += ev.data;
       } else if (ev.type === "end") {
+        answerText = segmentText;
+        segmentText = "";
+        sawSegment = true;
         telemetry = {
           sessionId: ev.sessionId ?? null,
           requestId: ev.requestId ?? null,
@@ -85,7 +94,10 @@ export default defineAdapter({
         error = ev.message;
       }
     }
-    if (!answerText) {
+    // Trailing text with no closing `end` (killed mid-segment) is still the
+    // freshest thing the worker said — don't drop it.
+    if (segmentText && !answerText) answerText = segmentText;
+    if (!sawSegment && !answerText) {
       const whole = tryParse(text) || tryParse(lines[0] ?? "");
       if (whole && typeof whole.text === "string") {
         answerText = whole.text;
@@ -99,7 +111,27 @@ export default defineAdapter({
         };
       }
     }
-    return { answerText: answerText || text.trim(), structured: null, telemetry, error };
+    // grok exits 0 even when it stopped early, and for workers dispatch derives
+    // success from `changed && patchApplies` — so a cancelled run whose PARTIAL
+    // patch happens to apply reads as a clean success. Surface it in the report
+    // itself, which is the artifact the driver actually reads.
+    const stopReason = telemetry?.stopReason ?? null;
+    const incomplete = !!stopReason && stopReason !== "EndTurn";
+    let finalText = answerText || text.trim();
+    if (incomplete) {
+      finalText =
+        `⚠️ INCOMPLETE RUN — grok stopped with stopReason "${stopReason}" ` +
+        `(not "EndTurn"), so this work may be partially done. Any patch it produced ` +
+        `may apply cleanly while still missing steps — verify against the brief ` +
+        `before trusting it.\n\n---\n\n${finalText}`;
+    }
+    return {
+      answerText: finalText,
+      structured: null,
+      telemetry,
+      error,
+      ...(incomplete ? { incomplete: true } : {})
+    };
   },
   probe() {
     const r = run(bin(), ["--version"]);

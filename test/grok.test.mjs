@@ -108,6 +108,47 @@ test("parseOutput accumulates streaming-json text events and end telemetry", () 
   assert.deepEqual(out.telemetry.resolvedModels, ["grok-4.5-build"]);
 });
 
+test("parseOutput keeps only the final segment's text, not narration from earlier turns", () => {
+  // Grok emits interim narration as `text` events and closes each agentic
+  // segment with an `end`. Accumulating across segments produced run-on
+  // progress notes instead of the answer (observed 2026-07-25: 190 text
+  // events across 2 segments concatenated into one report).
+  const stdout = [
+    '{"type":"text","data":"Reading the files first."}',
+    '{"type":"end","stopReason":"EndTurn","sessionId":"s1","num_turns":4}',
+    '{"type":"text","data":"Final answer."}',
+    '{"type":"end","stopReason":"EndTurn","sessionId":"s1","num_turns":2}'
+  ].join("\n");
+  const out = grok.parseOutput({ stdout });
+  assert.equal(out.answerText, "Final answer.");
+});
+
+test("parseOutput flags a cancelled run so a partial worker patch is not read as complete", () => {
+  // grok exits 0 even when its own stopReason is Cancelled, and for workers
+  // dispatch derives success from `changed && patchApplies` — so a half-finished
+  // run whose partial patch happens to apply reads as success. Surface it.
+  const stdout = [
+    '{"type":"text","data":"Applying the edits"}',
+    '{"type":"end","stopReason":"Cancelled","sessionId":"s1","num_turns":11}'
+  ].join("\n");
+  const out = grok.parseOutput({ stdout });
+  assert.equal(out.incomplete, true);
+  assert.equal(out.telemetry.stopReason, "Cancelled");
+  assert.match(out.answerText, /INCOMPLETE/);
+  assert.match(out.answerText, /Cancelled/);
+  assert.match(out.answerText, /Applying the edits/);
+});
+
+test("parseOutput does not flag a normal EndTurn run as incomplete", () => {
+  const stdout = [
+    '{"type":"text","data":"All done."}',
+    '{"type":"end","stopReason":"EndTurn","sessionId":"s1","num_turns":3}'
+  ].join("\n");
+  const out = grok.parseOutput({ stdout });
+  assert.notEqual(out.incomplete, true);
+  assert.equal(out.answerText, "All done.");
+});
+
 test("parseOutput returns error from streaming-json error events", () => {
   const stdout =
     '{"type":"error","message":"You\\u2019ve reached your free Grok Build usage limit for now."}';
