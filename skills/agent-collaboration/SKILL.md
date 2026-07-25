@@ -35,8 +35,8 @@ Rough guide (full matrix + model profiles: [`harness-prompting/references/model-
 
 ### Claude Code
 Use the custom slash commands:
-- `/agent-collab:delegate --worker <agy|claude|codex|grok|opencode> "<task_brief>"`
-- `/agent-collab:review --worker <codex|agy|grok|opencode> "<review_brief>"`
+- `/agent-collab:delegate --worker <agy|claude|codex|grok|opencode|instance-alias> "<task_brief>"`
+- `/agent-collab:review --worker <codex|agy|grok|opencode|instance-alias> "<review_brief>"`
 - `/agent-collab:apply <jobId>`
 
 ### Codex & Antigravity & OpenCode
@@ -46,6 +46,14 @@ node scripts/agent-companion.mjs delegate --worker <worker> "<task_brief>"
 node scripts/agent-companion.mjs review --worker <worker> "<review_brief>"
 node scripts/agent-companion.mjs apply <jobId>
 ```
+
+## Instance aliases (multi-account / multi-binary)
+
+Machine-local identities live in **`~/.agent-collaboration/config.json`** (not the
+repo’s `.agent-collab.json` model pins). Example: `codex-business` →
+`CODEX_HOME=~/.codex-business`; optional `defaults.codex` redirects bare `--worker codex`.
+See the README “Instance aliases” section and `examples/agent-collab-user.example.json`.
+`setup` lists configured instances. Not created on install — add the file once per machine.
 
 ## Protocol Rules
 1. The driver harness holds the authority of the main branch.
