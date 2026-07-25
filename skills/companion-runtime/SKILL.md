@@ -139,6 +139,39 @@ launching a retry.
 Background runs a **single worker** (no auto-fallback — that's the synchronous path).
 This is the brokerless version of the reference's async model (no app-server broker).
 
+### Learning that a background job finished
+
+`--background` returns immediately and then **tells you nothing**. There is no callback:
+the runtime writes state to disk and the job sits terminal until someone calls `status`.
+A driver that dispatches and moves on will not notice completion — observed 2026-07-25:
+two jobs sat finished for several minutes while the driver reported them "in flight", and
+only a user question surfaced it.
+
+If your harness has its own background-task mechanism that notifies on process exit
+(Claude Code's `run_in_background`, and most agentic harnesses), use it — turn the poll
+into a push. Two shapes:
+
+**A. Detached job + tracked watcher** (durable; the job survives a driver crash):
+```
+node "$COMPANION" delegate --worker <w> --background <brief>     # returns {jobId}
+# then, as a HARNESS-tracked background task:
+node "$COMPANION" status <jobId> --wait --timeout <s>
+```
+The watcher exits when the job reaches a terminal status, and the harness notifies you.
+
+**B. Synchronous call inside a harness background task** (simpler; one step):
+run `delegate` **without** `--background` as a harness background task. It blocks, the
+harness notifies on exit, and you keep the synchronous path's auto-fallback. The trade-off
+is that killing the harness task can take the run with it — you lose the crash
+survivability that makes `--background` detached in the first place.
+
+Prefer **A** for long or expensive runs and anything you'd hate to lose; **B** for short
+runs where auto-fallback matters more than durability. What you must not do is dispatch
+with `--background` and then rely on remembering to poll.
+
+Harnesses with no background-task notification have to poll — call `status <jobId> --wait`
+directly and accept that the driver blocks.
+
 ## Disk lifecycle and garbage collection
 
 Every cross-harness launch runs a best-effort, liveness-aware janitor. It removes managed
