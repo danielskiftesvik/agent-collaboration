@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.9.1 - 2026-07-25
+
+- Grok worker fixes: keep only the final streaming segment as the answer; flag non-`end_turn` runs as incomplete; run implementers with `--permission-mode bypassPermissions` so headless shell/build/test tool calls are not cancelled on turn 1.
+- Docs: how a driver learns a background job finished; drop stale acceptEdits note on the Grok adapter.
+
 ## 0.9.0 - 2026-07-25
 
 - **Instance aliases** for multi-account / multi-binary harnesses: `~/.agent-collaboration/config.json` defines named identities (`codex-business` → `CODEX_HOME=~/.codex-business`, `claude-local` → alternate bin) and optional `defaults.codex` redirects. Jobs store `worker` (label) + `harness`; sandbox allows instance home dirs; missing defaults fail loud; fallback dedupes by harness family.
