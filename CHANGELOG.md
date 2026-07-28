@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.10.0 - 2026-07-28
+
+- **Role-sized timeouts.** `defaultTimeoutMs(role)` now returns 20 min for `reviewer` (unchanged) and **4 h for `worker`**. The old single 20-min default was calibrated for a one-shot review — "a deep reasoner prints its JSON only at the END" — and was silently applied to implementers executing whole plans. Observed 2026-07-28: a write-worker was hard-killed at exactly 20 min (`exit 124`) partway through task 2 of 7, while healthy and committing correct work. `--timeout <s>` / `AGENT_COLLAB_TIMEOUT` still override both roles.
+- **The free-tier model clamp (`MODEL_TIMEOUTS`, 3–5 min) is now reviewer-only.** It would otherwise clamp a `--worker` on a `*-free` model from 4 h to 5 min and guarantee a mid-task kill. The "fast or throttled" bet holds for a single review; for a worker it is both wrong and redundant, since a throttled implementer is caught sooner and more precisely by the idle guard.
+- **New doctrine: the hard timeout is a backstop, not a schedule.** Three layers protect a run — driver supervision, the idle guard (no progress → `frozen`), then the hard timeout. Layer 3 should never fire on legitimate work; if it does, the task wanted splitting.
+- **New `companion-runtime` section: "Supervising a running job."** The docs covered learning that a background job *finished* but nothing about watching one *run*. Adds outcome-signal supervision (commits, status, progress heartbeat) plus two field-observed traps: never test liveness by matching the worker CLI's name (`pgrep -f "grok --single"` matches *other drivers'* jobs, so a dead job reads as alive), and watch the worktree the worker actually writes to (a worker may use a driver-supplied worktree, leaving the runtime recording `patch: empty, commits: none` while real work sits on the branch).
+- **`harness-prompting`: two clauses for long write-worker briefs** — "commit early and often" (a commit is the only artifact that reliably survives a kill) and "tell the worker what slow looks like on this machine" (so a worker queued behind a shared build lock doesn't conclude it is stuck and improvise).
+- Diagnostics: a job's headline `status` can read `breach` while the real cause was the hard timeout (`exit 124` in `logs/*.stderr.log`), and `breach` can be tripped by a *different* concurrent agent writing into the shared checkout.
+
 ## 0.9.1 - 2026-07-25
 
 - Grok worker fixes: keep only the final streaming segment as the answer; flag non-`end_turn` runs as incomplete; run implementers with `--permission-mode bypassPermissions` so headless shell/build/test tool calls are not cancelled on turn 1.

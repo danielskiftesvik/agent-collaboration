@@ -172,6 +172,41 @@ with `--background` and then rely on remembering to poll.
 Harnesses with no background-task notification have to poll — call `status <jobId> --wait`
 directly and accept that the driver blocks.
 
+### Supervising a running job
+
+Knowing a job *finished* is not enough. **The driver is the primary failure detector; the
+timeouts are a backstop.** For any long write-worker run, watch it while it runs and
+intervene early — a problem caught at minute 5 costs 5 minutes, the same problem caught by
+the hard timeout costs the whole budget.
+
+Watch **outcome signals**, not process liveness:
+
+| Signal | How | Why it beats the alternative |
+|---|---|---|
+| **Commits** | `git -C <worktree> log --oneline <base>..HEAD` | The only artifact that survives a kill. Real progress. |
+| **Job status** | `status <jobId> --json` → `.status` | Authoritative; `breach`/`failed` are terminal. |
+| **Progress heartbeat** | `artifactDir/logs/progress.json` `.at` | Frozen `.at` + alive process = wedged, *before* the idle guard fires. |
+| **Job's own pids** | `pgrep -f "run-job --job <jobId>"` | See below — this one is a trap. |
+
+**Trap: never test liveness by matching the worker CLI's name.** `pgrep -f "grok --single"`
+matches *any* concurrent job on the machine, including other drivers' — so a dead job reads
+as alive. Match the **job id** (`run-job --job <jobId>`), which is unique to your dispatch.
+Observed 2026-07-28: a driver reported a worker healthy for several minutes after it died,
+because its liveness check was matching a different session's worker.
+
+**Trap: watch the worktree the worker actually writes to.** If you pre-create a worktree and
+name it in the brief, the worker may use it instead of the runtime's isolated one — in which
+case the runtime records `patch: empty, commits: none` while real work sits on your branch.
+Confirm which tree is being written before concluding nothing happened.
+
+**Design the watcher to be quiet.** Key the change-detection on outcome fields only (status,
+commit count, HEAD). Including a timestamp that ticks every poll turns every poll into a
+notification and buries the real event.
+
+**Instruct write-workers to commit early and often** (see `harness-prompting`). A hard kill
+leaves uncommitted work at the mercy of whichever tree it landed in; a commit is
+unambiguous, inspectable, and survives.
+
 ## Disk lifecycle and garbage collection
 
 Every cross-harness launch runs a best-effort, liveness-aware janitor. It removes managed
@@ -211,15 +246,63 @@ Claude's NDJSON can update the progress marker while the outer CLI remains quiet
 because the synchronous process wrapper buffers output. This is expected and is why
 `status.health`, rather than visible terminal text, is the liveness authority.
 
-## Timeouts (avoid the "no JSON found" no-output)
+## Timeouts — a backstop, not a schedule
 
-A deep reasoner (codex) on a large diff can run 10+ minutes and prints its JSON
-only at the END — so a short timeout SIGTERMs it mid-run and you get an empty,
-unparseable result. The default per-attempt budget is therefore **generous (20
-min)**; raise/lower it with `--timeout <s>` or `AGENT_COLLAB_TIMEOUT=<s>`. A
-timeout is **not** retried in place (re-sending the same slow prompt just times
-out again) — it surfaces as `failureKind: "timeout"` and auto-falls-back to a
-faster worker.
+**The hard timeout is the last line of defence, not the thing that detects problems.**
+Three layers protect a run, in order of specificity:
+
+| # | Layer | Catches | Latency |
+|---|---|---|---|
+| 1 | **Driver supervision** (§ Supervising a running job) | everything real — wrong turn, wedge, gate hit | seconds–minutes |
+| 2 | **Idle guard** — no progress for `AGENT_COLLAB_IDLE_TIMEOUT` (10 min) | frozen / throttled worker | ~10 min |
+| 3 | **Hard timeout** | a job that IS progressing but will not end | the budget |
+
+Set layer 3 so it **never fires on legitimate work**. If it fires, you almost always
+mis-sized it — or the task was too big for one dispatch.
+
+### Role-sized defaults
+
+- **`reviewer` — 20 min.** A deep reasoner on a large diff runs 10+ min and prints its JSON
+  only at the END, so a short budget SIGTERMs it mid-run and you get an empty, unparseable
+  result. 20 min is calibrated for that shape.
+- **`worker` — 4 h.** An implementer executes a whole plan: many edit/build/test cycles.
+
+Override either with `--timeout <s>` or `AGENT_COLLAB_TIMEOUT=<s>`.
+
+### Sizing a write-worker: count cycles, not thinking
+
+The dominant cost for an implementer is usually **not** model latency. Count the build/test
+cycles the task needs and multiply by what a cycle costs *on that machine, including
+queueing*. Where builds serialize through a shared lock (`flock`), one build can wait 10+
+min for a slot and total wall-clock is set by **contention with other agents**, not by the
+worker. A plan needing a dozen cycles cannot finish in 20 minutes however fast the model is.
+
+Observed 2026-07-28: a worker was hard-killed at exactly 20 min (`exit 124`,
+`[idle-guard] hard timeout after 1200s`) partway through task 2 of 7 — healthy, correct, and
+committing work the whole time. The old default was a *reviewer* budget applied to an
+implementer.
+
+**If a worker needs more than the default, split the task** rather than raising the ceiling.
+A 4-hour implementer is a plan that should have been two dispatches.
+
+### The free-tier clamp is reviewer-only
+
+`MODEL_TIMEOUTS` caps known free/rate-limited models to 3–5 min — they either answer quickly
+or are throttled. That bet holds for a one-shot **review**. It is deliberately **not** applied
+to workers: an implementer legitimately runs for hours, so the clamp would guarantee a
+mid-task kill, and a genuinely throttled worker is caught sooner and more precisely by the
+idle guard.
+
+### On timeout
+
+A timeout is **not** retried in place (re-sending the same slow prompt just times out again)
+— it surfaces as `failureKind: "timeout"` and auto-falls-back to a faster worker.
+
+**Diagnosing a killed run:** the headline `status` can read `breach` while the actual cause
+was the hard timeout. Check `logs/*.stderr.log` for `[idle-guard] hard timeout` and exit code
+`124` **before** believing a containment story. Note also that `breach` can be tripped by a
+*different* concurrent agent writing into the shared checkout — that is not evidence this
+worker misbehaved.
 
 ## Repair by resume (codex)
 

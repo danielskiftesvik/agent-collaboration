@@ -29,6 +29,28 @@ Pick the smallest set of blocks that fits (full catalog:
 
 The companion appends the harness's output contract automatically — don't hand-write it.
 
+## Long write-worker runs: two clauses that belong in every brief
+
+An implementer executing a plan runs for a long time and can be killed mid-flight (hard
+timeout, idle guard, a breach tripped by *another* agent). Two clauses make that survivable —
+put them in the brief, not in your hopes:
+
+**1. "Commit early and often."** State it explicitly, with the granularity you want
+(e.g. after every task, and before any long build). A kill leaves uncommitted work at the
+mercy of whichever tree it landed in; **a commit is the only artifact that reliably
+survives** — inspectable, attributable, and independent of the runtime's own record. A run
+killed after three commits lost nothing; the same run with everything uncommitted looks
+like it produced nothing at all.
+
+**2. Tell it what "slow" looks like on this machine.** If builds serialize through a shared
+lock, or other agents contend for the same resources, say so — otherwise a worker waiting
+10 minutes for a build slot may conclude it is stuck and start improvising or bailing.
+Naming the expected wait converts a scary silence into an expected one.
+
+Size `--timeout` to the work as well; see `companion-runtime` § Timeouts. The default is
+role-aware (reviewer 20 min / worker 4 h) and is a **backstop** — the driver supervising the
+run is what should actually catch problems.
+
 ## Pick the harness, then read its guide
 
 | Harness | Best for | Guide |

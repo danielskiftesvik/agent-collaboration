@@ -36,14 +36,37 @@ function commandOption(args, ...names) {
 }
 
 /**
- * Default per-attempt worker timeout. Generous on purpose: a deep reasoner (codex)
- * on a large diff can run 10+ minutes, and the worker prints its JSON only at the
- * END, so a too-short timeout SIGTERMs it mid-run and yields the dreaded
- * "no JSON found" no-output. Configurable via AGENT_COLLAB_TIMEOUT (seconds).
+ * Default per-attempt timeout, BY ROLE. This is a runaway backstop, not a schedule.
+ *
+ * Three layers protect a run; the hard timeout is the LAST and least specific:
+ *   1. the driver actively supervising the job — the real detector
+ *      (`skills/companion-runtime/SKILL.md` § "Supervising a running job");
+ *   2. the idle guard (`defaultIdleMs()`): no progress for 10 min → `frozen`, killed fast;
+ *   3. this hard timeout: only reached by a job that IS making progress but will not end.
+ *
+ * Because layers 1-2 catch the real failures, layer 3 should be set so it never fires on
+ * legitimate work. It is role-sized, because the two workloads differ by an order of
+ * magnitude:
+ *
+ * - `reviewer` (20 min): a deep reasoner on a large diff runs 10+ min and prints its JSON
+ *   only at the END, so too short a budget SIGTERMs it mid-run and yields the dreaded
+ *   "no JSON found" no-output. 20 min is calibrated for that shape.
+ * - `worker` (4 h): an implementer executes a whole plan — many edit/build/test cycles.
+ *   Wall-clock here is usually NOT model time: where builds serialize through a shared
+ *   lock, one build can wait 10+ min for a slot and total runtime is dominated by
+ *   contention with other agents. Sizing a write-worker like a reviewer kills it mid-task.
+ *   Observed 2026-07-28: a worker hard-killed at exactly 20 min (`exit 124`,
+ *   "[idle-guard] hard timeout after 1200s") partway through task 2 of 7, while healthy
+ *   and producing correct committed work.
+ *
+ * `AGENT_COLLAB_TIMEOUT` (seconds) overrides both roles; `--timeout <s>` overrides per
+ * dispatch. A worker that needs MORE than the default is a signal to split the task, not
+ * to raise the ceiling.
  */
-export function defaultTimeoutMs() {
+export function defaultTimeoutMs(role = "worker") {
   const s = Number(process.env.AGENT_COLLAB_TIMEOUT);
-  return Number.isFinite(s) && s > 0 ? Math.round(s * 1000) : 1200000; // 20 min
+  if (Number.isFinite(s) && s > 0) return Math.round(s * 1000);
+  return role === "reviewer" ? 1200000 : 14400000; // 20 min reviewer / 4 h worker
 }
 
 /**
@@ -495,11 +518,18 @@ export function runWorkerSync(cwd, opts) {
   const overlay = ref.overlay || {};
   const { driver, role = "worker", brief, kind, focus, targetLabel, profile, surface, followupOf, maxAttempts = 2, noResume = false } = opts;
   const idleMs = opts.idleMs ?? MODEL_PROFILES[harness]?.idleMsOverride ?? defaultIdleMs();
-  let timeoutMs = opts.timeoutMs ?? defaultTimeoutMs();
+  let timeoutMs = opts.timeoutMs ?? defaultTimeoutMs(role);
   const adapter = getAdapter(harness);
-  // Shorter timeout for known free / rate-limited models — they either work
-  // quickly or are throttled; the 20 min default just wastes time.
-  if (adapter.resolveModel) {
+  // Shorter timeout for known free / rate-limited models — they either answer
+  // quickly or are throttled, so the role default just wastes wall-clock.
+  //
+  // REVIEWERS ONLY. A review is one shot: "fast or throttled" holds, and a 3-5 min cap is
+  // a good bet. A WORKER executing a plan legitimately runs for hours (edit/build/test
+  // cycles, often queued behind a shared build lock), so clamping it to a free-tier budget
+  // guarantees a mid-task kill — the exact failure this role-sizing exists to prevent.
+  // Workers that are genuinely throttled are already caught faster and more precisely by
+  // the idle guard (no progress → `frozen`), which makes this clamp redundant for them.
+  if (adapter.resolveModel && role === "reviewer") {
     const m = withEnvOverlay(overlay, () => adapter.resolveModel({ role, workspace: cwd, profile }));
     const mt = resolveModelTimeout(m);
     if (mt !== null) timeoutMs = Math.min(timeoutMs, mt);
@@ -1278,7 +1308,7 @@ export function launchBackground(cwd, opts) {
   const worker = ref.label;
   const harness = ref.harness;
   const { driver, role = "worker", brief, kind, focus, targetLabel, profile, surface, timeoutMs, maxAttempts } = opts;
-  const resolvedTimeoutMs = timeoutMs ?? defaultTimeoutMs();
+  const resolvedTimeoutMs = timeoutMs ?? defaultTimeoutMs(role);
   const resolvedIdleMs = opts.idleMs ?? MODEL_PROFILES[harness]?.idleMsOverride ?? defaultIdleMs();
   const launchedAt = new Date().toISOString();
   const jobId = randomUUID();
