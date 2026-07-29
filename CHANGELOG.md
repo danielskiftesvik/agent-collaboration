@@ -1,4 +1,6 @@
-## Unreleased
+# Changelog
+
+## 0.10.1 - 2026-07-29
 
 Driver-observability fixes from the 2026-07-29 prspctv parallel-batch retro
 (18-finding ledger: prspctv docs/reports/2026-07/2026-07-29-parallel-regime-retro.md):
@@ -20,8 +22,6 @@ Driver-observability fixes from the 2026-07-29 prspctv parallel-batch retro
 - **Truncated-report evidence**: an `⚠️ INCOMPLETE RUN` report now appends the
   runtime worktree's last commits + dirty files, so driver post-flight starts
   from facts instead of branch archaeology.
-
-# Changelog
 
 ## 0.10.0 - 2026-07-28
 
