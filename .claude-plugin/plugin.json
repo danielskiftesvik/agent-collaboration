@@ -1,6 +1,6 @@
 {
   "name": "agent-collaboration",
-  "version": "0.10.1",
+  "version": "0.11.0",
   "description": "Delegate work to a worker/reviewer on another harness (Codex, Antigravity, Grok Build, OpenCode, or Claude Code) and apply the result.",
   "author": {
     "name": "Daniel Skiftesvik"

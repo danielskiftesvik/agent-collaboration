@@ -1,16 +1,18 @@
-## Unreleased
+# Changelog
 
-- **Per-harness concurrency slots with visible queueing**: same-home harness
-  runtimes (grok: shared `~/.grok/active_sessions` + lock) cross-cancel under
-  concurrency. Background jobs now acquire a per-harness+instance slot before
-  running (grok default 1; `AGENT_COLLAB_MAX_CONCURRENT_<HARNESS>` overrides);
-  waiting jobs show `status: queued` / `awaiting-slot` in run.log instead of
-  dying opaquely. Dead-holder slots self-reclaim by pid.
+## 0.11.0 - 2026-07-29
+
+- **Per-harness concurrency slots with visible queueing**: background jobs
+  acquire a per-harness+instance slot before running (grok default 1;
+  `AGENT_COLLAB_MAX_CONCURRENT_<HARNESS>` overrides); waiting jobs show
+  `status: queued` / `awaiting-slot` in run.log instead of dying opaquely.
+  Dead-holder slots self-reclaim by pid. Grok's default of 1 is conservative —
+  a 2026-07-29 experiment showed three same-home headless runs can overlap
+  cleanly (sessions are per-cwd; `active_sessions` is a list, not a mutex);
+  raise via env when auth is solid (2–3 is fine).
 - **`GROK_HOME` joins the instance env allowlist**: a second authenticated grok
   home (one-time `GROK_HOME=~/.grok-worker grok login`, then a config.json
-  instance) gives true parallel grok capacity — slots are keyed per instance.
-
-# Changelog
+  instance) lifts the cap per-instance since slots are keyed by harness+instance.
 
 ## 0.10.1 - 2026-07-29
 
