@@ -2,7 +2,7 @@
 // for `setup`, and run a cross-harness worker/reviewer to completion, producing
 // validated artifacts that only the driver later applies.
 import { randomUUID } from "node:crypto";
-import { spawn } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -539,6 +539,12 @@ export function runWorkerSync(cwd, opts) {
   // A jobId may be supplied (background runs pre-create the record, then a detached
   // child executes it with that id); otherwise mint a fresh one.
   const jobId = opts.jobId || randomUUID();
+  // Tag the whole worker subtree so machine hygiene can positively identify
+  // companion-owned processes (ps eww -> AGENT_COLLAB_JOB_ID=...) instead of
+  // guessing by process name — 2026-07-29: name-based cleanup killed a
+  // founder's interactive sessions that looked identical in ps.
+  process.env.AGENT_COLLAB_JOB_ID = jobId;
+  process.env.AGENT_COLLAB_WORKER_HARNESS = harness;
   const artifactDir = path.join(resolveStateDir(cwd), "tasks", jobId);
   ensureDirs(artifactDir, role);
   fs.writeFileSync(path.join(artifactDir, "brief.md"), brief ?? "");
@@ -967,7 +973,18 @@ export function runWorkerSync(cwd, opts) {
     if (warningPaths.length) breachWarning = { escapedPaths: warningPaths, headMoved };
   }
 
-  fs.writeFileSync(path.join(artifactDir, "reports", `${worker}.md`), answerText);
+  let reportText = answerText;
+  // A truncated run's report ends mid-narrative with no final summary. Append
+  // hard workspace facts so the driver's post-flight starts from evidence, not
+  // archaeology (2026-07-29: every truncated report forced a manual branch dig).
+  if (/^⚠️ INCOMPLETE RUN/.test(answerText) && workspace && workspace !== cwd) {
+    try {
+      const commits = spawnSync("git", ["-C", workspace, "log", "--oneline", "-5"], { encoding: "utf8" }).stdout?.trim() ?? "";
+      const dirty = spawnSync("git", ["-C", workspace, "status", "--short"], { encoding: "utf8" }).stdout?.trim() ?? "";
+      reportText += `\n\n---\nWorkspace evidence at stop:\nlast commits:\n${commits || "(none)"}\ndirty files:\n${dirty || "(clean)"}\n`;
+    } catch { /* evidence is best-effort */ }
+  }
+  fs.writeFileSync(path.join(artifactDir, "reports", `${worker}.md`), reportText);
   fs.writeFileSync(
     path.join(artifactDir, "outputs", `${worker}.json`),
     JSON.stringify(coerce.value ?? { raw: answerText }, null, 2)
@@ -1371,13 +1388,48 @@ export function launchBackground(cwd, opts) {
   fs.closeSync(logFd);
   updateJob(cwd, jobId, { pid: child.pid, status: "running" });
 
-  return { jobId, worker, harness, instance: ref.instance, status: "running", background: true, artifactDir };
+  // Same-harness backlog: single-instance worker runtimes (observed: grok)
+  // serialize internally, so a second dispatch can sit invisible for its whole
+  // life. Surface the siblings so callers can tell "queued" from "dead".
+  const activeSiblings = (loadState(cwd).jobs || []).filter((j) =>
+    j.id !== jobId && j.background && j.harness === harness && !isTerminalStatus(j.status));
+
+  // Early-DOA check (2026-07-29): a detached child that dies instantly leaves a
+  // forever-empty run.log and a "running" job nobody ever hears from again.
+  // One short poll converts that silent loss into a visible failure at launch.
+  sleepSync(750);
+  let childDead = false;
+  try { process.kill(child.pid, 0); } catch { childDead = true; }
+  if (childDead) {
+    let logBytes = 0;
+    try { logBytes = fs.statSync(path.join(artifactDir, "run.log")).size; } catch { /* stat failed -> treat as empty */ }
+    if (logBytes === 0) {
+      updateJob(cwd, jobId, {
+        status: "failed", failureKind: "spawn-died",
+        errors: ["background child exited immediately with an empty run.log (spawn failure — re-dispatch)"]
+      });
+      return { jobId, worker, harness, instance: ref.instance, status: "failed", failureKind: "spawn-died", background: true, artifactDir };
+    }
+  }
+
+  return {
+    jobId, worker, harness, instance: ref.instance, status: "running", background: true, artifactDir,
+    ...(activeSiblings.length
+      ? {
+          queuedBehind: activeSiblings.map((j) => j.id),
+          note: `another ${harness} job is active (${activeSiblings.map((j) => j.id).join(", ")}); this run may queue inside the worker runtime — an idle artifact dir is queueing, not death`
+        }
+      : {})
+  };
 }
 
 /** Detached-worker entrypoint: load the persisted request and run it under jobId. */
 export function runJob(cwd, jobId) {
   const job = getJob(cwd, jobId);
   if (!job || !job.request) throw new Error(`run-job: no stored request for ${jobId}`);
+  // First observable action: a start banner in run.log. An empty run.log after
+  // launch is now a reliable DOA signature instead of an ambiguous silence.
+  console.log(`[agent-collab] job ${jobId} started ${new Date().toISOString()} — ${job.worker} (${job.harness}, ${job.role})`);
   // Background runs are concurrency-prone → disable codex thread-resume (would risk
   // resuming another job's --resume-last thread).
   return runWorkerSync(cwd, { ...job.request, jobId, noResume: true });

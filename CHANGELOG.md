@@ -1,3 +1,26 @@
+## Unreleased
+
+Driver-observability fixes from the 2026-07-29 prspctv parallel-batch retro
+(18-finding ledger: prspctv docs/reports/2026-07/2026-07-29-parallel-regime-retro.md):
+
+- **Early-DOA detection**: `launchBackground` polls the detached child once
+  (~750ms); instantly-dead child + empty `run.log` now returns/records
+  `status: failed, failureKind: spawn-died` instead of a forever-"running"
+  job nobody hears from again (observed silent dispatch loss).
+- **Start banner**: `run-job` writes a first-line banner to `run.log`, making
+  "empty run.log after launch" a reliable death signature.
+- **Queued-behind visibility**: launching while another background job of the
+  same harness is active returns `queuedBehind: [ids]` + a note — grok's
+  runtime serializes internally and a queued job was indistinguishable from a
+  dead one.
+- **Worker subtree tagging**: workers run with `AGENT_COLLAB_JOB_ID` /
+  `AGENT_COLLAB_WORKER_HARNESS` in env so machine hygiene can positively
+  identify companion-owned processes (name-based cleanup killed interactive
+  sessions that looked identical in `ps`).
+- **Truncated-report evidence**: an `⚠️ INCOMPLETE RUN` report now appends the
+  runtime worktree's last commits + dirty files, so driver post-flight starts
+  from facts instead of branch archaeology.
+
 # Changelog
 
 ## 0.10.0 - 2026-07-28
