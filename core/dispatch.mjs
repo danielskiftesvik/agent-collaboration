@@ -1424,15 +1424,68 @@ export function launchBackground(cwd, opts) {
 }
 
 /** Detached-worker entrypoint: load the persisted request and run it under jobId. */
+// Same-home harness runtimes (grok: shared ~/.grok/active_sessions + lock)
+// cross-cancel under concurrency. Cap concurrent runs per harness+instance and
+// make waiting VISIBLE (status "queued", progress "awaiting-slot") instead of
+// letting the CLI's opaque contention kill runs. Default: grok 1, others
+// unlimited; override via AGENT_COLLAB_MAX_CONCURRENT_<HARNESS>. A second
+// authenticated GROK_HOME instance (config.json instances) lifts grok's cap
+// per-instance since slots are keyed by harness+instance.
+function harnessSlotLimit(harness) {
+  const env = process.env[`AGENT_COLLAB_MAX_CONCURRENT_${harness.toUpperCase()}`];
+  if (env && Number(env) > 0) return Number(env);
+  return harness === "grok" ? 1 : Infinity;
+}
+
+function acquireHarnessSlot(cwd, jobId, harness, instance) {
+  const limit = harnessSlotLimit(harness);
+  if (!Number.isFinite(limit)) return null;
+  const slotRoot = path.join(resolveStateDir(cwd), "slots", `${harness}${instance ? `-${instance}` : ""}`);
+  fs.mkdirSync(slotRoot, { recursive: true });
+  let announced = false;
+  for (;;) {
+    for (let i = 1; i <= limit; i++) {
+      const slot = path.join(slotRoot, `slot-${i}`);
+      try {
+        fs.mkdirSync(slot); // atomic acquire
+        fs.writeFileSync(path.join(slot, "pid"), String(process.pid));
+        fs.writeFileSync(path.join(slot, "job"), jobId);
+        return slot;
+      } catch {
+        // held — reclaim only if the holder is dead
+        try {
+          const pid = Number(fs.readFileSync(path.join(slot, "pid"), "utf8"));
+          process.kill(pid, 0);
+        } catch {
+          try { fs.rmSync(slot, { recursive: true, force: true }); } catch { /* raced another reclaimer */ }
+          continue; // retry this slot immediately
+        }
+      }
+    }
+    if (!announced) {
+      announced = true;
+      console.log(`[agent-collab] job ${jobId} awaiting a ${harness} slot (limit ${limit}) — queued, not dead`);
+      updateJob(cwd, jobId, { status: "queued", lastProgressKind: "awaiting-slot", lastProgressAt: new Date().toISOString() });
+    }
+    sleepSync(5000);
+  }
+}
+
 export function runJob(cwd, jobId) {
   const job = getJob(cwd, jobId);
   if (!job || !job.request) throw new Error(`run-job: no stored request for ${jobId}`);
   // First observable action: a start banner in run.log. An empty run.log after
   // launch is now a reliable DOA signature instead of an ambiguous silence.
   console.log(`[agent-collab] job ${jobId} started ${new Date().toISOString()} — ${job.worker} (${job.harness}, ${job.role})`);
+  const slot = acquireHarnessSlot(cwd, jobId, job.harness, job.instance);
+  if (slot) updateJob(cwd, jobId, { status: "running", lastProgressKind: "slot-acquired", lastProgressAt: new Date().toISOString() });
+  try {
   // Background runs are concurrency-prone → disable codex thread-resume (would risk
   // resuming another job's --resume-last thread).
   return runWorkerSync(cwd, { ...job.request, jobId, noResume: true });
+  } finally {
+    if (slot) { try { fs.rmSync(slot, { recursive: true, force: true }); } catch { /* slot dir already gone */ } }
+  }
 }
 
 /**

@@ -45,6 +45,7 @@ export const USER_CONFIG_FILE = defaultUserConfigPath();
 /** Env keys instances may set. Anything else is rejected (no silent secret injection). */
 export const INSTANCE_ENV_ALLOWLIST = new Set([
   "CODEX_HOME",
+  "GROK_HOME",
   "CLAUDE_CONFIG_DIR",
   "AGENT_COLLAB_CLAUDE_BIN",
   "AGENT_COLLAB_AGY_BIN",
