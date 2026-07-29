@@ -1424,13 +1424,18 @@ export function launchBackground(cwd, opts) {
 }
 
 /** Detached-worker entrypoint: load the persisted request and run it under jobId. */
-// Same-home harness runtimes (grok: shared ~/.grok/active_sessions + lock)
-// cross-cancel under concurrency. Cap concurrent runs per harness+instance and
-// make waiting VISIBLE (status "queued", progress "awaiting-slot") instead of
-// letting the CLI's opaque contention kill runs. Default: grok 1, others
-// unlimited; override via AGENT_COLLAB_MAX_CONCURRENT_<HARNESS>. A second
-// authenticated GROK_HOME instance (config.json instances) lifts grok's cap
-// per-instance since slots are keyed by harness+instance.
+// Per-harness slot cap with VISIBLE waiting (status "queued", progress
+// "awaiting-slot") instead of opaque contention. Grok's conservative default
+// of 1 predates evidence: a 2026-07-29 controlled experiment ran three
+// same-home headless grok jobs fully overlapped (two trivial lanes + one
+// long-running worker) — all completed clean. Grok sessions are keyed per
+// working directory and ~/.grok/active_sessions is a bookkeeping list, not a
+// mutex, so same-home concurrency is supported; earlier "cross-cancel"
+// incidents re-attributed to patch conflicts, deliberate cancels, and spawn
+// DOAs. Raise via AGENT_COLLAB_MAX_CONCURRENT_<HARNESS> (machines with
+// verified auth can safely run 2-3). A second authenticated GROK_HOME
+// instance (config.json instances) also lifts the cap per-instance since
+// slots are keyed by harness+instance.
 function harnessSlotLimit(harness) {
   const env = process.env[`AGENT_COLLAB_MAX_CONCURRENT_${harness.toUpperCase()}`];
   if (env && Number(env) > 0) return Number(env);
