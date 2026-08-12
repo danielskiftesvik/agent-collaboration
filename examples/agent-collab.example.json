@@ -7,6 +7,7 @@
     "codex":    { "reviewer": { "model": "gpt-5.6-terra", "effort": "high" } },
     "agy":      { "reviewer": { "model": "Gemini 3.5 Flash (High)" } },
     "claude":   { "worker":   { "model": "sonnet" } },
+    "cursor":   { "worker":   { "model": "composer-2.5" }, "reviewer": { "model": "composer-2.5" } },
     "grok":     { "reviewer": { "model": "grok-4.5" } },
     "opencode": { "reviewer": { "model": "opencode-go/deepseek-v4-flash", "effort": "high" } }
   }

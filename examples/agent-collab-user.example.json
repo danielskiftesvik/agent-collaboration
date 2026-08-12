@@ -7,6 +7,10 @@
     "claude-local": {
       "harness": "claude",
       "bin": "/path/to/claude-local"
+    },
+    "cursor": {
+      "harness": "cursor",
+      "bin": "~/.cursor/bin/agent"
     }
   },
   "defaults": {
