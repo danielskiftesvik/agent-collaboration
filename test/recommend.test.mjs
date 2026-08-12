@@ -11,6 +11,56 @@ test("second-opinion routes to the other strong reasoner (codex <-> claude)", ()
   assert.equal(recommendWorker({ task: "second-opinion", driver: "codex", available: ALL }).worker, "claude");
 });
 
+test("second-opinion can pick cursor when it is the strongest available cross-harness option", () => {
+  // Cursor is intentionally NOT in automatic second-opinion routing until
+  // reviewer calibration lands — explicit --worker cursor still works.
+  const r = recommendWorker({
+    task: "second-opinion",
+    driver: "claude",
+    available: ["claude", "cursor"]
+  });
+  assert.notEqual(r.worker, "cursor");
+});
+
+test("general-swe prefers cursor over agy when both are available and claude is the driver", () => {
+  const r = recommendWorker({
+    task: "general-swe",
+    driver: "claude",
+    available: ["claude", "cursor", "agy", "codex"]
+  });
+  assert.equal(r.worker, "cursor");
+});
+
+test("cursor is excluded from recommend when it is the driver", () => {
+  const r = recommendWorker({
+    task: "refactor",
+    driver: "cursor",
+    available: ["cursor", "claude", "agy"]
+  });
+  assert.notEqual(r.worker, "cursor");
+  assert.equal(r.worker, "claude");
+});
+
+test("curated review routes do not fall back to cursor when preferred workers are down", () => {
+  const r = recommendWorker({
+    task: "review",
+    driver: "opencode",
+    available: ["opencode", "cursor"]
+  });
+  assert.notEqual(r.worker, "cursor");
+  assert.equal(r.mode, "none");
+});
+
+test("curated second-opinion does not fall back to cursor", () => {
+  const r = recommendWorker({
+    task: "second-opinion",
+    driver: "opencode",
+    available: ["opencode", "cursor", "grok"]
+  });
+  assert.notEqual(r.worker, "cursor");
+  assert.equal(r.mode, "none");
+});
+
 test("fast write tasks prefer agy now that it can deliver patches", () => {
   for (const task of ["mechanical", "bulk-edit", "quick-fix"]) {
     const r = recommendWorker({ task, driver: "claude", available: ALL });

@@ -21,6 +21,12 @@ Which underlying model is strongest at what, and how that maps to worker choice.
 - **Weaker at:** some hardest adversarial reviews benefit from a second codex pass;
   raw speed/cost vs Gemini Flash.
 
+### Cursor (Composer / Auto via Cursor Agent CLI) — IDE-native engineer
+- **Stronger at:** Composer agent loops, careful multi-file IDE edits, general SWE/refactor
+  when Cursor is already the driver, multimodal-in-IDE context.
+- **Weaker at:** not the adversarial-reasoning ceiling (prefer codex); requires Cursor
+  Agent CLI auth; bare `agent` on PATH may be Grok Build — always pin the Cursor binary.
+
 ### Codex (OpenAI) — reasoner / writer
 - **Stronger at:** hardest contamination-resistant debugging & reasoning, algorithms, math,
   subtle bug-finding, adversarial analysis.
@@ -59,14 +65,14 @@ worker (excluding the driver) + the model's profile + a reason. The mapping:
 
 | Task type | Preferred | Basis |
 |---|---|---|
-| `second-opinion` | other of codex/claude | independence + deep reasoning |
-| `hard-bug`, `architecture`, `design-tradeoff` | claude, codex, agy | Claude for disciplined edits; codex for hard reasoning; agy as fast fallback |
-| `refactor`, `general-swe` | claude, agy, codex | Claude for careful implementation; agy as fast fallback; codex available for harder cases |
-| `plan` | claude, codex | planning and deep analysis |
-| `review`, `adversarial-review` | codex, claude, agy | **under-benchmarked** — default to a strong reasoner |
-| `mechanical`, `bulk-edit`, `quick-fix` | agy, claude, codex | Gemini Flash speed/cost first; Claude/codex remain available |
-| `large-context`, `broad-scan` | agy, codex | Gemini on cost — context-size advantage **unconfirmed** |
-| `visual`, `multimodal` | agy | Gemini multimodal strengths |
+| `second-opinion` | other of codex/claude | independence + deep reasoning (Cursor review stays explicit-only until calibrated) |
+| `hard-bug`, `architecture`, `design-tradeoff` | claude, codex, cursor, agy | Claude for disciplined edits; codex for hard reasoning; cursor for IDE loops |
+| `refactor`, `general-swe` | claude, cursor, agy, codex | Claude/Cursor for careful implementation; agy as fast fallback |
+| `plan` | claude, cursor, codex | planning and deep analysis |
+| `review`, `adversarial-review` | codex, claude, agy | **under-benchmarked** — default to a strong reasoner; Cursor via `--worker cursor` |
+| `mechanical`, `bulk-edit`, `quick-fix` | agy, claude, cursor, codex | Gemini Flash speed/cost first; Claude/cursor/codex remain available |
+| `large-context`, `broad-scan` | agy, codex, cursor | Gemini on cost — context-size advantage **unconfirmed** |
+| `visual`, `multimodal` | agy, cursor | Gemini multimodal; Cursor for IDE-native visual context |
 | general | opencode / grok (explicit) | multi-provider flexibility (opencode) or Grok Build (grok); both require explicit `--worker` |
 
 `recommend --profiles` prints the full matrix.

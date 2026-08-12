@@ -1,6 +1,6 @@
 ---
 name: harness-prompting
-description: How to compose an effective brief for a cross-harness worker or reviewer. Use when delegating a task to codex, agy (Antigravity/Gemini), claude, grok (Grok Build), or opencode and you want reliable, well-shaped output.
+description: How to compose an effective brief for a cross-harness worker or reviewer. Use when delegating a task to codex, agy (Antigravity/Gemini), claude, cursor, grok (Grok Build), or opencode and you want reliable, well-shaped output.
 ---
 
 # Harness Prompting
@@ -57,6 +57,7 @@ run is what should actually catch problems.
 |---|---|---|
 | **codex** | reviewer / analyst; reliable deep review, quiet on long runs | [references/codex.md](references/codex.md) |
 | **claude** | reviewer **and** worker; native `Agent` tool when same-harness | [references/claude.md](references/claude.md) |
+| **cursor** | reviewer **and** worker; Composer agent loops; native Task tool when same-harness | [references/cursor.md](references/cursor.md) |
 | **agy** (Gemini) | reviewer **and** worker; pinned to latest Gemini **Flash** for speed (`AGENT_COLLAB_AGY_CLASS=Pro` for stronger reasoning) | [references/agy.md](references/agy.md) |
 | **grok** (Grok Build / xAI) | reviewer **and** worker — Grok Build CLI (`grok`) with grok-4.5. Always explicit (never auto-recommended) | [references/grok.md](references/grok.md) |
 | **opencode** (multi-provider) | reviewer **and** worker — any model behind the opencode CLI. Always explicit (never auto-recommended). Write safety via worktree isolation + breach detection | [references/opencode.md](references/opencode.md) |

@@ -19,9 +19,10 @@
 Delegate work to the strongest model for each task and gate hard work behind an independent
 second opinion. Do this without asking.
 
-> **Driver auto-detects** for all five cloud harnesses (Codex via `CODEX_THREAD_ID`, agy via
-> `ANTIGRAVITY_*`, Grok Build via `GROK_SESSION_ID`/`GROK_PLUGIN_*`, OpenCode via
-> `OPENCODE_SESSION`, Claude Code via `CLAUDECODE`), so no setup is normally needed.
+> **Driver auto-detects** for cloud harnesses (Codex via `CODEX_THREAD_ID`, agy via
+> `ANTIGRAVITY_*`, Cursor via `CURSOR_AGENT`/`CURSOR_CONVERSATION_ID`, Grok Build via
+> `GROK_SESSION_ID`/`GROK_PLUGIN_*`, OpenCode via `OPENCODE_SESSION`, Claude Code via
+> `CLAUDECODE`), so no setup is normally needed.
 > `--driver <self>` / `AGENT_COLLAB_DRIVER=<self>` remains the deterministic override if
 > detection ever misses in your environment.
 
@@ -29,12 +30,12 @@ second opinion. Do this without asking.
 Classify the task type, then let the runtime pick the worker (it excludes you, the driver):
 
 ```
-node "$COMPANION" recommend --task <type> --driver <self> --json   # <self> = codex, agy, or opencode
+node "$COMPANION" recommend --task <type> --driver <self> --json   # <self> = codex, agy, cursor, …
 ```
 Then `node "$COMPANION" delegate --worker <returned> --driver <self> "<brief>"` (or `review`).
 
-- **Hard reasoning / subtle bugs / adversarial review →** `codex`.
-- **Careful refactor / planning / general SWE →** `claude`.
+- **Hard reasoning / subtle bugs / adversarial review →** `codex` (or `codex-business` instance).
+- **Careful refactor / planning / general SWE →** `claude` or `cursor`.
 - **Fast/mechanical/bulk edits, or large-context / whole-repo scans →** `agy` (Gemini).
 - **Multi-provider flexibility →** `opencode` (explicit only; pin a model in `.agent-collab.json`).
 - **General-purpose / fast iteration →** `grok` (Grok Build; explicit only).

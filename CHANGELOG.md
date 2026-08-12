@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.12.0 - 2026-08-12
+
+- **New `cursor` harness** (driver + worker + reviewer) via the Cursor Agent CLI.
+  Binary resolution never falls back to bare `agent` (Grok Build collision);
+  prefers `AGENT_COLLAB_CURSOR_BIN` → `~/.cursor/bin/agent` → newest
+  `~/.local/share/cursor-agent` installs → `cursor-agent`.
+- Driver auto-detect: `CURSOR_AGENT` / `CURSOR_CONVERSATION_ID` (before Claude).
+- `recommend` includes Cursor for SWE/refactor/plan/mechanical routes; review and
+  second-opinion stay on calibrated reasoners (explicit `--worker cursor` still works).
+- Codex workers forward `AGENT_COLLAB_CODEX_HOME` / ambient `CODEX_HOME` (e.g.
+  `codex-business` / `~/.codex-business`) into the spawn env **and** cleanup.
+- Curated `recommend` routes no longer escape their worker list via generic
+  fallback (keeps Cursor out of auto review/second-opinion when preferred
+  workers are down).
+- Docs: `examples/CURSOR.md`, `skills/harness-prompting/references/cursor.md`.
+
 ## 0.11.0 - 2026-07-29
 
 - **Per-harness concurrency slots with visible queueing**: background jobs

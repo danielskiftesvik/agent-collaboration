@@ -143,16 +143,20 @@ set `AGENT_COLLAB_FALLBACK=off`); then the limit just surfaces for you to relay.
 
 ## By harness
 
-- **codex / claude / agy / grok / opencode** — emit structured findings/result JSON: present findings by
+- **codex / claude / cursor / agy / grok / opencode** — emit structured findings/result JSON: present findings by
   severity, preserve evidence boundaries.
 - **agy** — usable as reviewer and write-worker (default **Gemini Flash**;
   `AGENT_COLLAB_AGY_CLASS=Pro` for deeper passes). Its adapter pins model flags before
   the prompt and harvests patches from agy's internal worktree when needed.
 - **codex** — usable as reviewer and write-worker; strongest fit is hard reasoning,
   subtle bug analysis, and adversarial review. It can be slower and quiet for long
-  stretches, so the runtime gives it a wider idle budget.
+  stretches, so the runtime gives it a wider idle budget. Prefer `codex-business`
+  / `AGENT_COLLAB_CODEX_HOME` when a business Codex home is configured.
 - **claude** — usable as a write-worker; when Claude Code is also the driver, use the
   native Agent tool.
+- **cursor** — usable as reviewer and write-worker (Composer via Cursor Agent CLI).
+  When Cursor is also the driver, use the native Task tool. Never spawn bare `agent`
+  (may be Grok Build); pin `AGENT_COLLAB_CURSOR_BIN` or `~/.cursor/bin/agent`.
 - **opencode** — usable as reviewer and write-worker; multi-provider flexibility. Always
   explicit (never auto-recommended). No thread resume — retry is a full re-send. Model
   chosen per dispatch via `AGENT_COLLAB_OPENCODE_MODEL` env var or `.agent-collab.json` pin.

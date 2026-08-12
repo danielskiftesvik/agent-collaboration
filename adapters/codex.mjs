@@ -18,7 +18,13 @@ function scopedDataDir(artifactDir) {
 
 function scopedEnv(artifactDir) {
   const dataDir = scopedDataDir(artifactDir);
-  return dataDir ? { CLAUDE_PLUGIN_DATA: dataDir } : {};
+  const env = dataDir ? { CLAUDE_PLUGIN_DATA: dataDir } : {};
+  // Prefer explicit AGENT_COLLAB_CODEX_HOME (companion knob), else ambient
+  // CODEX_HOME (e.g. codex-business wrapper / instance overlay). Forward so
+  // codex-companion + nested `codex` see the intended home.
+  const home = process.env.AGENT_COLLAB_CODEX_HOME || process.env.CODEX_HOME;
+  if (home) env.CODEX_HOME = home;
+  return env;
 }
 
 // Model/effort resolution. Precedence: the explicit generic env wins (the "this
@@ -105,7 +111,9 @@ export default defineAdapter({
         "--workspace", workspace,
         "--plugin-data", dataDir
       ],
-      env: { CLAUDE_PLUGIN_DATA: dataDir }
+      // Same CODEX_HOME / CLAUDE_PLUGIN_DATA as task/retry so broker teardown
+      // targets the home the worker actually used.
+      env: scopedEnv(artifactDir)
     };
   },
   // codex-companion errors clearly when there's no thread to resume; detect that so

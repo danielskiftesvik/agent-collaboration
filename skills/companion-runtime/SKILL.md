@@ -16,7 +16,7 @@ generalization of codex-plugin-cc's `codex-cli-runtime` skill.
 ```
 setup [--json] [--gate on|off] [--sandbox on|off] [--retention-days <n>]
 doctor [--live] [--workers a,b] [--json]
-delegate --worker <agy|codex|claude|grok|opencode|instance-alias> [--driver <name>] [--role worker|reviewer] [--profile <name>] [--background] [--apply] [--timeout <s>] [--no-fallback] <brief>
+delegate --worker <agy|codex|claude|cursor|grok|opencode|instance-alias> [--driver <name>] [--role worker|reviewer] [--profile <name>] [--background] [--apply] [--timeout <s>] [--no-fallback] <brief>
 review  --worker <name> | --workers a,b [--focus <text>] [--profile <name>] [--background] [--no-fallback] [--json] <diff/context>
 adversarial-review --worker <name> | --workers a,b [--surface head|working-tree|diff] [--focus <text>] [--profile <name>] [--background] [--no-fallback] [--json] <diff/context>
 review-followup --job <prior-id> [--worker <name>] [--surface head|working-tree|diff] <focused diff/context>
@@ -53,16 +53,18 @@ would otherwise default to `claude`, so `--worker claude` would look like
 `driver === worker` and return a "use your own subagent" no-op **instead of
 actually delegating**. So a guessed driver always takes the cross-harness path.
 
-Auto-detection status (verified from live sessions) — all five cloud harnesses
+Auto-detection status (verified from live sessions) — cloud harnesses
 auto-detect, so `--driver`/`AGENT_COLLAB_DRIVER` is only an override:
 - **Codex** — `CODEX_THREAD_ID` (every session) / `CODEX_MANAGED_*`.
 - **agy** — `ANTIGRAVITY_AGENT` / `ANTIGRAVITY_CONVERSATION_ID` / `ANTIGRAVITY_PROJECT_ID`.
 - **Grok Build** — `GROK_SESSION_ID` / `GROK_PLUGIN_ROOT` / `GROK_PLUGIN_DATA`
   (`GROK_HOME` is install-time only and is **not** treated as a runtime signal).
+- **Cursor** — `CURSOR_AGENT` / `CURSOR_CONVERSATION_ID` (IDE agent sessions;
+  `CURSOR_SANDBOX` alone is **not** a driver signal).
 - **OpenCode** — `OPENCODE_SESSION` / `OPENCODE_SERVER`.
 - **Claude Code** — `CLAUDECODE` / `CLAUDE_PLUGIN_ROOT` (its slash commands also pass
-  `--driver claude`). Checked last among these, so an actively-running Codex/agy/grok/opencode
-  beats an inherited Claude env.
+  `--driver claude`). Checked after Cursor so an inherited Claude env inside
+  Cursor does not win; actively-running Codex/agy/grok still beat Claude.
 
 ## Roles & kinds
 
@@ -341,8 +343,11 @@ read `tasks/<jobId>/reports/<worker>.md`.
 - `AGENT_COLLAB_BREACH_EXEMPT_PATHS=a,b` — comma-separated real-checkout paths that should be warnings, not hard breaches (for intentional reports/scratch output).
 - `AGENT_COLLAB_BREACH_WARN_CONCURRENT=on` — opt in to downgrading ambiguous concurrent real-checkout edits to warnings. Off by default because they are indistinguishable from a worker escape.
 - `AGENT_COLLAB_CODEX_RESUME=off` — repair with a fresh re-send instead of resuming the codex thread (resume is on by default).
+- `AGENT_COLLAB_CODEX_HOME` — forward into the spawned codex worker's `CODEX_HOME` (e.g. `~/.codex-business`). Ambient `CODEX_HOME` is also forwarded.
 - `AGENT_COLLAB_ALLOW_INPLACE=on` — allow an UNISOLATED in-place run when a worktree can't be created (off by default → such a job is `blocked`, never run in the real cwd).
-- `AGENT_COLLAB_<AGY|CLAUDE|CODEX|GROK|OPENCODE>_BIN` — override a harness binary.
+- `AGENT_COLLAB_<AGY|CLAUDE|CODEX|CURSOR|GROK|OPENCODE>_BIN` — override a harness binary.
+- `AGENT_COLLAB_CURSOR_MODEL` / `_MODEL_REVIEW` — Cursor model pin (default `composer-2.5`). Prefer `~/.cursor/bin/agent`; never bare `agent` (may be Grok).
+- `CURSOR_API_KEY` — auth for unattended Cursor Agent CLI runs (or `~/.cursor/bin/agent login`).
 - `AGENT_COLLAB_GROK_MODEL` / `_MODEL_REVIEW` — Grok Build model pin (default `grok-4.5`).
 - `AGENT_COLLAB_GROK_EFFORT` / `_EFFORT_REVIEW` — Grok Build reasoning effort (`--effort`).
 - `AGENT_COLLAB_AGY_MODEL[_PRO|_FLASH]` — explicit agy model id (default: unset).

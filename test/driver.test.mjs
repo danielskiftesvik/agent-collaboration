@@ -105,3 +105,17 @@ test("detectDriver returns null when no harness signal is present", () => {
   assert.equal(detectDriver({ PATH: "/usr/bin" }), null);
   assert.equal(detectDriver({}), null);
 });
+
+test("detectDriver recognizes Cursor via CURSOR_AGENT / CURSOR_CONVERSATION_ID", () => {
+  assert.equal(detectDriver({ CURSOR_AGENT: "1" }), "cursor");
+  assert.equal(detectDriver({ CURSOR_CONVERSATION_ID: "e0a6afa6-3267-4cf0-95c6-b9a59f5c9668" }), "cursor");
+});
+
+test("Cursor beats an inherited Claude env; Codex still beats Cursor", () => {
+  assert.equal(detectDriver({ CLAUDECODE: "1", CURSOR_AGENT: "1" }), "cursor");
+  assert.equal(detectDriver({ CURSOR_AGENT: "1", CODEX_THREAD_ID: "x" }), "codex");
+});
+
+test("CURSOR_SANDBOX alone does not select cursor as driver", () => {
+  assert.equal(detectDriver({ CURSOR_SANDBOX: "seatbelt" }), null);
+});
