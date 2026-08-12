@@ -286,7 +286,17 @@ export function recommendWorker({ task, driver, available = [] }) {
       reason: `no worker-ready harness for this strict route (${entry.workers.join(", ")} unavailable)`
     };
   }
-  const other = available.find((w) => w !== driver && canWork(w) && !MODEL_PROFILES[w]?.explicitOnly);
+  // Curated routes (explicit TASK_ROUTING entries) must not escape their worker
+  // list via generic fallback — otherwise a harness deliberately omitted from
+  // e.g. review/second-opinion (Cursor until calibrated) can still be auto-picked
+  // when preferred workers are down. Default/unknown tasks keep the broad fallback.
+  const other = available.find(
+    (w) =>
+      w !== driver &&
+      canWork(w) &&
+      !MODEL_PROFILES[w]?.explicitOnly &&
+      (isDefaultRoute || entry.workers.includes(w))
+  );
   if (other) {
     return { mode: "cross", task, driver, worker: other, reason: "preferred workers unavailable; using the next worker-ready harness", profile: MODEL_PROFILES[other], alternatives: [] };
   }
@@ -299,13 +309,15 @@ export function recommendWorker({ task, driver, available = [] }) {
  * Code shell can INHERIT Claude's env vars, so the running harness's own signal
  * must win over an inherited one. Returns null when nothing matches.
  *
- * All three are CONFIRMED from live sessions:
+ * Confirmed from live sessions:
  *   - Codex: CODEX_THREAD_ID (every session) / CODEX_MANAGED_* (npm) / CODEX_SANDBOX.
  *   - agy:   ANTIGRAVITY_AGENT / ANTIGRAVITY_CONVERSATION_ID / ANTIGRAVITY_PROJECT_ID.
+ *   - Cursor: CURSOR_AGENT / CURSOR_CONVERSATION_ID (IDE agent sessions).
  *   - Claude Code: CLAUDECODE / CLAUDE_PLUGIN_ROOT (tiebreaker; its slash commands
  *     already pass --driver claude explicitly).
- * Claude is checked LAST so an actively-running Codex/agy beats an inherited
- * Claude env. `AGENT_COLLAB_DRIVER` remains the deterministic override.
+ * Cursor is checked before Claude so an inherited Claude env inside Cursor does
+ * not win; Claude stays late so an actively-running Codex/agy/grok/cursor beats
+ * an inherited Claude env. `AGENT_COLLAB_DRIVER` remains the deterministic override.
  */
 export function detectDriver(env = process.env) {
   if (env.CODEX_THREAD_ID || env.CODEX_MANAGED_BY_NPM || env.CODEX_MANAGED_PACKAGE_ROOT || env.CODEX_SANDBOX)
@@ -316,6 +328,11 @@ export function detectDriver(env = process.env) {
   // context). GROK_HOME is deliberately excluded — install path, not a runtime token.
   if (env.GROK_SESSION_ID || env.GROK_PLUGIN_ROOT || env.GROK_PLUGIN_DATA)
     return "grok";
+  // Cursor IDE agent: CURSOR_AGENT=1 and CURSOR_CONVERSATION_ID confirmed from a
+  // live Cursor chat session. CURSOR_SANDBOX alone is not enough (seatbelt wraps
+  // many child tools even when Cursor is not the driver).
+  if (env.CURSOR_AGENT || env.CURSOR_CONVERSATION_ID)
+    return "cursor";
   if (env.CLAUDECODE || env.CLAUDE_CODE || env.CLAUDE_PLUGIN_ROOT) return "claude";
   // OPENCODE_SESSION and OPENCODE_SERVER are per-run signals; OPENCODE_HOME is
   // deliberately excluded — it's a globally-set install path, not a runtime token,
@@ -359,6 +376,7 @@ const NATIVE_INSTRUCTION = {
   claude: "Use the Agent tool (a Claude Code subagent) instead of a cross-harness job.",
   agy: "Use Antigravity's invoke_subagent instead of a cross-harness job.",
   codex: "Use Codex's native subagent instead of a cross-harness job.",
+  cursor: "Use Cursor's Task tool / native subagent instead of a cross-harness job.",
   grok: "Use Grok Build's native subagent capabilities instead of a cross-harness job.",
   opencode: "Use opencode's built-in subagent/task capabilities instead of a cross-harness job."
 };

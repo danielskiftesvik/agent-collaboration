@@ -80,6 +80,23 @@ export const MODEL_PROFILES = {
       "--auto permission model is broader than other harnesses' per-role permission scoping"
     ]
   },
+  cursor: {
+    harness: "cursor",
+    model: "Composer 2.5 / Auto (Cursor Agent CLI, current)",
+    vendor: "Cursor",
+    canWrite: true,
+    strongerAt: [
+      "IDE-native software engineering & Composer agent loops",
+      "careful multi-file edits with strong repo context",
+      "general SWE / refactor when Cursor is already the driver",
+      "multimodal-in-IDE context (screenshots, diffs in the editor)"
+    ],
+    weakerAt: [
+      "not the adversarial-reasoning ceiling — prefer codex for hardest reviews",
+      "requires Cursor Agent CLI auth (CURSOR_API_KEY or `agent login`)",
+      "bare `agent` on PATH may be Grok Build — always pin AGENT_COLLAB_CURSOR_BIN or ~/.cursor/bin/agent"
+    ]
+  },
   grok: {
     harness: "grok",
     model: "Grok Build / grok-4.5 (xAI, current)",
@@ -135,27 +152,30 @@ export const WRITE_TASKS = new Set([
 
 // task type -> preferred worker order (+ the rationale shown in a recommendation).
 export const TASK_ROUTING = {
+  // Cursor stays out of automatic review / second-opinion routes until its
+  // reviewer model is pinned and calibrated (codex-business adversarial review,
+  // 2026-08-12). Explicit `--worker cursor` review still works.
   "second-opinion": { workers: ["codex", "claude"], why: "independent second opinion from the other strong reasoner" },
   "adversarial-review": { workers: ["codex", "claude", "agy"], why: "adversarial review — default to a strong reasoner (structured-review routing is under-benchmarked)" },
   review: { workers: ["codex", "claude", "agy"], why: "code review — default to a strong reasoner (under-benchmarked)" },
-  "hard-bug": { workers: ["claude", "codex", "agy"], why: "deep implementation debugging — Claude for disciplined edits, codex for hard reasoning, agy as fast fallback" },
-  architecture: { workers: ["claude", "codex", "agy"], why: "implementation planning — Claude for scope discipline, codex for deep analysis, agy as fast fallback" },
-  "design-tradeoff": { workers: ["claude", "codex", "agy"], why: "design work — Claude for scope discipline, codex for deep analysis, agy as fast fallback" },
-  refactor: { workers: ["claude", "agy", "codex"], why: "Claude for careful implementation; agy as fast fallback; codex remains available for harder cases" },
-  plan: { workers: ["claude", "codex"], why: "Claude's planning + scope discipline" },
-  "general-swe": { workers: ["claude", "agy", "codex"], why: "Claude for implementation; agy as fast fallback; codex remains available for harder cases" },
-  mechanical: { workers: ["agy", "claude", "codex"], why: "fast mechanical edits — agy first, with Claude/codex available as write-workers" },
-  "bulk-edit": { workers: ["agy", "claude", "codex"], why: "high-throughput edits — agy speed/cost first, with Claude/codex available as write-workers" },
-  "quick-fix": { workers: ["agy", "claude", "codex"], why: "quick fix — agy first, with Claude/codex available as write-workers" },
-  "large-context": { workers: ["agy", "codex"], why: "Gemini for big scans on cost; context-size advantage unconfirmed" },
-  "broad-scan": { workers: ["agy", "codex"], why: "Gemini for big scans on cost; context-size advantage unconfirmed" },
-  visual: { workers: ["agy"], why: "Gemini is the multimodal/visual specialist" },
-  multimodal: { workers: ["agy"], why: "Gemini is the multimodal/visual specialist" },
+  "hard-bug": { workers: ["claude", "codex", "cursor", "agy"], why: "deep implementation debugging — Claude for disciplined edits, codex for hard reasoning, cursor for IDE-native loops, agy as fast fallback" },
+  architecture: { workers: ["claude", "codex", "cursor", "agy"], why: "implementation planning — Claude for scope discipline, codex for deep analysis, cursor/agy as fallbacks" },
+  "design-tradeoff": { workers: ["claude", "codex", "cursor", "agy"], why: "design work — Claude for scope discipline, codex for deep analysis, cursor/agy as fallbacks" },
+  refactor: { workers: ["claude", "cursor", "agy", "codex"], why: "Claude for careful implementation; Cursor Composer next; agy as fast fallback; codex for harder cases" },
+  plan: { workers: ["claude", "cursor", "codex"], why: "Claude/Cursor planning + scope discipline; codex for deep analysis" },
+  "general-swe": { workers: ["claude", "cursor", "agy", "codex"], why: "Claude for implementation; Cursor Composer next; agy as fast fallback; codex remains available" },
+  mechanical: { workers: ["agy", "claude", "cursor", "codex"], why: "fast mechanical edits — agy first, with Claude/cursor/codex available as write-workers" },
+  "bulk-edit": { workers: ["agy", "claude", "cursor", "codex"], why: "high-throughput edits — agy speed/cost first, with Claude/cursor/codex available as write-workers" },
+  "quick-fix": { workers: ["agy", "claude", "cursor", "codex"], why: "quick fix — agy first, with Claude/cursor/codex available as write-workers" },
+  "large-context": { workers: ["agy", "codex", "cursor"], why: "Gemini for big scans on cost; context-size advantage unconfirmed" },
+  "broad-scan": { workers: ["agy", "codex", "cursor"], why: "Gemini for big scans on cost; context-size advantage unconfirmed" },
+  visual: { workers: ["agy", "cursor"], why: "Gemini multimodal specialist; Cursor for IDE-native visual context" },
+  multimodal: { workers: ["agy", "cursor"], why: "Gemini multimodal specialist; Cursor for IDE-native visual context" },
   "local-only": { workers: ["qwen"], strict: true, why: "task explicitly marked sensitive/local-only — never substitute a cloud harness" },
   "plan-execution": { workers: ["qwen"], strict: true, why: "brief is a pre-written implementation plan — a narrow enough job for a local model, and never substitute a cloud harness for an explicitly local-only route" }
 };
 
-export const DEFAULT_ROUTING = { workers: ["claude", "codex", "agy"], why: "general default" };
+export const DEFAULT_ROUTING = { workers: ["claude", "cursor", "codex", "agy"], why: "general default" };
 
 export const TASK_TYPES = Object.keys(TASK_ROUTING);
 

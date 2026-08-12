@@ -20,7 +20,7 @@ test("setup --json lists all adapters", () => {
   const r = cli(["setup", "--json"]);
   assert.equal(r.status, 0, r.stderr);
   const rows = JSON.parse(r.stdout);
-  assert.deepEqual(rows.map((x) => x.name).sort(), ["agy", "claude", "codex", "grok", "opencode", "qwen"]);
+  assert.deepEqual(rows.map((x) => x.name).sort(), ["agy", "claude", "codex", "cursor", "grok", "opencode", "qwen"]);
 });
 
 test("version --json reports runtime path and state dir", () => {
@@ -80,8 +80,9 @@ test("recommend --profiles --json dumps the model profiles", () => {
   const r = cli(["recommend", "--profiles", "--json"]);
   assert.equal(r.status, 0, r.stderr);
   const profiles = JSON.parse(r.stdout);
-  assert.deepEqual(Object.keys(profiles).sort(), ["agy", "claude", "codex", "grok", "opencode", "qwen"]);
+  assert.deepEqual(Object.keys(profiles).sort(), ["agy", "claude", "codex", "cursor", "grok", "opencode", "qwen"]);
   assert.ok(profiles.agy.strongerAt.length > 0);
+  assert.ok(profiles.cursor.canWrite);
   assert.ok(profiles.opencode.explicitOnly);
   assert.ok(profiles.grok.explicitOnly);
 });

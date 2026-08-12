@@ -18,9 +18,9 @@ function stubBin(body) {
   return sh;
 }
 
-test("registry exposes all harnesses including opencode", () => {
+test("registry exposes all harnesses including cursor", () => {
   const names = listAdapters().map((a) => a.name).sort();
-  assert.deepEqual(names, ["agy", "claude", "codex", "grok", "opencode", "qwen"]);
+  assert.deepEqual(names, ["agy", "claude", "codex", "cursor", "grok", "opencode", "qwen"]);
   assert.throws(() => getAdapter("nope"), /unknown adapter/i);
 });
 
@@ -205,6 +205,29 @@ test("codex buildCommand omits --model/--effort when no env is set (base config 
   assert.ok(!args.includes("--model"), "no --model without env");
   assert.ok(!args.includes("--effort"), "no --effort without env");
   assert.equal(args[args.length - 1], "x", "brief stays last");
+  delete process.env.AGENT_COLLAB_CODEX_COMPANION;
+});
+
+test("codex buildCommand forwards AGENT_COLLAB_CODEX_HOME / CODEX_HOME into the spawn env", () => {
+  process.env.AGENT_COLLAB_CODEX_COMPANION = "/stub/codex-companion.mjs";
+  process.env.AGENT_COLLAB_CODEX_HOME = "/tmp/codex-business-home";
+  const { env } = getAdapter("codex").buildCommand({ role: "reviewer", brief: "x", artifactDir: "/tmp/arts" });
+  assert.equal(env.CODEX_HOME, "/tmp/codex-business-home");
+  assert.ok(env.CLAUDE_PLUGIN_DATA);
+  const cleanup = getAdapter("codex").buildCleanupCommand({
+    workspace: "/tmp/wt",
+    artifactDir: "/tmp/arts"
+  });
+  assert.equal(cleanup.env.CODEX_HOME, "/tmp/codex-business-home");
+  assert.ok(cleanup.env.CLAUDE_PLUGIN_DATA);
+  delete process.env.AGENT_COLLAB_CODEX_HOME;
+  delete process.env.AGENT_COLLAB_CODEX_COMPANION;
+
+  process.env.AGENT_COLLAB_CODEX_COMPANION = "/stub/codex-companion.mjs";
+  process.env.CODEX_HOME = "/tmp/ambient-codex-home";
+  const ambient = getAdapter("codex").buildCommand({ role: "worker", brief: "x" });
+  assert.equal(ambient.env.CODEX_HOME, "/tmp/ambient-codex-home");
+  delete process.env.CODEX_HOME;
   delete process.env.AGENT_COLLAB_CODEX_COMPANION;
 });
 
@@ -417,3 +440,48 @@ test("qwen probe reports unavailable with a clear message when the local server 
 // could avoid it, but adds real timing/port-coordination complexity for one
 // assertion; the positive path is exercised implicitly by every live qwen run
 // throughout this project's development instead.
+
+test("cursor worker uses -p stream-json --force --trust --workspace; reviewer uses --mode ask", () => {
+  const prev = process.env.AGENT_COLLAB_CURSOR_BIN;
+  process.env.AGENT_COLLAB_CURSOR_BIN = "/tmp/fake-cursor-agent";
+  const cursor = getAdapter("cursor");
+  const worker = cursor.buildCommand({ role: "worker", brief: "do it", workspace: "/w" });
+  assert.equal(worker.command, "/tmp/fake-cursor-agent");
+  assert.ok(worker.args.includes("-p"));
+  assert.ok(worker.args.includes("--output-format") && worker.args.includes("stream-json"));
+  assert.ok(worker.args.includes("--force"));
+  assert.ok(worker.args.includes("--trust"));
+  assert.ok(worker.args.includes("--workspace") && worker.args.includes("/w"));
+  assert.ok(worker.args.includes("--sandbox") && worker.args.includes("disabled"));
+  assert.ok(!worker.args.includes("--mode"));
+  assert.ok(!worker.args.includes("--worktree"), "companion owns worktrees — never nest Cursor --worktree");
+
+  const reviewer = cursor.buildCommand({ role: "reviewer", brief: "review", workspace: "/w" });
+  assert.ok(reviewer.args.includes("--mode") && reviewer.args.includes("ask"));
+  assert.ok(!reviewer.args.includes("--force"));
+  if (prev === undefined) delete process.env.AGENT_COLLAB_CURSOR_BIN;
+  else process.env.AGENT_COLLAB_CURSOR_BIN = prev;
+});
+
+test("cursor parseOutput prefers the final stream-json result event", () => {
+  const cursor = getAdapter("cursor");
+  const stdout = [
+    '{"type":"assistant","message":{"content":[{"type":"text","text":"thinking"}]}}',
+    '{"type":"result","subtype":"success","is_error":false,"result":"{\\"verdict\\":\\"approve\\"}","session_id":"s1","duration_ms":12}'
+  ].join("\n");
+  const r = cursor.parseOutput({ stdout });
+  assert.equal(r.answerText, '{"verdict":"approve"}');
+  assert.equal(r.telemetry.sessionId, "s1");
+});
+
+test("cursor resolveCursorBin never falls back to bare agent", async () => {
+  const { resolveCursorBin } = await import("../adapters/cursor.mjs");
+  const resolved = resolveCursorBin({ AGENT_COLLAB_CURSOR_BIN: undefined, PATH: "/usr/bin" });
+  assert.notEqual(resolved, "agent");
+  assert.ok(
+    resolved === "cursor-agent" ||
+      resolved.includes(".cursor/bin/agent") ||
+      resolved.includes("cursor-agent"),
+    `unexpected resolution: ${resolved}`
+  );
+});

@@ -1,9 +1,9 @@
 # agent-collaboration
 
 Cross-harness agent collaboration. A driver harness — **Claude Code**, **Codex**,
-**Antigravity (`agy`)**, **Grok Build (`grok`)**, or **opencode** — can delegate a task to a **worker** or
+**Antigravity (`agy`)**, **Cursor**, **Grok Build (`grok`)**, or **opencode** — can delegate a task to a **worker** or
 **reviewer** running on another harness, then apply the result to the working tree.
-Any of the five can drive; any of the five can do the work. A sixth harness,
+Any of the six can drive; any of the six can do the work. A seventh harness,
 **`qwen`** (local, via a local LM Studio server), can also work or review — but only
 as an explicit, opt-in choice for sensitive/local-only tasks, never as a driver and
 never auto-selected.
@@ -64,6 +64,31 @@ node /path/to/agent-collaboration/scripts/agent-companion.mjs delegate --worker 
 ```
 
 Full Grok Build guide: [`docs/README.grok.md`](./docs/README.grok.md).
+
+### Cursor
+
+Cursor drives over the shell (no marketplace manifest yet). Install the **Cursor
+Agent CLI** so the companion can spawn workers/reviewers:
+
+```bash
+# Prefer a companion-safe install under ~/.cursor/bin — the official installer
+# also links ~/.local/bin/agent, which collides with Grok Build's `agent` binary.
+# After install, prefer:
+~/.cursor/bin/agent --version
+~/.cursor/bin/agent login   # or: export CURSOR_API_KEY=…
+```
+
+Then:
+
+```bash
+node /path/to/agent-collaboration/scripts/agent-companion.mjs setup
+node /path/to/agent-collaboration/scripts/agent-companion.mjs delegate \
+  --worker claude --driver cursor "…"
+```
+
+Driver auto-detects via `CURSOR_AGENT` / `CURSOR_CONVERSATION_ID`. Wiring template:
+[`examples/CURSOR.md`](./examples/CURSOR.md). Prompting guide:
+[`skills/harness-prompting/references/cursor.md`](./skills/harness-prompting/references/cursor.md).
 
 ### Opencode
 
@@ -145,7 +170,7 @@ Two delegation paths, chosen automatically:
 | `/agent-collab:setup [--gate on\|off] [--sandbox on\|off] [--retention-days n]` | Detect worker-ready harnesses; configure gates/sandbox and artifact retention (default 30 days; 0 disables) |
 | `/agent-collab:doctor [--live] [--workers a,b]` | Self-check: config + readiness, and (with `--live`) a review-cycle + worktree-isolation smoke per worker against a throwaway repo |
 | `/agent-collab:recommend --task <type> --driver <self>` (or `--profiles`) | Pick the strongest available worker for a task by underlying-model strength |
-| `/agent-collab:delegate --worker <agy\|claude\|codex\|grok\|opencode> [--background] [--apply] <brief>` | Run a cross-harness **worker** task (produces a patch); `--background` detaches and returns a jobId |
+| `/agent-collab:delegate --worker <agy\|claude\|codex\|cursor\|grok\|opencode> [--background] [--apply] <brief>` | Run a cross-harness **worker** task (produces a patch); `--background` detaches and returns a jobId |
 | `/agent-collab:review --worker <name> [--focus <text>] <diff>` | Read-only cross-harness **review** |
 | `/agent-collab:adversarial-review --worker <name> <diff>` | "Try to break it" review |
 | `/agent-collab:review-followup --job <prior-id> [--worker <name>] <focused diff/context>` | Recheck a focused fix against a prior review |
@@ -249,8 +274,9 @@ driver, `AGENTS.md` for Codex/agy drivers).
 
 | Harness | Reviewer | Worker | Notes |
 |---|---|---|---|
-| **codex** | ✓ | ✓ | Deepest review reasoning and hard-debug implementation; prefers XML-block prompts. Slower and often quiet — it has a wider idle budget and `.codex` log/session activity counts as progress |
+| **codex** | ✓ | ✓ | Deepest review reasoning and hard-debug implementation; prefers XML-block prompts. Slower and often quiet — it has a wider idle budget and `.codex` log/session activity counts as progress. Multi-home via `CODEX_HOME` / `AGENT_COLLAB_CODEX_HOME` / instance aliases (`codex-business`) |
 | **claude** | ✓ | ✓ | Use the native `Agent` tool when Claude Code is also the driver |
+| **cursor** | ✓ | ✓ | Cursor Agent CLI (`~/.cursor/bin/agent`, never bare `agent` — that may be Grok). Composer loops; use Cursor's Task / native subagent when Cursor is also the driver. Auth via `CURSOR_API_KEY` or `agent login`. Auto-routed for SWE/refactor; review/second-opinion stay explicit (`--worker cursor`) until calibrated |
 | **agy** (Gemini) | ✓ | ✓ | Fast reviewer and implementer (Flash by default; `AGENT_COLLAB_AGY_CLASS=Pro` for depth). The adapter pins model flags before the prompt and harvests patches from agy's internal worktree when needed |
 | **grok** (Grok Build / xAI) | ✓ | ✓ | [Grok Build](https://x.ai) CLI (`grok`) with default model `grok-4.5` (also `grok-build`). **Always explicit** — never auto-selected. Free-tier Grok Build usage limits apply. State under `~/.grok` |
 | **opencode** | ✓ | ✓ | Multi-provider harness (Anthropic, OpenAI, Google, DeepSeek, local, etc.). Model configured per dispatch via env var or pin. **Always explicit** — never auto-selected. No per-tool exclusion (`--exclude-tools`); write safety via worktree isolation + breach detection. Has no thread-resume mechanism; retry is always a full re-send |
@@ -393,7 +419,7 @@ They are checked before another isolated worktree is created.
 | Env var | Effect |
 |---|---|
 | `AGENT_COLLAB_DATA` | Out-of-repo state root (default: a per-plugin / tmp dir) |
-| `AGENT_COLLAB_DRIVER` | Override which harness is driving (`codex`/`agy`/`claude`/`grok`/`opencode`). Normally auto-detected (Codex `CODEX_THREAD_ID`, agy `ANTIGRAVITY_*`, Grok Build `GROK_SESSION_ID`/`GROK_PLUGIN_*`, OpenCode `OPENCODE_SESSION`, Claude Code `CLAUDECODE`); set only if detection misses |
+| `AGENT_COLLAB_DRIVER` | Override which harness is driving (`codex`/`agy`/`claude`/`cursor`/`grok`/`opencode`). Normally auto-detected (Codex `CODEX_THREAD_ID`, agy `ANTIGRAVITY_*`, Cursor `CURSOR_AGENT`/`CURSOR_CONVERSATION_ID`, Grok Build `GROK_SESSION_ID`/`GROK_PLUGIN_*`, OpenCode `OPENCODE_SESSION`, Claude Code `CLAUDECODE`); set only if detection misses |
 | `AGENT_COLLAB_SANDBOX` | OS sandbox: `on` (all non-codex) \| `off`. Default: opt-in for non-codex workers, **never codex** (it self-sandboxes). Degrades to unsandboxed if it can't be applied |
 | `AGENT_COLLAB_SANDBOX_STRICT=on` | Tighten the macOS profile to deny file-write by default (confine writes to work area + temp + harness state; blocks /tmp & other volumes). Default profile only blocks `$HOME`; Linux bwrap is already strict |
 | `AGENT_COLLAB_FALLBACK` | Auto-fallback policy: `off` \| `on` (rate-limit+auth+timeout+frozen+empty-output) \| comma-list of kinds. Default `rate-limit,timeout,frozen,empty-output` (transient; **auth is surfaced**, not routed around) |
@@ -409,8 +435,12 @@ They are checked before another isolated worktree is created.
 | `AGENT_COLLAB_AGY_MODEL` | Pin an exact agy model label (overrides the class) |
 | `.agent-collab.json` (repo root, tracked) | Standing per-worker+role model/effort pins read by every driver harness; env vars above always win per-dispatch. See skills/companion-runtime |
 | `AGENT_COLLAB_CODEX_MODEL` / `_EFFORT` | Per-dispatch codex model/effort override (e.g. escalate one boundary review to `gpt-5.6-sol` while base config stays on a cheaper tier). `_MODEL_REVIEW` / `_EFFORT_REVIEW` variants apply to reviewers only; generic wins. Unset = base `~/.codex/config.toml` governs |
+| `AGENT_COLLAB_CODEX_HOME` | Forward into the spawned codex worker's `CODEX_HOME` (e.g. `~/.codex-business`). Ambient `CODEX_HOME` is also forwarded. Prefer instance aliases for standing multi-home setups |
 | `AGENT_COLLAB_CLAUDE_MODEL` | Pin the model passed to `claude --model` (default: `default`, Claude Code's account-tier recommendation — never Fable/Haiku) |
 | `AGENT_COLLAB_CLAUDE_EFFORT` | Claude Code reasoning effort (`low`, `medium`, `high`, `xhigh`, `max` — passed as `--effort`). `_EFFORT_REVIEW` variant applies to reviewers only; generic wins |
+| `AGENT_COLLAB_CURSOR_BIN` | Override the Cursor Agent CLI path (default resolution: env → `~/.cursor/bin/agent` → newest `~/.local/share/cursor-agent/versions/*/cursor-agent` → `cursor-agent`. **Never** bare `agent`) |
+| `AGENT_COLLAB_CURSOR_MODEL` | Per-dispatch Cursor model override (default: `composer-2.5`). `_MODEL_REVIEW` variant applies to reviewers only; generic wins |
+| `CURSOR_API_KEY` | Auth for unattended Cursor Agent CLI runs (alternative: `~/.cursor/bin/agent login`) |
 | `AGENT_COLLAB_GROK_BIN` | Override the Grok Build (`grok`) binary path |
 | `AGENT_COLLAB_GROK_MODEL` | Per-dispatch Grok Build model override (default: `grok-4.5`; also `grok-build`). `_MODEL_REVIEW` variant applies to reviewers only; generic wins |
 | `AGENT_COLLAB_GROK_EFFORT` | Grok Build reasoning effort (`none`…`max` — passed as `--effort`). `_EFFORT_REVIEW` variant applies to reviewers only; generic wins |
@@ -422,7 +452,7 @@ They are checked before another isolated worktree is created.
 | `AGENT_COLLAB_QWEN_BASE_URL` | Override the local LM Studio endpoint (default `http://127.0.0.1:1234/v1`). Must be loopback (`127.0.0.1`/`localhost`/`::1`) — a non-loopback value is refused unless `AGENT_COLLAB_QWEN_ALLOW_REMOTE=on` |
 | `AGENT_COLLAB_QWEN_API_KEY` | Override the local endpoint's API key (default `lm-studio` — LM Studio doesn't validate it, it just needs to be present) |
 | `AGENT_COLLAB_QWEN_ALLOW_REMOTE=on` | Explicitly permit a non-loopback `AGENT_COLLAB_QWEN_BASE_URL`. Off by default — qwen's entire purpose is keeping a job off the cloud, so a remote endpoint must be opt-in, never silently accepted |
-| `AGENT_COLLAB_<AGY\|CLAUDE\|CODEX\|GROK\|OPENCODE\|QWEN>_BIN` | Override a harness binary path |
+| `AGENT_COLLAB_<AGY\|CLAUDE\|CODEX\|CURSOR\|GROK\|OPENCODE\|QWEN>_BIN` | Override a harness binary path |
 
 Plus `setup --gate on|off` (opt-in stop-time review gate), `setup --sandbox on|off`, and
 `setup --retention-days <n>` (30 by default; 0 disables artifact expiry).
@@ -457,7 +487,7 @@ npm test        # node --test — the full suite
 ```
 
 Layout: `scripts/agent-companion.mjs` (CLI/dispatch) · `core/` (state, jobs, worktree,
-heartbeat, git, prompts, schema, dispatch) · `adapters/` (`claude`/`codex`/`agy`/`grok`/`opencode`/`qwen`) ·
+heartbeat, git, prompts, schema, dispatch) · `adapters/` (`claude`/`codex`/`agy`/`cursor`/`grok`/`opencode`/`qwen`) ·
 `prompts/` (review templates) · `schemas/` (artifact contracts) ·
 `commands/` `hooks/` `skills/` `.claude-plugin/` `.codex-plugin/` (harness surface).
 
