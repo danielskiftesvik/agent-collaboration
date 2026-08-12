@@ -5,8 +5,11 @@
 
   Prerequisites:
   - Cursor Agent CLI at ~/.cursor/bin/agent (do NOT rely on bare `agent` — that
-    may be Grok Build).
-  - CURSOR_API_KEY or `~/.cursor/bin/agent login`.
+    may be Grok Build). brew: `brew install --cask cursor-cli` then
+    `ln -sfn "$(command -v cursor-agent)" ~/.cursor/bin/agent`.
+  - CURSOR_API_KEY or `~/.cursor/bin/agent login` — without this, other drivers
+    see `cursor ⚠ interactive-only` and refuse unattended delegate.
+  - Confirm with: `node "$COMPANION" setup` → `cursor ✓ worker-ready`.
   - Optional: ~/.agent-collaboration/config.json with a codex-business instance
     (CODEX_HOME=~/.codex-business) if you want reviews on a business Codex home.
 -->

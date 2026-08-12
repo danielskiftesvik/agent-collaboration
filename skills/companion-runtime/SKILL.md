@@ -413,6 +413,20 @@ network-enabled permissions** (Codex will offer to escalate; or pre-approve
 unattended (e.g. `agy --dangerously-skip-permissions`) don't need this. This is
 expected: a sandbox *should* gate "spawn a process that calls the internet."
 
+### Cursor worker shows `interactive-only`
+`setup` marks cursor `⚠ interactive-only` when the Agent CLI is present but not
+usable unattended. Usual causes:
+
+1. **Not logged in** — run `~/.cursor/bin/agent login` once, or set `CURSOR_API_KEY`.
+   Do **not** use bare `agent` (often Grok Build on machines that have both).
+2. **Wrong binary path** — prefer `~/.cursor/bin/agent` or `AGENT_COLLAB_CURSOR_BIN`;
+   brew installs as `cursor-agent` (`ln -sfn "$(command -v cursor-agent)" ~/.cursor/bin/agent`).
+3. **Driver sandbox** — Codex (default shell sandbox) can hide host login state so
+   `agent status` fails inside the sandbox. Re-run `setup` / `delegate --worker cursor`
+   with escalated/network permissions, or inject `CURSOR_API_KEY` into the spawn env.
+
+Until setup prints `cursor ✓ worker-ready`, `delegate --worker cursor` will refuse.
+
 ### Codex driver: third-party data-egress can be refused
 Separately from the shell sandbox, Codex has a **data-egress / approval** policy that can
 refuse to send your **private repo content to a third-party model** — observed: `codex` →

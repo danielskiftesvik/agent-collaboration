@@ -8,6 +8,11 @@
   NOTE: when driving from a sandboxed harness (Codex), run the companion with escalated /
   network-enabled permissions — it spawns a worker that calls an external API.
 
+  NOTE (Codex → Cursor): Cursor must be worker-ready first (`setup` shows
+  `cursor ✓ worker-ready`). That needs `~/.cursor/bin/agent login` or CURSOR_API_KEY
+  on the host, plus escalated/network shell so the sandbox does not hide auth
+  (otherwise Cursor looks interactive-only even when logged in outside Codex).
+
   NOTE (Codex driver): Codex's data-egress policy may refuse to send private repo content to a
   THIRD-PARTY model — observed: codex->agy (Gemini) blocked even after approval; codex->claude
   runs fine. Authorize it in Codex's config, run the companion yourself, or just use claude as

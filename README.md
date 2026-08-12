@@ -71,20 +71,45 @@ Cursor drives over the shell (no marketplace manifest yet). Install the **Cursor
 Agent CLI** so the companion can spawn workers/reviewers:
 
 ```bash
-# Prefer a companion-safe install under ~/.cursor/bin — the official installer
-# also links ~/.local/bin/agent, which collides with Grok Build's `agent` binary.
-# After install, prefer:
+# Install (pick one)
+curl https://cursor.com/install -fsS | bash          # official
+# or: brew install --cask cursor-cli                 # Homebrew → cursor-agent
+
+# Companion-safe path — never rely on bare `agent` (that may be Grok Build)
+mkdir -p ~/.cursor/bin
+# official installer often places the binary under ~/.local/share/cursor-agent;
+# brew links cursor-agent on PATH. Symlink whichever you installed:
+ln -sfn "$(command -v cursor-agent)" ~/.cursor/bin/agent   # brew
+# or point at the versioned binary the official installer dropped
+
 ~/.cursor/bin/agent --version
-~/.cursor/bin/agent login   # or: export CURSOR_API_KEY=…
+~/.cursor/bin/agent login    # required once — or: export CURSOR_API_KEY=…
+```
+
+**Auth is mandatory for unattended use.** Install alone is not enough: until
+login/`CURSOR_API_KEY`, `setup` reports `cursor ⚠ interactive-only` and
+`delegate --worker cursor` refuses. Confirm:
+
+```bash
+node /path/to/agent-collaboration/scripts/agent-companion.mjs setup
+# expect: cursor  ✓ worker-ready (…)
 ```
 
 Then:
 
 ```bash
-node /path/to/agent-collaboration/scripts/agent-companion.mjs setup
 node /path/to/agent-collaboration/scripts/agent-companion.mjs delegate \
   --worker claude --driver cursor "…"
+# or, from another driver (e.g. Codex), with escalated/network shell:
+node /path/to/agent-collaboration/scripts/agent-companion.mjs delegate \
+  --worker cursor --driver codex "…"
 ```
+
+> **Codex → Cursor:** run the companion with **escalated / network-enabled**
+> permissions. A default Codex sandbox can make `agent status` look logged-out
+> even when the host session is authenticated, which surfaces the same
+> `interactive-only` mark. Prefer `CURSOR_API_KEY` in the environment if login
+> state is not visible inside the sandbox.
 
 Driver auto-detects via `CURSOR_AGENT` / `CURSOR_CONVERSATION_ID`. Wiring template:
 [`examples/CURSOR.md`](./examples/CURSOR.md). Prompting guide:
