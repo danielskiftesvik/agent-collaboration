@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.12.1 - 2026-08-13
+
+- **Fix grok false-positive `INCOMPLETE RUN` banner**: normalize `stopReason`
+  before comparing so both CLI spellings (`EndTurn` and `end_turn`) count as a
+  clean finish; keep `Cancelled` (and other non-end_turn reasons) as incomplete.
+  Telemetry now also records `stopReasonNormalized`.
+
 ## 0.12.0 - 2026-08-12
 
 - **New `cursor` harness** (driver + worker + reviewer) via the Cursor Agent CLI.

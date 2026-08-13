@@ -1,6 +1,6 @@
 {
   "name": "agent-collaboration",
-  "version": "0.12.0",
+  "version": "0.12.1",
   "description": "Cross-harness agent collaboration: Claude Code, Codex, Antigravity, Cursor, Grok Build, or OpenCode can drive workers/reviewers on the others.",
   "type": "module",
   "main": ".opencode/plugins/agent-collaboration.js",

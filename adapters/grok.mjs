@@ -13,6 +13,19 @@ import { resolvePin } from "../core/pins.mjs";
 
 const bin = () => process.env.AGENT_COLLAB_GROK_BIN || "grok";
 
+/** Normalize CLI stopReason spellings ("EndTurn" | "end_turn" | "end-turn"). */
+export function normalizeStopReason(stopReason) {
+  if (stopReason == null || stopReason === "") return null;
+  return String(stopReason).toLowerCase().replace(/[_-\s]/g, "");
+}
+
+/** True when telemetry indicates an abnormal / truncated stop. */
+export function isIncompleteStopReason(stopReason) {
+  const norm = normalizeStopReason(stopReason);
+  if (!norm) return false;
+  return norm !== "endturn";
+}
+
 // Env wins (per-dispatch lever) > role-scoped MODEL_REVIEW > repo pin > default.
 const model = (role, workspace, profile) =>
   process.env.AGENT_COLLAB_GROK_MODEL ||
@@ -125,20 +138,26 @@ export default defineAdapter({
     // success from `changed && patchApplies` — so a cancelled run whose PARTIAL
     // patch happens to apply reads as a clean success. Surface it in the report
     // itself, which is the artifact the driver actually reads.
+    //
+    // Success stop reasons: CLI has used both CamelCase "EndTurn" and snake_case
+    // "end_turn". Normalize before comparing so casing/underscore drift does not
+    // false-positive every clean finish as incomplete.
     const stopReason = telemetry?.stopReason ?? null;
-    const incomplete = !!stopReason && stopReason !== "EndTurn";
+    const incomplete = isIncompleteStopReason(stopReason);
     let finalText = answerText || text.trim();
     if (incomplete) {
       finalText =
         `⚠️ INCOMPLETE RUN — grok stopped with stopReason "${stopReason}" ` +
-        `(not "EndTurn"), so this work may be partially done. Any patch it produced ` +
+        `(not a normal end_turn), so this work may be partially done. Any patch it produced ` +
         `may apply cleanly while still missing steps — verify against the brief ` +
         `before trusting it.\n\n---\n\n${finalText}`;
     }
     return {
       answerText: finalText,
       structured: null,
-      telemetry,
+      telemetry: telemetry
+        ? { ...telemetry, stopReason, stopReasonNormalized: normalizeStopReason(stopReason) }
+        : telemetry,
       error,
       ...(incomplete ? { incomplete: true } : {})
     };

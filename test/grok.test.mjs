@@ -163,6 +163,35 @@ test("parseOutput does not flag a normal EndTurn run as incomplete", () => {
   const out = grok.parseOutput({ stdout });
   assert.notEqual(out.incomplete, true);
   assert.equal(out.answerText, "All done.");
+  assert.equal(out.telemetry.stopReason, "EndTurn");
+  assert.equal(out.telemetry.stopReasonNormalized, "endturn");
+});
+
+test("parseOutput does not flag snake_case end_turn as incomplete (current Grok CLI)", () => {
+  // Observed 2026-08-13: CLI reports clean termination as "end_turn"; the old
+  // strict === "EndTurn" check false-positived every successful run.
+  const stdout = [
+    '{"type":"text","data":"Review complete."}',
+    '{"type":"end","stopReason":"end_turn","sessionId":"s1","num_turns":5}'
+  ].join("\n");
+  const out = grok.parseOutput({ stdout });
+  assert.notEqual(out.incomplete, true);
+  assert.equal(out.answerText, "Review complete.");
+  assert.equal(out.telemetry.stopReason, "end_turn");
+  assert.equal(out.telemetry.stopReasonNormalized, "endturn");
+  assert.doesNotMatch(out.answerText, /INCOMPLETE/);
+});
+
+test("normalizeStopReason treats EndTurn / end_turn / end-turn as the same success token", async () => {
+  const { normalizeStopReason, isIncompleteStopReason } = await import("../adapters/grok.mjs");
+  assert.equal(normalizeStopReason("EndTurn"), "endturn");
+  assert.equal(normalizeStopReason("end_turn"), "endturn");
+  assert.equal(normalizeStopReason("end-turn"), "endturn");
+  assert.equal(isIncompleteStopReason("EndTurn"), false);
+  assert.equal(isIncompleteStopReason("end_turn"), false);
+  assert.equal(isIncompleteStopReason("Cancelled"), true);
+  assert.equal(isIncompleteStopReason("cancelled"), true);
+  assert.equal(isIncompleteStopReason(null), false);
 });
 
 test("parseOutput returns error from streaming-json error events", () => {
