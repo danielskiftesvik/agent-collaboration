@@ -10,7 +10,7 @@ import { fileURLToPath } from "node:url";
 
 import { getAdapter, listAdapters } from "../adapters/index.mjs";
 import { resolveStateDir, appendJob, updateJob, getJob, loadState, isTerminalStatus } from "./state.mjs";
-import { createWorktree, removeWorktree, resolveWorkspaceRoot, canonical } from "./workspace.mjs";
+import { createWorktree, removeWorktree, resolveWorkspaceRoot, canonical, listWorktrees } from "./workspace.mjs";
 import { headRef, captureWorkingDiff, captureWorkingTreeSnapshot, applyPatch, checkPatchApplies, workingTreeStatus, workingTreeDigest, newStatusPaths, stageDiffIntoWorktree, diffPaths, looksLikeDiff, extractUnifiedDiff } from "./git.mjs";
 import { run } from "./process.mjs";
 import { isPidAlive, isStalled, touchHeartbeat } from "./heartbeat.mjs";
@@ -664,8 +664,29 @@ export function runWorkerSync(cwd, opts) {
     // input is composed separately (see reviewInput below), not from raw `brief`.
     if (brief) {
       const root = resolveWorkspaceRoot(cwd);
-      const forbidden = [...new Set([cwd, canonical(cwd), root, canonical(root)])];
-      const leaked = forbidden.find((p) => p && brief.includes(p));
+      // Every worktree of this repo is a live, shared checkout — not just the
+      // one the controller happens to be sitting in. Without this, briefing a
+      // SIBLING worktree is just as dangerous and even less visible: breach
+      // detection only watches `cwd`, so a write into a different worktree
+      // leaves no trace there either.
+      const bases = [...new Set([cwd, canonical(cwd), root, canonical(root), ...listWorktrees(root)])].filter(Boolean);
+      // Home-relative shorthand (`~/repo`) names the same live path as its
+      // absolute form but won't literally appear in `bases`.
+      const home = os.homedir();
+      const forbidden = new Set(bases);
+      for (const b of bases) {
+        if (home && b.startsWith(home)) forbidden.add(`~${b.slice(home.length)}`);
+      }
+      // A bare substring match false-positives on any path that merely shares
+      // a prefix (cwd `/opt/app` matching inside `/opt/app-shared` or
+      // `/opt/apps-old/file.js`) — require what follows the match to actually
+      // end the path: end of string, whitespace, sentence punctuation, a
+      // quote/bracket, or `/` (continuing deeper into the same live path).
+      const leaked = [...forbidden].find((p) => {
+        if (!p) return false;
+        const escaped = p.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+        return new RegExp(`${escaped}(?:$|[\\s'"\`)\\],;:.!?/])`).test(brief);
+      });
       if (leaked) {
         if (role === "worker") {
           return blocked(

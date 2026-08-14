@@ -73,6 +73,23 @@ export function isManagedWorktree(cwd, candidate) {
   return target !== root && path.dirname(target) === root;
 }
 
+/** Every worktree (main checkout + every linked one) registered for this repo. */
+export function listWorktrees(root) {
+  try {
+    const out = execFileSync("git", ["worktree", "list", "--porcelain"], {
+      cwd: root,
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "ignore"]
+    });
+    return out
+      .split("\n")
+      .filter((l) => l.startsWith("worktree "))
+      .map((l) => canonical(l.slice("worktree ".length).trim()));
+  } catch {
+    return [];
+  }
+}
+
 /** Prune stale linked-worktree administration against the owning repository. */
 export function pruneWorktrees(cwd) {
   const root = resolveWorkspaceRoot(cwd);

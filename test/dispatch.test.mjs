@@ -154,6 +154,49 @@ test("runWorkerSync does not false-positive on an ordinary brief with no live-pa
   delete process.env.AGENT_COLLAB_AGY_BIN;
 });
 
+test("runWorkerSync does not false-positive on a path that merely shares a prefix with cwd (#807)", () => {
+  isolateStateRoot();
+  const repo = makeRepo();
+  process.env.AGENT_COLLAB_AGY_BIN = stubBin(WRITE_STUB);
+
+  // A bare substring check on `repo` (e.g. ".../ac-repo-abc123") would wrongly
+  // match inside an unrelated sibling like ".../ac-repo-abc123-shared/File.md".
+  const res = runWorkerSync(repo, {
+    driver: "claude",
+    worker: "agy",
+    role: "worker",
+    brief: `Make a file. See ${repo}-shared/File.md for the related change in a different project.`
+  });
+
+  assert.equal(res.status, "completed");
+  assert.notEqual(res.failureKind, "brief-path-leak");
+
+  delete process.env.AGENT_COLLAB_AGY_BIN;
+});
+
+test("runWorkerSync blocks a write-worker brief that names a SIBLING worktree, not just the one it's dispatched from (#807)", () => {
+  isolateStateRoot();
+  const repo = makeRepo();
+  const dispatchFrom = addWorktree(repo, "current-task");
+  const otherWorktree = addWorktree(repo, "someone-elses-task");
+  process.env.AGENT_COLLAB_AGY_BIN = stubBin(WRITE_STUB);
+
+  // Dispatched from ITS OWN worktree, but the brief names a DIFFERENT live
+  // worktree of the same repo — still a live, shared checkout, and breach
+  // detection (which only watches `cwd`) would never see a write landing there.
+  const res = runWorkerSync(dispatchFrom, {
+    driver: "claude",
+    worker: "agy",
+    role: "worker",
+    brief: `Go work in ${otherWorktree} instead.`
+  });
+
+  assert.equal(res.status, "blocked");
+  assert.equal(res.failureKind, "brief-path-leak");
+
+  delete process.env.AGENT_COLLAB_AGY_BIN;
+});
+
 test("runWorkerSync warns but does not block a reviewer brief that names the live path (#807)", () => {
   isolateStateRoot();
   const repo = makeRepo();
