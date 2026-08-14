@@ -1030,12 +1030,17 @@ export function runWorkerSync(cwd, opts) {
   const rawEscapedPaths = worktree ? newStatusPaths(breachBefore, workingTreeStatus(cwd)) : [];
   let escapedPaths = rawEscapedPaths;
   let breachWarning;
+  // headAfter/headMoved are read unconditionally, not just when rawEscapedPaths is
+  // non-empty: a worker that commits directly onto the live checkout leaves the tree
+  // CLEAN (nothing dirty for newStatusPaths to see), so gating this on
+  // rawEscapedPaths.length let a clean-tree commit escape breach detection entirely
+  // (#821).
+  const headAfter = worktree ? headRef(cwd) : null;
+  const headMoved = !!(breachHeadBefore && headAfter && breachHeadBefore !== headAfter);
   if (rawEscapedPaths.length) {
     const exemptions = splitPathList([process.env.AGENT_COLLAB_BREACH_EXEMPT_PATHS, opts.breachExemptPaths]);
     const exempted = rawEscapedPaths.filter((p) => isExemptPath(p, exemptions));
     escapedPaths = rawEscapedPaths.filter((p) => !isExemptPath(p, exemptions));
-    const headAfter = worktree ? headRef(cwd) : null;
-    const headMoved = !!(breachHeadBefore && headAfter && breachHeadBefore !== headAfter);
     const patched = pathSet(patchPaths);
     const disjointFromPatch = escapedPaths.length > 0 && escapedPaths.every((p) => !patched.has(p));
     const cleanArtifact =
@@ -1049,6 +1054,13 @@ export function runWorkerSync(cwd, opts) {
       escapedPaths = [];
     }
     if (warningPaths.length) breachWarning = { escapedPaths: warningPaths, headMoved };
+  } else if (headMoved) {
+    // Clean tree, but HEAD moved: the worker committed directly onto the live
+    // checkout instead of leaving dirty files. No corresponding legitimate driver-
+    // side action explains a moved HEAD here, so this is always a hard breach —
+    // never eligible for the warnConcurrent downgrade (that path exists for merely-
+    // dirty files, a much weaker signal than a moved HEAD with nothing to show for it).
+    escapedPaths = [`HEAD moved ${breachHeadBefore} -> ${headAfter} with a clean working tree (worker likely committed directly)`];
   }
 
   let reportText = answerText;

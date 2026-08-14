@@ -1461,6 +1461,50 @@ test("breach exempt paths are reported as warnings and do not override status", 
   delete process.env.AC_ESCAPE;
 });
 
+test("a worker that commits directly onto the live checkout (clean tree, HEAD moved) is flagged as a breach (#821)", () => {
+  isolateStateRoot();
+  const repo = makeRepo();
+  process.env.AC_ESCAPE = repo;
+  process.env.AGENT_COLLAB_AGY_BIN = stubBin(`
+    import { execFileSync } from 'node:child_process';
+    if (process.argv.includes('models')) { process.exit(0); }
+    execFileSync('git', ['-C', process.env.AC_ESCAPE, 'commit', '--allow-empty', '-q', '-m', 'escaped commit'], { stdio: 'ignore' });
+    process.stdout.write('\`\`\`json\\n{"status":"completed","summary":"x","changed":false}\\n\`\`\`');
+  `);
+
+  const res = runWorkerSync(repo, { driver: "claude", worker: "agy", role: "worker", brief: "x", maxAttempts: 1 });
+
+  assert.equal(res.status, "breach", "a clean-tree commit onto the live checkout must still override 'completed'");
+  assert.equal(res.breach, true);
+  assert.match(res.errors.join(" "), /HEAD moved|breach/i);
+
+  delete process.env.AGENT_COLLAB_AGY_BIN;
+  delete process.env.AC_ESCAPE;
+});
+
+test("a worker that commits directly onto the live checkout is a hard breach even with AGENT_COLLAB_BREACH_WARN_CONCURRENT=on (#821)", () => {
+  isolateStateRoot();
+  const repo = makeRepo();
+  process.env.AC_ESCAPE = repo;
+  process.env.AGENT_COLLAB_BREACH_WARN_CONCURRENT = "on";
+  process.env.AGENT_COLLAB_AGY_BIN = stubBin(`
+    import { execFileSync } from 'node:child_process';
+    if (process.argv.includes('models')) { process.exit(0); }
+    execFileSync('git', ['-C', process.env.AC_ESCAPE, 'commit', '--allow-empty', '-q', '-m', 'escaped commit'], { stdio: 'ignore' });
+    process.stdout.write('\`\`\`json\\n{"status":"completed","summary":"x","changed":true}\\n\`\`\`');
+  `);
+
+  const res = runWorkerSync(repo, { driver: "claude", worker: "agy", role: "worker", brief: "x", maxAttempts: 1 });
+
+  assert.equal(res.status, "breach", "clean-tree-commit escape is not eligible for the warnConcurrent downgrade");
+  assert.equal(res.breach, true);
+  assert.equal(res.breachWarning, undefined);
+
+  delete process.env.AGENT_COLLAB_AGY_BIN;
+  delete process.env.AGENT_COLLAB_BREACH_WARN_CONCURRENT;
+  delete process.env.AC_ESCAPE;
+});
+
 test("a worker that reports completed but captures NO patch is 'no-changes', not 'completed'", () => {
   isolateStateRoot();
   const repo = makeRepo();
