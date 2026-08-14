@@ -21,7 +21,7 @@ import {
   defaultIdleMs,
   applyResult
 } from "../core/dispatch.mjs";
-import { appendJob, updateJob, getJob } from "../core/state.mjs";
+import { appendJob, updateJob, getJob, resolveStateDir } from "../core/state.mjs";
 import { MODEL_PROFILES } from "../core/model-profiles.mjs";
 import { headRef } from "../core/git.mjs";
 import { createWorktree, resolveWorkspaceRoot } from "../core/workspace.mjs";
@@ -1503,6 +1503,81 @@ test("a worker that commits directly onto the live checkout is a hard breach eve
   delete process.env.AGENT_COLLAB_AGY_BIN;
   delete process.env.AGENT_COLLAB_BREACH_WARN_CONCURRENT;
   delete process.env.AC_ESCAPE;
+});
+
+test("a worker that commits AND leaves a disjoint dirty file is still a hard breach under AGENT_COLLAB_BREACH_WARN_CONCURRENT=on (#821 review finding)", () => {
+  isolateStateRoot();
+  const repo = makeRepo();
+  process.env.AC_ESCAPE = repo;
+  process.env.AGENT_COLLAB_BREACH_WARN_CONCURRENT = "on";
+  process.env.AGENT_COLLAB_AGY_BIN = stubBin(`
+    import fs from 'node:fs';
+    import path from 'node:path';
+    import { execFileSync } from 'node:child_process';
+    if (process.argv.includes('models')) { process.exit(0); }
+    execFileSync('git', ['-C', process.env.AC_ESCAPE, 'commit', '--allow-empty', '-q', '-m', 'escaped commit'], { stdio: 'ignore' });
+    fs.writeFileSync(path.join(process.env.AC_ESCAPE, 'unrelated-dirty.txt'), 'not part of the patch\\n');
+    fs.writeFileSync('worker.txt', 'patch\\n');
+    process.stdout.write('\`\`\`json\\n{"status":"completed","summary":"ok","changed":true}\\n\`\`\`');
+  `);
+
+  const res = runWorkerSync(repo, { driver: "claude", worker: "agy", role: "worker", brief: "x", maxAttempts: 1 });
+
+  // Before the fix, headMoved being true could satisfy `(headMoved || disjointFromPatch)`
+  // and downgrade this to a breachWarning — exactly because it's disjoint from the patch.
+  // A moved HEAD must never be eligible for the downgrade, regardless of what else escaped.
+  assert.equal(res.status, "breach", "a moved HEAD must never be downgraded, even alongside a disjoint dirty file");
+  assert.equal(res.breach, true);
+  assert.equal(res.breachWarning, undefined);
+  assert.ok(res.escapedPaths.some((p) => /unrelated-dirty\.txt/.test(p)));
+
+  delete process.env.AGENT_COLLAB_AGY_BIN;
+  delete process.env.AGENT_COLLAB_BREACH_WARN_CONCURRENT;
+  delete process.env.AC_ESCAPE;
+});
+
+test("a queued background job re-snapshots the breach baseline after acquiring its slot, not at launch time (#821 review finding)", () => {
+  isolateStateRoot();
+  const repo = makeRepo();
+  process.env.AGENT_COLLAB_MAX_CONCURRENT_AGY = "1";
+  process.env.AGENT_COLLAB_AGY_BIN = stubBin(`
+    if (process.argv.includes('models')) { process.exit(0); }
+    process.stdout.write('\`\`\`json\\n{"status":"completed","summary":"x","changed":false}\\n\`\`\`');
+  `);
+
+  // Pre-occupy the only agy slot with a live holder (this process's own pid, so
+  // acquireHarnessSlot's dead-pid reclaim never kicks in), so the background job below
+  // must queue rather than run immediately.
+  const slotDir = path.join(resolveStateDir(repo), "slots", "agy", "slot-1");
+  fs.mkdirSync(slotDir, { recursive: true });
+  fs.writeFileSync(path.join(slotDir, "pid"), String(process.pid));
+  fs.writeFileSync(path.join(slotDir, "job"), "test-holder");
+
+  const launched = launchBackground(repo, { driver: "claude", worker: "agy", role: "worker", brief: "x", maxAttempts: 1 });
+
+  // Deterministic sync point: acquireHarnessSlot sets status "queued" the moment its
+  // first attempt finds every slot busy — wait for that rather than a blind sleep.
+  const deadline = Date.now() + 10000;
+  while (getJob(repo, launched.jobId)?.status !== "queued" && Date.now() < deadline) {
+    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 50);
+  }
+  assert.equal(getJob(repo, launched.jobId).status, "queued", "job must actually queue behind the occupied slot");
+
+  // Legitimate driver-side activity landing WHILE the job is queued — exactly what
+  // acquireHarnessSlot's wait window allows, and exactly what the launch-time snapshot
+  // (captured before this commit even existed) cannot see.
+  git(["commit", "--allow-empty", "-q", "-m", "legitimate driver commit while job was queued"], repo);
+
+  // Release the slot so the queued job's next poll (its own 5s cycle) can proceed.
+  fs.rmSync(slotDir, { recursive: true, force: true });
+
+  const job = waitForJob(repo, launched.jobId, { timeoutMs: 30000, pollMs: 150 });
+
+  assert.notEqual(job.status, "breach", "a driver commit that landed while queued must not be blamed on this worker");
+  assert.equal(job.breach, false);
+
+  delete process.env.AGENT_COLLAB_MAX_CONCURRENT_AGY;
+  delete process.env.AGENT_COLLAB_AGY_BIN;
 });
 
 test("a worker that reports completed but captures NO patch is 'no-changes', not 'completed'", () => {
