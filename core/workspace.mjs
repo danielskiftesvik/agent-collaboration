@@ -9,7 +9,7 @@ import path from "node:path";
 
 import { resolveStateDir } from "./state.mjs";
 
-function canonical(p) {
+export function canonical(p) {
   try {
     return fs.realpathSync.native(p);
   } catch {

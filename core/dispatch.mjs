@@ -10,7 +10,7 @@ import { fileURLToPath } from "node:url";
 
 import { getAdapter, listAdapters } from "../adapters/index.mjs";
 import { resolveStateDir, appendJob, updateJob, getJob, loadState, isTerminalStatus } from "./state.mjs";
-import { createWorktree, removeWorktree } from "./workspace.mjs";
+import { createWorktree, removeWorktree, resolveWorkspaceRoot, canonical } from "./workspace.mjs";
 import { headRef, captureWorkingDiff, captureWorkingTreeSnapshot, applyPatch, checkPatchApplies, workingTreeStatus, workingTreeDigest, newStatusPaths, stageDiffIntoWorktree, diffPaths, looksLikeDiff, extractUnifiedDiff } from "./git.mjs";
 import { run } from "./process.mjs";
 import { isPidAlive, isStalled, touchHeartbeat } from "./heartbeat.mjs";
@@ -649,6 +649,45 @@ export function runWorkerSync(cwd, opts) {
     }
   }
   if (isGitRepo) {
+    // A dispatch brief must never name the controller's own live path. Every role
+    // already runs against an isolated worktree (or a discarded one, for
+    // reviewers) below — but the brief is free-form prose handed to the worker's
+    // own CLI, and an unsandboxed harness with its own shell tool (the standing
+    // config for write-workers on this machine) will follow an explicit path in
+    // that prose over wherever its process actually launched. Four confirmed
+    // instances (#807): the brief opened with the controller's own worktree path,
+    // the worker committed straight onto the shared branch, bypassing the
+    // isolated-worktree/inspect-before-apply contract entirely — `breach: false`
+    // every time, because the worker did exactly what it was told. There is never
+    // a legitimate reason for a brief to reference the live path: the isolated
+    // worktree already covers everything a worker needs, and a reviewer's review
+    // input is composed separately (see reviewInput below), not from raw `brief`.
+    if (brief) {
+      const root = resolveWorkspaceRoot(cwd);
+      const forbidden = [...new Set([cwd, canonical(cwd), root, canonical(root)])];
+      const leaked = forbidden.find((p) => p && brief.includes(p));
+      if (leaked) {
+        if (role === "worker") {
+          return blocked(
+            `the brief names the live repository path (${leaked}) directly — a write-worker's brief ` +
+              "must never reference the controller's own checkout, or a capable worker will follow " +
+              "that instruction and commit straight onto the shared branch instead of its isolated " +
+              `worktree (#807). Remove "${leaked}" from the brief — use a path relative to the repo, ` +
+              "or drop the path reference entirely — and redispatch.",
+            "brief-path-leak"
+          );
+        }
+        // Reviewers don't write, so this can't cause a bad commit — but it can
+        // make a reviewer read the live tree's current (possibly stale or
+        // uncommitted) state instead of the surface the driver selected, and
+        // produce a verdict about the wrong thing. Warn, don't block.
+        console.error(
+          `[agent-collab] warning: review brief names the live repository path (${leaked}) — ` +
+            "the reviewer's actual review surface is chosen separately (see --surface); this " +
+            "reference may cause it to read stale or uncommitted state instead."
+        );
+      }
+    }
     const preflight = checkPreflight(cwd);
     if (!preflight.ok) {
       return blocked(`preflight failed: ${preflight.failures.join("; ")}`, "preflight");

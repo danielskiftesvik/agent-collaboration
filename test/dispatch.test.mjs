@@ -5,7 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import { spawn } from "node:child_process";
 
-import { makeRepo, isolateStateRoot, stubBin, real, git } from "./helpers.mjs";
+import { makeRepo, addWorktree, isolateStateRoot, stubBin, real, git } from "./helpers.mjs";
 import {
   decideRoute,
   runSetup,
@@ -24,7 +24,7 @@ import {
 import { appendJob, updateJob, getJob } from "../core/state.mjs";
 import { MODEL_PROFILES } from "../core/model-profiles.mjs";
 import { headRef } from "../core/git.mjs";
-import { createWorktree } from "../core/workspace.mjs";
+import { createWorktree, resolveWorkspaceRoot } from "../core/workspace.mjs";
 
 // ---- routing ----
 
@@ -82,6 +82,106 @@ test("runWorkerSync blocks write-workers whose profile cannot deliver patches", 
   MODEL_PROFILES.agy.canWrite = old;
   if (oldAllow === undefined) delete process.env.AGENT_COLLAB_ALLOW_NONWRITER;
   else process.env.AGENT_COLLAB_ALLOW_NONWRITER = oldAllow;
+  delete process.env.AGENT_COLLAB_AGY_BIN;
+});
+
+// ---- #807: a brief must never name the controller's own live path ----
+
+test("runWorkerSync blocks a write-worker brief that names the controller's own live worktree (#807)", () => {
+  isolateStateRoot();
+  const repo = makeRepo();
+  // Reproduces the documented 2026-08-13 #599 Plan 2 round-5 shape exactly: the
+  // controller dispatches FROM inside its own linked worktree, and the brief
+  // opens with that same worktree's path instead of letting the isolated
+  // worker worktree be implicit.
+  const controllerWorktree = addWorktree(repo, "plan2-week-composer");
+  process.env.AGENT_COLLAB_AGY_BIN = stubBin(WRITE_STUB);
+
+  const res = runWorkerSync(controllerWorktree, {
+    driver: "claude",
+    worker: "agy",
+    role: "worker",
+    brief: `Work in ${controllerWorktree} and edit the composer.`
+  });
+
+  assert.equal(res.status, "blocked");
+  assert.equal(res.failureKind, "brief-path-leak");
+  assert.match(res.errors.join(" "), new RegExp(controllerWorktree.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+  // Never spawned: no patch captured, no leaked file anywhere the worker could reach.
+  assert.equal(fs.existsSync(path.join(controllerWorktree, "worker-was-here.txt")), false);
+  assert.equal(fs.existsSync(path.join(res.artifactDir, "patches", "agy.diff")), false);
+
+  delete process.env.AGENT_COLLAB_AGY_BIN;
+});
+
+test("runWorkerSync blocks a write-worker brief that names the main repo root, not just the exact cwd (#807)", () => {
+  isolateStateRoot();
+  const repo = makeRepo();
+  const controllerWorktree = addWorktree(repo, "other-task");
+  process.env.AGENT_COLLAB_AGY_BIN = stubBin(WRITE_STUB);
+
+  // Dispatch FROM the worktree, but the brief names the shared MAIN checkout
+  // root instead of the worktree itself — still the controller's own live path.
+  assert.equal(resolveWorkspaceRoot(controllerWorktree), repo);
+  const res = runWorkerSync(controllerWorktree, {
+    driver: "claude",
+    worker: "agy",
+    role: "worker",
+    brief: `The repo lives at ${repo} — go edit it there.`
+  });
+
+  assert.equal(res.status, "blocked");
+  assert.equal(res.failureKind, "brief-path-leak");
+
+  delete process.env.AGENT_COLLAB_AGY_BIN;
+});
+
+test("runWorkerSync does not false-positive on an ordinary brief with no live-path reference", () => {
+  isolateStateRoot();
+  const repo = makeRepo();
+  process.env.AGENT_COLLAB_AGY_BIN = stubBin(WRITE_STUB);
+
+  const res = runWorkerSync(repo, {
+    driver: "claude",
+    worker: "agy",
+    role: "worker",
+    brief: "Make a file. For context, this class of bug once reproduced at /tmp/some/unrelated/path/Foo.swift."
+  });
+
+  assert.equal(res.status, "completed");
+  assert.notEqual(res.failureKind, "brief-path-leak");
+
+  delete process.env.AGENT_COLLAB_AGY_BIN;
+});
+
+test("runWorkerSync warns but does not block a reviewer brief that names the live path (#807)", () => {
+  isolateStateRoot();
+  const repo = makeRepo();
+  const controllerWorktree = addWorktree(repo, "review-task");
+  process.env.AGENT_COLLAB_AGY_BIN = stubBin(REVIEW_STUB);
+  const originalError = console.error;
+  const warnings = [];
+  console.error = (msg) => warnings.push(String(msg));
+
+  let res;
+  try {
+    res = runWorkerSync(controllerWorktree, {
+      driver: "claude",
+      worker: "agy",
+      role: "reviewer",
+      brief: `Review the change at ${controllerWorktree}.`
+    });
+  } finally {
+    console.error = originalError;
+  }
+
+  assert.notEqual(res.status, "blocked");
+  assert.notEqual(res.failureKind, "brief-path-leak");
+  assert.ok(
+    warnings.some((w) => w.includes(controllerWorktree)),
+    "expected a live-path warning naming the leaked path on stderr"
+  );
+
   delete process.env.AGENT_COLLAB_AGY_BIN;
 });
 
