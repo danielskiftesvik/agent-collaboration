@@ -13,6 +13,7 @@ import {
   heartbeatPeer,
   listPeers,
   listMachines,
+  listMachineRecords,
   registerMachine,
   getPeer,
   sendMessage,
@@ -255,8 +256,17 @@ export function createPeersServer({ pairToken = null, computer = null } = {}) {
         return;
       }
       if (req.method === "GET" && url.pathname === "/peers/collab") {
+        const nowMs = Date.now();
+        const probes = await collectMachineProbes(listMachineRecords(), { pair: pairToken });
+        if (serveComputer) {
+          probes[serveComputer] = {
+            ok: true,
+            at: new Date(nowMs).toISOString(),
+            sessions: listPeers()
+          };
+        }
         sendJson(res, 200, {
-          machines: listMachines(),
+          machines: listMachines({ nowMs, probes }),
           assigns: listLineage()
         });
         return;

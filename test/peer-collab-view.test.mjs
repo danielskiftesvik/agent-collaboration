@@ -6,7 +6,7 @@ import vm from "node:vm";
 import { fileURLToPath } from "node:url";
 
 import { isolateStateRoot, makeRepo } from "./helpers.mjs";
-import { registerPeer, heartbeatPeer, listMachines } from "../core/peers.mjs";
+import { registerPeer, heartbeatPeer, listMachines, registerMachine } from "../core/peers.mjs";
 import { assignTask } from "../core/peer-assign.mjs";
 import { handleAssignedWork } from "../core/peer-receive.mjs";
 import { getLineage } from "../core/peer-lineage.mjs";
@@ -223,6 +223,24 @@ test("peers serve exposes /collab page and /peers/collab from the lineage store"
     assert.equal(hit.from, "main");
     assert.equal(hit.text, "serve-collab-fixture");
     assert.equal(hit.messages, undefined);
+  } finally {
+    server.close();
+  }
+});
+
+test("GET /peers/collab does not mark a URL-registered machine asleep when it has a live heartbeat", async () => {
+  isolateStateRoot();
+  registerPeer({ name: "mini-orch", harness: "grok", computer: "Mac Mini M4", sessionId: "live" });
+  heartbeatPeer({ name: "mini-orch", turnState: "idle" });
+  const { server, url } = await listenPeersServer({ computer: "Mac Mini M4" });
+  try {
+    registerMachine({ computer: "Mac Mini M4", url });
+    const body = await peersHttp(url, { path: "/peers/collab" });
+    const mini = body.machines.find((m) => m.computer === "Mac Mini M4");
+    assert.ok(mini);
+    assert.equal(mini.available, true);
+    assert.notEqual(mini.reason, "not-probed");
+    assert.notEqual(mini.activity, "none");
   } finally {
     server.close();
   }

@@ -557,14 +557,14 @@ function summarizeMachine({ rec, sessions, probe, nowMs }) {
   if (probe) {
     available = Boolean(probe.ok);
     reason = probe.ok ? "health-ok" : String(probe.error || "unreachable");
+  } else if (allSessions.length > 0) {
+    // Local live sessions win even when the computer also has a serve URL.
+    // rec.url without a probe must not hide a heartbeat on this mailbox.
+    available = recent.length > 0;
+    reason = available ? "recent-heartbeat" : "asleep-or-offline";
   } else if (rec.url) {
     available = false;
     reason = "not-probed";
-  } else if (allSessions.length > 0) {
-    // Local sessions decide liveness. A dead pid is stale immediately; a frozen
-    // (still-alive) pid is not treated as awake once lastSeen ages past the TTL.
-    available = recent.length > 0;
-    reason = available ? "recent-heartbeat" : "asleep-or-offline";
   } else {
     available = isFresh(rec.lastSeenAt, nowMs, MACHINE_AVAILABLE_TTL_MS);
     reason = available ? "recent-heartbeat" : "asleep-or-offline";
