@@ -26,59 +26,71 @@ export function normalizeHarness(harness) {
   return String(harness || "").toLowerCase();
 }
 
-function looksLikeGrokTui(command) {
-  const c = String(command || "").replace(/^\s*\d+\s+/, "").trim();
-  return /(^|\/)grok$/.test(c);
+function findGrokSessionDir(sessionId, grokHome) {
+  const sessionsRoot = path.join(grokHome, "sessions");
+  if (!fs.existsSync(sessionsRoot)) return null;
+  const stack = [sessionsRoot];
+  while (stack.length) {
+    const dir = stack.pop();
+    let ents = [];
+    try {
+      ents = fs.readdirSync(dir, { withFileTypes: true });
+    } catch {
+      continue;
+    }
+    for (const ent of ents) {
+      const p = path.join(dir, ent.name);
+      if (!ent.isDirectory()) continue;
+      if (ent.name === String(sessionId)) return p;
+      stack.push(p);
+    }
+  }
+  return null;
 }
 
 /**
- * True when a Grok TUI (not --single consume) holds this session.
- * Spec C8 / F3: never resume a live pid. Fail-closed if we cannot tell.
+ * True when a live Grok process (not this consume) holds the session files.
+ * Spec C8 / F3: never resume a live pid. Leftover lock files alone are not enough.
  */
 export function grokTuiHoldsSession(sessionId, { excludePid = null, env = process.env, home = null } = {}) {
   if (!sessionId) return false;
   if (resumeProcessAlive(sessionId, { excludePid })) return true;
   const grokHome = home || env.GROK_HOME || path.join(env.HOME || "", ".grok");
-  const sessionsRoot = path.join(grokHome, "sessions");
-  let held = false;
+  let sessionDir;
   try {
-    if (!fs.existsSync(sessionsRoot)) return false;
-    const stack = [sessionsRoot];
-    while (stack.length) {
-      const dir = stack.pop();
-      let ents = [];
-      try {
-        ents = fs.readdirSync(dir, { withFileTypes: true });
-      } catch {
-        continue;
-      }
-      for (const ent of ents) {
-        const p = path.join(dir, ent.name);
-        if (ent.isDirectory()) {
-          if (ent.name === String(sessionId)) {
-            held =
-              fs.existsSync(path.join(p, "chat_history.jsonl.lock")) ||
-              fs.existsSync(path.join(p, "updates.jsonl.lock"));
-          }
-          stack.push(p);
-        }
-      }
-    }
+    sessionDir = findGrokSessionDir(sessionId, grokHome);
   } catch {
-    return true;
+    return false;
   }
-  if (!held) return false;
+  if (!sessionDir) return false;
+  const probe = path.join(sessionDir, "chat_history.jsonl");
+  if (!fs.existsSync(probe)) return false;
   try {
-    const r = spawnSync("ps", ["-ax", "-o", "pid=,command="], { encoding: "utf8", timeout: 3000 });
-    if (r.error || r.status !== 0) return true;
-    for (const line of (r.stdout || "").split("\n")) {
+    const r = spawnSync("lsof", ["-t", probe], { encoding: "utf8", timeout: 3000 });
+    if (r.error) return false;
+    const pids = String(r.stdout || "")
+      .trim()
+      .split(/\s+/)
+      .map((s) => Number(s))
+      .filter((n) => Number.isFinite(n) && n > 0);
+    if (!pids.length) return false;
+    const ps = spawnSync("ps", ["-ax", "-o", "pid=,command="], { encoding: "utf8", timeout: 3000 });
+    if (ps.error || ps.status !== 0) return true;
+    const byPid = new Map();
+    for (const line of (ps.stdout || "").split("\n")) {
       const pid = Number(String(line).trim().split(/\s+/, 1)[0]);
-      if (excludePid != null && Number.isFinite(pid) && pid === Number(excludePid)) continue;
-      if (looksLikeGrokTui(line)) return true;
+      if (Number.isFinite(pid)) byPid.set(pid, line);
+    }
+    for (const pid of pids) {
+      if (excludePid != null && pid === Number(excludePid)) continue;
+      const cmd = byPid.get(pid) || "";
+      if (/--single\b/.test(cmd)) continue;
+      if (/peers presence/.test(cmd)) continue;
+      if (/(^|\/)grok(\s|$)/.test(cmd)) return true;
     }
     return false;
   } catch {
-    return true;
+    return false;
   }
 }
 
