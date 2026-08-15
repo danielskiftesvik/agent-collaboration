@@ -174,6 +174,16 @@ node <plugin-dir>/scripts/agent-companion.mjs setup   # Codex / agy / any shell
 
 ## What it does
 
+Two planes, kept separate:
+
+- **Job plane** (`delegate` / `review` / `apply`) — worktrees, artifacts, job status.
+- **Peer plane** (`peers register|list|send|inbox`) — named plain-text pings
+  (Claude-class discovery + send). Not founder consent. Not a merge gate.
+  Claude↔Claude may keep native `ListAgents` / `SendMessage`. Otherwise use
+  these verbs. Same-machine uses a local mailbox under the plugin data dir
+  (analog of Claude’s UDS inbox). Cross-machine is plugin-owned and currently
+  fails closed (unverified; not Anthropic Remote Control for non-Claude).
+
 Two delegation paths, chosen automatically:
 
 - **Native (same harness)** — when driver and worker are the same harness, use that
@@ -204,6 +214,14 @@ Two delegation paths, chosen automatically:
 | `/agent-collab:apply <jobId>` | Apply a worker's patch (3-way) to the working tree |
 | `/agent-collab:gc [--dry-run] [--artifacts-older-than days] [--include-unapplied]` | Reclaim dead/terminal worktrees and expired artifacts; unapplied patches are preserved by default |
 | `/agent-collab:cancel <jobId> [--force]` | Cancel an unhealthy job; healthy within-budget jobs require the explicit `--force` override |
+| `peers self --harness <h>` | Register this process (pid + lastSeen) |
+| `peers heartbeat --name <name>` | Refresh lastSeen / pid |
+| `peers register --name <name> [--harness h] [--reply-address addr]` | Register a stable routing name on this machine |
+| `peers unregister --name <name>` | Drop a routing name |
+| `peers list [--json]` | Named reachable peers (local mailbox) |
+| `peers send --to <name> --from <name> <text>` | Enqueue a plain-text ping (not consent; slash text stays text) |
+| `peers inbox --name <name> [--ack] [--json]` | Read (and optionally ack) unread peer messages |
+| `peers serve [--listen 127.0.0.1:port]` | Loopback mailbox daemon (explicit `AGENT_COLLAB_PEERS_URL`; per-peer tokens) |
 
 Review commands accept `--surface head|working-tree|diff`. Unified diffs are detected automatically and clean prose defaults to `head`. Dirty prose fails closed until the caller chooses `working-tree` (safely snapshotted with a temporary Git index) or `head` (dirty paths excluded). `review-followup --job <prior-id> ...` runs a focused verification tied to the earlier review.
 

@@ -9,11 +9,24 @@ import { fileURLToPath } from "node:url";
 import { defineAdapter } from "./contract.mjs";
 import { extractJson } from "../core/schema.mjs";
 import { resolvePin } from "../core/pins.mjs";
+import { resolvePeersDir } from "../core/peers.mjs";
 
 const CLEANUP_BROKER = fileURLToPath(new URL("../scripts/cleanup-codex-broker.mjs", import.meta.url));
 
 function scopedDataDir(artifactDir) {
   return artifactDir ? path.join(artifactDir, "codex-companion") : null;
+}
+
+/** Shared peer mailbox the worker should treat as writable (env + addDirs). */
+export function resolveCodexAddDirs(env = process.env) {
+  const dirs = [];
+  if (env.AGENT_COLLAB_CODEX_ADD_DIR) dirs.push(path.resolve(env.AGENT_COLLAB_CODEX_ADD_DIR));
+  try {
+    dirs.push(path.resolve(resolvePeersDir()));
+  } catch {
+    /* no data root yet */
+  }
+  return [...new Set(dirs)];
 }
 
 function scopedEnv(artifactDir) {
@@ -24,6 +37,8 @@ function scopedEnv(artifactDir) {
   // codex-companion + nested `codex` see the intended home.
   const home = process.env.AGENT_COLLAB_CODEX_HOME || process.env.CODEX_HOME;
   if (home) env.CODEX_HOME = home;
+  const addDirs = resolveCodexAddDirs();
+  if (addDirs[0]) env.AGENT_COLLAB_PEERS_DIR = addDirs[0];
   return env;
 }
 
@@ -78,7 +93,11 @@ export default defineAdapter({
     const effort = codexEffort(role, workspace, profile);
     if (effort) args.push("--effort", effort);
     args.push(brief);
-    return { command: process.execPath, args, env: scopedEnv(artifactDir) };
+    const env = scopedEnv(artifactDir);
+    // Do not pass --add-dir to today's codex-companion (unknown flags become
+    // prompt positionals). Record addDirs + PEERS_DIR so a newer companion or
+    // `codex exec --add-dir` can consume them; sandbox write still needs that.
+    return { command: process.execPath, args, env, addDirs: resolveCodexAddDirs() };
   },
   // Repair by RESUMING the worker's existing thread (`task --resume-last`) instead
   // of re-running the whole task cold — the reference's reliability trait. The
@@ -93,7 +112,8 @@ export default defineAdapter({
     // No --model/--effort on resume: the resumed thread already carries the
     // model it was started with; re-pinning here could conflict with it.
     args.push(repairBrief);
-    return { command: process.execPath, args, env: scopedEnv(artifactDir) };
+    const env = scopedEnv(artifactDir);
+    return { command: process.execPath, args, env, addDirs: resolveCodexAddDirs() };
   },
   progressDirs({ artifactDir }) {
     const dataDir = scopedDataDir(artifactDir);

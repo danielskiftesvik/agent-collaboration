@@ -7,6 +7,8 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { decideRoute, resolveDriver, isAuthoritativeDriver, runSetup, runWorkerSync, runWithFallback, resolveFallbackKinds, launchBackground, runJob, waitForJob, refreshJobStatus, applyResult, recommendWorker, cleanupWorkerRuntime } from "../core/dispatch.mjs";
+import { registerPeer, registerSelf, heartbeatPeer, unregisterPeer, listPeers, sendMessage, readInbox, ackInbox } from "../core/peers.mjs";
+import { listenPeersServer, peersHttp } from "../core/peers-serve.mjs";
 import { runDoctor } from "../core/doctor.mjs";
 import { mergeReviews } from "../core/merge-reviews.mjs";
 import { version } from "../core/version.mjs";
@@ -17,8 +19,8 @@ import { MODEL_PROFILES } from "../core/model-profiles.mjs";
 import { cleanupJobWorktree, collectGarbage, waitForPidExit } from "../core/gc.mjs";
 import { resolveWorkerRef } from "../core/instances.mjs";
 
-const VALUE_FLAGS = new Set(["worker", "workers", "role", "driver", "base", "timeout", "gate", "sandbox", "focus", "surface", "task", "job", "recent", "retention-days", "artifacts-older-than"]);
-const BOOL_FLAGS = new Set(["json", "apply", "wait", "background", "profiles", "no-fallback", "live", "active", "latest", "refresh", "artifact-only", "force", "dry-run", "include-unapplied"]);
+const VALUE_FLAGS = new Set(["worker", "workers", "role", "driver", "base", "timeout", "gate", "sandbox", "focus", "surface", "task", "job", "recent", "retention-days", "artifacts-older-than", "name", "to", "from", "harness", "reply-address", "session-id", "reach", "pid", "listen", "token", "pair"]);
+const BOOL_FLAGS = new Set(["json", "apply", "wait", "background", "profiles", "no-fallback", "live", "active", "latest", "refresh", "artifact-only", "force", "dry-run", "include-unapplied", "ack"]);
 
 function parseArgs(tokens) {
   const options = {};
@@ -457,6 +459,121 @@ switch (subcommand) {
     break;
   }
 
+  case "peers": {
+    const verb = positionals[0];
+    if (!verb) {
+      fail(
+        "usage: agent-companion peers <self|heartbeat|register|unregister|list|send|inbox|serve>\n" +
+          "  peers self --harness <h> [--name <name>] [--session-id <id>] [--pid <n>] [--json]\n" +
+          "  peers heartbeat --name <name> [--pid <n>] [--json]\n" +
+          "  peers register --name <name> [--harness <h>] [--reply-address <addr>] [--session-id <id>] [--pid <n>] [--reach local|cross-machine] [--json]\n" +
+          "  peers unregister --name <name> [--json]\n" +
+          "  peers list [--json]\n" +
+          "  peers send --to <name> --from <name> <text>\n" +
+          "  peers inbox --name <name> [--ack] [--json]"
+      );
+    }
+    try {
+      if (verb === "self") {
+        if (!options.harness) fail("peers self: --harness is required");
+        const peer = registerSelf({
+          harness: options.harness,
+          name: options.name,
+          sessionId: options["session-id"],
+          replyAddress: options["reply-address"],
+          pid: options.pid
+        });
+        out(peer, options, `self ${peer.name} (${peer.harness}) pid=${peer.pid ?? "-"} ${peer.status}`);
+        break;
+      }
+      if (verb === "heartbeat") {
+        if (!options.name) fail("peers heartbeat: --name is required");
+        const peer = heartbeatPeer({ name: options.name, pid: options.pid });
+        out(peer, options, `heartbeat ${peer.name} ${peer.status}`);
+        break;
+      }
+      if (verb === "register") {
+        if (!options.name) fail("peers register: --name is required");
+        const peer = registerPeer({
+          name: options.name,
+          harness: options.harness,
+          sessionId: options["session-id"],
+          replyAddress: options["reply-address"],
+          reach: options.reach,
+          pid: options.pid
+        });
+        out(peer, options, `registered ${peer.name}${peer.harness ? ` (${peer.harness})` : ""} ${peer.reach} ${peer.status}`);
+        break;
+      }
+      if (verb === "unregister") {
+        if (!options.name) fail("peers unregister: --name is required");
+        const result = unregisterPeer({ name: options.name });
+        out(result, options, `unregistered ${result.unregistered}`);
+        break;
+      }
+      if (verb === "list") {
+        const url = process.env.AGENT_COLLAB_PEERS_URL;
+        const peers = url ? (await peersHttp(url, { path: "/peers/list" })).peers : listPeers();
+        const human = peers.length
+          ? peers.map((p) => `${p.name}\t${p.harness ?? "-"}\t${p.reach}\t${p.status}`).join("\n")
+          : "(no peers)";
+        out(peers, options, human);
+        break;
+      }
+      if (verb === "send") {
+        if (!options.to) fail("peers send: --to is required");
+        if (!options.from) fail("peers send: --from is required");
+        const text = positionals.slice(1).join(" ");
+        if (!text) fail("peers send: a text payload is required");
+        const url = process.env.AGENT_COLLAB_PEERS_URL;
+        const msg = url
+          ? await peersHttp(url, {
+              method: "POST",
+              path: "/peers/send",
+              token: options.token || process.env.AGENT_COLLAB_PEERS_TOKEN,
+              body: { to: options.to, from: options.from, text }
+            })
+          : sendMessage({ to: options.to, from: options.from, text });
+        out(msg, options, `sent ${msg.id} to ${msg.to} from ${msg.from}`);
+        break;
+      }
+      if (verb === "inbox") {
+        if (!options.name) fail("peers inbox: --name is required");
+        const url = process.env.AGENT_COLLAB_PEERS_URL;
+        let payload;
+        if (url) {
+          const q = new URLSearchParams({ name: options.name });
+          if (options.ack) q.set("ack", "1");
+          payload = await peersHttp(url, {
+            path: `/peers/inbox?${q}`,
+            token: options.token || process.env.AGENT_COLLAB_PEERS_TOKEN
+          });
+        } else {
+          const messages = readInbox({ name: options.name });
+          if (options.ack) ackInbox({ name: options.name, ids: messages.map((m) => m.id) });
+          payload = { name: options.name, messages, acked: !!options.ack };
+        }
+        const human = payload.messages.length
+          ? payload.messages.map((m) => `[${m.from}] ${m.text}`).join("\n")
+          : "(empty inbox)";
+        out(payload, options, human);
+        break;
+      }
+      if (verb === "serve") {
+        const listen = options.listen || "127.0.0.1:0";
+        const [host, port] = listen.includes(":") ? listen.split(":") : ["127.0.0.1", listen];
+        const { url } = await listenPeersServer({ host, port: Number(port) || 0 });
+        process.stdout.write(JSON.stringify({ url, host, listen: url }, null, 2) + "\n");
+        await new Promise(() => {});
+        break;
+      }
+      fail(`peers: unknown verb ${verb}`);
+    } catch (e) {
+      fail(`peers ${verb}: ${e.message}`);
+    }
+    break;
+  }
+
   case "cancel": {
     const id = positionals[0];
     if (!id) fail("cancel: a job id is required");
@@ -536,7 +653,15 @@ switch (subcommand) {
         "  result <jobId|--latest> [--worker name] [--role role] [--refresh] [--artifact-only] [--json]",
         "  apply  <jobId>",
         "  gc [--dry-run] [--artifacts-older-than days] [--include-unapplied] [--json]",
-        "  cancel <jobId> [--force]"
+        "  cancel <jobId> [--force]",
+        "  peers self --harness <h> [--name n] [--session-id id] [--pid n]",
+        "  peers heartbeat --name <name> [--pid n]",
+        "  peers register --name <name> [--harness h] [--reply-address addr] [--session-id id] [--pid n] [--reach local|cross-machine]",
+        "  peers unregister --name <name>",
+        "  peers list [--json]",
+        "  peers send --to <name> --from <name> <text>",
+        "  peers inbox --name <name> [--ack] [--json]",
+        "  peers serve [--listen 127.0.0.1:port]"
       ].join("\n")
     );
 }

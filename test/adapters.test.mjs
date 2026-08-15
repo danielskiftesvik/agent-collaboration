@@ -5,6 +5,8 @@ import os from "node:os";
 import path from "node:path";
 
 import { getAdapter, listAdapters } from "../adapters/index.mjs";
+import { resolveCodexAddDirs } from "../adapters/codex.mjs";
+import { resolvePeersDir } from "../core/peers.mjs";
 import { pickLatestModel } from "../adapters/agy.mjs";
 import qwen from "../adapters/qwen.mjs";
 
@@ -256,6 +258,19 @@ test("codex _MODEL_REVIEW applies to reviewers only; generic _MODEL wins over it
   const overridden = getAdapter("codex").buildCommand({ role: "reviewer", brief: "x" });
   assert.equal(overridden.args[overridden.args.indexOf("--model") + 1], "gpt-5.6-terra");
   clearCodexModelEnv();
+  delete process.env.AGENT_COLLAB_CODEX_COMPANION;
+});
+
+test("codex spawn env points at the shared peers mailbox (add-dir analog)", () => {
+  const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), "ac-codex-peers-"));
+  process.env.AGENT_COLLAB_DATA = dataDir;
+  process.env.AGENT_COLLAB_CODEX_COMPANION = "/stub/codex-companion.mjs";
+  const peers = resolvePeersDir();
+  const { env, addDirs } = getAdapter("codex").buildCommand({ role: "worker", brief: "x" });
+  assert.equal(env.AGENT_COLLAB_PEERS_DIR, peers);
+  assert.ok(addDirs.includes(peers));
+  assert.ok(resolveCodexAddDirs().includes(peers));
+  delete process.env.AGENT_COLLAB_DATA;
   delete process.env.AGENT_COLLAB_CODEX_COMPANION;
 });
 

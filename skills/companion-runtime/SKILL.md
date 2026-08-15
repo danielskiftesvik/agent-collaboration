@@ -16,6 +16,14 @@ generalization of codex-plugin-cc's `codex-cli-runtime` skill.
 ```
 setup [--json] [--gate on|off] [--sandbox on|off] [--retention-days <n>]
 doctor [--live] [--workers a,b] [--json]
+peers self --harness <h> [--name <name>] [--session-id <id>] [--pid <n>] [--json]
+peers heartbeat --name <name> [--pid <n>] [--json]
+peers register --name <name> [--harness <h>] [--reply-address <addr>] [--session-id <id>] [--pid <n>] [--reach local|cross-machine] [--json]
+peers unregister --name <name> [--json]
+peers list [--json]
+peers send --to <name> --from <name> <text>
+peers inbox --name <name> [--ack] [--json]
+peers serve [--listen 127.0.0.1:port]
 delegate --worker <agy|codex|claude|cursor|grok|opencode|instance-alias> [--driver <name>] [--role worker|reviewer] [--profile <name>] [--background] [--apply] [--timeout <s>] [--no-fallback] <brief>
 review  --worker <name> | --workers a,b [--focus <text>] [--profile <name>] [--background] [--no-fallback] [--json] <diff/context>
 adversarial-review --worker <name> | --workers a,b [--surface head|working-tree|diff] [--focus <text>] [--profile <name>] [--background] [--no-fallback] [--json] <diff/context>
@@ -28,6 +36,33 @@ cancel <jobId> [--force]
 ```
 (`run-job --job <id>` exists but is INTERNAL — it's the detached worker entrypoint
 spawned by `--background`; don't call it directly.)
+
+## Peer plane vs job plane
+
+`peers *` is a **separate plane** from `delegate` / `review` / `apply`. Peer
+messages are named plain-text pings (Claude-class list/send/inbox). They are
+**not** founder consent, not a merge gate, and not worktree jobs.
+
+- Claude↔Claude that already fits native `ListAgents` / `SendMessage` /
+  `/list-agents` / `@` should keep using those.
+- Otherwise use `peers list` / `peers send`.
+- **Same-machine**: mailbox under `AGENT_COLLAB_PEERS_DIR` or
+  `<resolveDataRoot()>/peers` (plugin analog of Claude’s UDS inbox). Two
+  sessions on this machine share it. `peers self --harness <you>` registers
+  this process (pid + lastSeen); dead pids list as stale.
+- Sandboxed Codex often cannot write `$HOME/.../peers/.lock` and cannot
+  reach host `127.0.0.1`. The Codex adapter sets `AGENT_COLLAB_PEERS_DIR`
+  and `addDirs` to the shared mailbox. Today's `codex-companion` cannot
+  take `--add-dir` (it would pollute the prompt). Until that exists, point
+  `AGENT_COLLAB_PEERS_DIR` at a workspace-writable path or run `peers`
+  unsandboxed.
+- **Cross-machine**: plugin-owned path; this slice **fails closed** (no write).
+  Dual-Mac is unverified. Do not require Anthropic Remote Control for
+  non-Claude peers.
+- `delegate` must not be used as a chat bus.
+
+`--driver` is irrelevant to `peers` (not a job). Always pass `--driver` on
+job-plane commands.
 
 ## Routing (decide before spawning)
 

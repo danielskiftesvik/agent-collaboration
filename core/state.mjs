@@ -81,7 +81,7 @@ function withLock(cwd, fn) {
   }
 }
 
-function stateBaseDir() {
+export function resolveDataRoot() {
   const explicit = process.env.AGENT_COLLAB_DATA;
   if (explicit) return explicit;
   // Reuse CLAUDE_PLUGIN_DATA ONLY when it is OUR plugin's dir. In a multi-plugin
@@ -92,6 +92,10 @@ function stateBaseDir() {
   const pluginData = process.env.CLAUDE_PLUGIN_DATA;
   if (pluginData && /agent-collaboration/i.test(pluginData)) return path.join(pluginData, "state");
   return FALLBACK_ROOT;
+}
+
+function stateBaseDir() {
+  return resolveDataRoot();
 }
 
 export function resolveStateDir(cwd) {
