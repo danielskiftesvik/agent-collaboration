@@ -716,6 +716,7 @@ switch (subcommand) {
             url: result.remote ? result.machine.url : null,
             token: result.senderToken,
             from: result.to,
+            assignId: result.message.id,
             afterCreatedAt: result.message.createdAt,
             timeoutMs: Number(options["wait-seconds"]) * 1000
           });

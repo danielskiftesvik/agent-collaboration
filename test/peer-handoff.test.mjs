@@ -237,18 +237,73 @@ test("rememberRemoteInbox stores credentials used by waitForReply", async () => 
     assert.equal(sender.name, "main");
     rememberRemoteInbox({ name: sender.name, url, token: sender.token });
     assert.equal(listRemoteInboxes("main")[0].url, url);
-    sendMessage({ to: "main", from: "old-orch", text: "assign x done", allowCrossMachine: true });
+    sendMessage({
+      to: "main",
+      from: "old-orch",
+      text: "assign aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee done\nkind: ping",
+      allowCrossMachine: true
+    });
     const reply = await waitForReply({
       name: "main",
       url,
       token: sender.token,
       from: "old-orch",
+      assignId: "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
       timeoutMs: 2000,
       pollMs: 200
     });
     assert.equal(reply.from, "old-orch");
-    assert.match(reply.text, /done/);
+    assert.match(reply.text, /^assign aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee done/);
+    assert.match(reply.text, /kind: ping/);
     assert.equal(reply.isConsent, false);
+  } finally {
+    server.close();
+  }
+});
+
+test("waitForReply ignores text that is not assign <id> done|refuse|rerouted", async () => {
+  isolateStateRoot();
+  registerPeer({ name: "old-orch", harness: "cursor", computer: "2017 MacBook Pro", sessionId: "s" });
+  heartbeatPeer({ name: "old-orch", turnState: "idle" });
+  const { server, url } = await listenPeersServer({ pair: "pair-secret" });
+  try {
+    const { peersHttp } = await import("../core/peers-serve.mjs");
+    const sender = await peersHttp(url, {
+      method: "POST",
+      path: "/peers/register",
+      token: "pair-secret",
+      body: { name: "main", harness: "grok", sessionId: "main" }
+    });
+    sendMessage({ to: "main", from: "old-orch", text: "PEER_ACK nope", allowCrossMachine: true });
+    await assert.rejects(
+      () =>
+        waitForReply({
+          name: "main",
+          url,
+          token: sender.token,
+          from: "old-orch",
+          assignId: "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
+          timeoutMs: 400,
+          pollMs: 100
+        }),
+      (err) => err.code === "PEER_REPLY_TIMEOUT"
+    );
+    sendMessage({
+      to: "main",
+      from: "old-orch",
+      text: "assign aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee refuse: no-grok\n",
+      allowCrossMachine: true
+    });
+    const reply = await waitForReply({
+      name: "main",
+      url,
+      token: sender.token,
+      from: "old-orch",
+      assignId: "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
+      timeoutMs: 2000,
+      pollMs: 100
+    });
+    assert.match(reply.text, /^assign aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee refuse/);
   } finally {
     server.close();
   }

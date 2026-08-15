@@ -9,6 +9,7 @@ import {
   listRemoteInboxes
 } from "./peers.mjs";
 import { collectMachineProbes, peersHttp } from "./peers-serve.mjs";
+import { parseAssignOutcome } from "./peer-outcome.mjs";
 
 export async function assignTask({
   from,
@@ -77,6 +78,7 @@ export async function waitForReply({
   url,
   token,
   from,
+  assignId,
   afterCreatedAt,
   timeoutMs = 60_000,
   pollMs = 1500
@@ -98,6 +100,7 @@ export async function waitForReply({
         });
         const hit = (box.messages || []).find((m) => {
           if (from && m.from !== from) return false;
+          if (assignId && !parseAssignOutcome(m.text, assignId)) return false;
           if (!cutoff) return true;
           const ts = Date.parse(m.createdAt ?? "");
           return Number.isFinite(ts) ? ts >= cutoff - 1000 : true;
