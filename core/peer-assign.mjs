@@ -10,6 +10,7 @@ import {
 } from "./peers.mjs";
 import { collectMachineProbes, peersHttp } from "./peers-serve.mjs";
 import { parseAssignOutcome } from "./peer-outcome.mjs";
+import { recordAssignLineage, recordConsumeLineage } from "./peer-lineage.mjs";
 
 export async function assignTask({
   from,
@@ -70,6 +71,17 @@ export async function assignTask({
     message = sendMessage({ to: target, from, text: body, hintHarness });
   }
 
+  recordAssignLineage({
+    id: message.id,
+    from: senderName,
+    to: target,
+    text: body,
+    computer: machine.computer ?? null,
+    hintHarness: hintHarness ?? null,
+    assignedHarness: machine.harness ?? machine.session?.harness ?? null,
+    createdAt: message.createdAt
+  });
+
   return { machine, message, to: target, remote: Boolean(machine.url), senderName, senderToken };
 }
 
@@ -105,7 +117,21 @@ export async function waitForReply({
           const ts = Date.parse(m.createdAt ?? "");
           return Number.isFinite(ts) ? ts >= cutoff - 1000 : true;
         });
-        if (hit) return { ...hit, inboxName: c.name, remoteUrl: c.url };
+        if (hit) {
+          const parsed = parseAssignOutcome(hit.text, assignId);
+          if (parsed) {
+            recordConsumeLineage({
+              id: assignId,
+              status: parsed.status,
+              reason: parsed.reason,
+              kind: parsed.kind,
+              harness: parsed.harness,
+              jobId: parsed.jobId,
+              reply: hit
+            });
+          }
+          return { ...hit, inboxName: c.name, remoteUrl: c.url };
+        }
       } catch {
         /* keep polling */
       }

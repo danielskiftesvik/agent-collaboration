@@ -12,6 +12,7 @@ import { listenPeersServer, peersHttp, collectMachineProbes } from "../core/peer
 import { deliverInbox } from "../core/peer-deliver.mjs";
 import { assignTask, waitForReply } from "../core/peer-assign.mjs";
 import { handleAssignedWork } from "../core/peer-receive.mjs";
+import { resolveLineage, formatLineage } from "../core/peer-lineage.mjs";
 import { replyToAssign } from "../core/peer-reply.mjs";
 import { tickPresence, runPresenceLoop } from "../core/peer-presence.mjs";
 import { runDoctor } from "../core/doctor.mjs";
@@ -24,7 +25,7 @@ import { MODEL_PROFILES } from "../core/model-profiles.mjs";
 import { cleanupJobWorktree, collectGarbage, waitForPidExit } from "../core/gc.mjs";
 import { resolveWorkerRef } from "../core/instances.mjs";
 
-const VALUE_FLAGS = new Set(["worker", "workers", "role", "driver", "base", "timeout", "gate", "sandbox", "focus", "surface", "task", "job", "recent", "retention-days", "artifacts-older-than", "name", "to", "from", "harness", "hint-harness", "reply-address", "session-id", "reach", "pid", "listen", "token", "pair", "limit", "turn-state", "computer", "url", "interval-ms", "refuse", "to-computer", "wait-seconds"]);
+const VALUE_FLAGS = new Set(["worker", "workers", "role", "driver", "base", "timeout", "gate", "sandbox", "focus", "surface", "task", "job", "recent", "retention-days", "artifacts-older-than", "name", "to", "from", "harness", "hint-harness", "reply-address", "session-id", "reach", "pid", "listen", "token", "pair", "limit", "turn-state", "computer", "url", "interval-ms", "refuse", "to-computer", "wait-seconds", "id"]);
 const BOOL_FLAGS = new Set(["json", "apply", "wait", "background", "profiles", "no-fallback", "live", "active", "latest", "refresh", "artifact-only", "force", "dry-run", "include-unapplied", "ack", "once", "consume", "no-consume"]);
 
 function optionalComputer(options) {
@@ -480,7 +481,7 @@ switch (subcommand) {
     const verb = positionals[0];
     if (!verb) {
       fail(
-        "usage: agent-companion peers <self|heartbeat|presence|register|unregister|list|machine|machines|eligible|pick|assign|send|inbox|deliver|consume|reply|serve>\n" +
+        "usage: agent-companion peers <self|heartbeat|presence|register|unregister|list|machine|machines|eligible|pick|assign|send|inbox|lineage|deliver|consume|reply|serve>\n" +
           "  peers self --harness <h> [--name <name>] [--session-id <id>] [--pid <n>] [--computer <label>] [--json]\n" +
           "  peers heartbeat --name <name> [--pid <n>] [--turn-state idle|busy] [--computer <label>] [--harness <h>] [--json]\n" +
           "  peers presence --computer <label> --harness <h> [--turn-state idle|busy] [--name <name>] [--session-id <id>] [--interval-ms n] [--once] [--consume|--no-consume] [--json]\n" +
@@ -494,6 +495,7 @@ switch (subcommand) {
           "  peers assign --from <name> [--to <session>] [--to-computer label] [--hint-harness h] [--wait-seconds n] <text>\n" +
           "  peers send --to <name> --from <name> <text>\n" +
           "  peers inbox --name <name> [--ack] [--json]\n" +
+          "  peers lineage --id <assign-id> [--json]\n" +
           "  peers deliver --name <name> [--limit n] [--json]\n" +
           "  peers consume --name <name> [--refuse <reason>] [--json]\n" +
           "  peers reply --from <name> --to <name> <text>\n" +
@@ -803,6 +805,16 @@ switch (subcommand) {
         out(payload, options, human);
         break;
       }
+      if (verb === "lineage") {
+        const id = options.id || positionals[1];
+        if (!id) fail("peers lineage: --id <assign-id> is required");
+        const record = await resolveLineage(id, { cwd: process.cwd() });
+        if (!record.createdAt && !record.from && !record.decision) {
+          fail(`peers lineage: unknown assign ${id}`);
+        }
+        out(record, options, formatLineage(record));
+        break;
+      }
       if (verb === "consume") {
         if (!options.name) fail("peers consume: --name is required");
         const payload = handleAssignedWork({
@@ -942,6 +954,7 @@ switch (subcommand) {
         "  peers assign --from <name> [--to <session>] [--to-computer label] [--hint-harness h] [--wait-seconds n] <text>",
         "  peers send --to <name> --from <name> <text>",
         "  peers inbox --name <name> [--ack] [--json]",
+        "  peers lineage --id <assign-id> [--json]",
         "  peers deliver --name <name> [--limit n] [--json]",
         "  peers consume --name <name> [--refuse reason] [--json]",
         "  peers reply --from <name> --to <name> <text>",

@@ -19,6 +19,7 @@ import {
   MACHINE_AVAILABLE_TTL_MS
 } from "../core/peers.mjs";
 import { assignTask, waitForReply } from "../core/peer-assign.mjs";
+import { getLineage, resolveLineage } from "../core/peer-lineage.mjs";
 import { listenPeersServer } from "../core/peers-serve.mjs";
 import { rememberRemoteInbox, listRemoteInboxes } from "../core/peers.mjs";
 import { tryDeliver } from "../core/peer-deliver.mjs";
@@ -43,6 +44,7 @@ const PRESENCE_SRC = fileURLToPath(new URL("../core/peer-presence.mjs", import.m
 const REPLY_SRC = fileURLToPath(new URL("../core/peer-reply.mjs", import.meta.url));
 const DELIVER_SRC = fileURLToPath(new URL("../core/peer-deliver.mjs", import.meta.url));
 const OUTCOME_SRC = fileURLToPath(new URL("../core/peer-outcome.mjs", import.meta.url));
+const LINEAGE_SRC = fileURLToPath(new URL("../core/peer-lineage.mjs", import.meta.url));
 const DISPATCH_SRC = fileURLToPath(new URL("../core/dispatch.mjs", import.meta.url));
 
 function cli(args, { cwd, env } = {}) {
@@ -64,7 +66,7 @@ function cursorFlags(joined) {
 }
 
 test("assign, receive, presence, outcome, and reply stay off the job-plane dispatcher", () => {
-  for (const src of [ASSIGN_SRC, RECEIVE_SRC, PRESENCE_SRC, REPLY_SRC, DELIVER_SRC, OUTCOME_SRC]) {
+  for (const src of [ASSIGN_SRC, RECEIVE_SRC, PRESENCE_SRC, REPLY_SRC, DELIVER_SRC, OUTCOME_SRC, LINEAGE_SRC]) {
     const text = fs.readFileSync(src, "utf8");
     assert.doesNotMatch(text, /dispatch\.mjs/);
     assert.doesNotMatch(text, /runWorkerSync|launchBackground|decideRoute/);
@@ -772,4 +774,196 @@ test("companion peers presence --once and consume drive the shipped CLI", () => 
   assert.equal(box.messages[0].from, "mini-orch");
   assert.equal(box.messages[0].isConsent, false);
   assert.match(box.messages[0].text, /refuse: unparsed-outcome/);
+});
+
+test("getLineage is one record after assign and consume, not inbox dumps", async () => {
+  isolateStateRoot();
+  registerPeer({ name: "main", harness: "grok", computer: "Mac Mini M4" });
+  registerPeer({
+    name: "mini-orch",
+    harness: "grok",
+    computer: "Mac Mini M4",
+    sessionId: "sess-lin"
+  });
+  heartbeatPeer({ name: "mini-orch", turnState: "idle" });
+  const assigned = await assignTask({
+    from: "main",
+    text: "look at CI",
+    hintHarness: "grok",
+    machines: listMachines(),
+    probes: {}
+  });
+  const open = getLineage(assigned.message.id);
+  assert.equal(open.id, assigned.message.id);
+  assert.equal(open.from, "main");
+  assert.equal(open.to, "mini-orch");
+  assert.equal(open.computer, "Mac Mini M4");
+  assert.equal(open.hintHarness, "grok");
+  assert.equal(open.text, "look at CI");
+  assert.equal(open.decision, null);
+  assert.equal(open.messages, undefined);
+  assert.equal(open.inbox, undefined);
+
+  handleAssignedWork({
+    name: "mini-orch",
+    runWake: () => ({
+      status: 0,
+      stdout: `assign ${assigned.message.id} done\nkind: ping\nharness: grok\nlooked\n`
+    })
+  });
+  const lin = getLineage(assigned.message.id);
+  assert.equal(lin.decision.status, "done");
+  assert.equal(lin.decision.kind, "ping");
+  assert.equal(lin.decision.harness, "grok");
+  assert.match(lin.reply.text, new RegExp(`^assign ${assigned.message.id} done`));
+  assert.equal(lin.reply.from, "mini-orch");
+  assert.equal(lin.messages, undefined);
+});
+
+test("getLineage records PEER_ACK as refuse wake-only not done", async () => {
+  isolateStateRoot();
+  registerPeer({ name: "main", harness: "grok" });
+  registerPeer({
+    name: "old-orch",
+    harness: "cursor",
+    computer: "2017 MacBook Pro",
+    sessionId: "sess-c"
+  });
+  heartbeatPeer({ name: "old-orch", turnState: "idle" });
+  const assigned = await assignTask({
+    from: "main",
+    text: "run the plate",
+    machines: listMachines(),
+    probes: {}
+  });
+  handleAssignedWork({
+    name: "old-orch",
+    resumeProbe: () => false,
+    runWake: () => ({ status: 0, stdout: `PEER_ACK ${assigned.message.id}\n` })
+  });
+  const lin = getLineage(assigned.message.id);
+  assert.equal(lin.decision.status, "refuse");
+  assert.match(lin.decision.reason, /wake-only/);
+  assert.doesNotMatch(lin.reply.text, /^assign \S+ done/m);
+});
+
+test("getLineage implement done includes terminal job via cwd", async () => {
+  isolateStateRoot();
+  const repo = makeRepo();
+  registerPeer({ name: "main", harness: "grok" });
+  registerPeer({
+    name: "old-orch",
+    harness: "grok",
+    sessionId: "s",
+    computer: "2017 MacBook Pro"
+  });
+  heartbeatPeer({ name: "old-orch", turnState: "idle" });
+  const assigned = await assignTask({
+    from: "main",
+    text: "implement the fix",
+    machines: listMachines(),
+    probes: {}
+  });
+  const { appendJob } = await import("../core/state.mjs");
+  const job = appendJob(repo, { id: "11111111-2222-3333-4444-555555555555", status: "completed" });
+  handleAssignedWork({
+    name: "old-orch",
+    cwd: repo,
+    runWake: () => ({
+      status: 0,
+      stdout: `assign ${assigned.message.id} done\nkind: implement\njob: ${job.id}\nharness: grok\nfixed\n`
+    })
+  });
+  const lin = getLineage(assigned.message.id, { cwd: repo });
+  assert.equal(lin.decision.status, "done");
+  assert.equal(lin.decision.kind, "implement");
+  assert.equal(lin.job.id, job.id);
+  assert.equal(lin.job.status, "completed");
+});
+
+test("getLineage hint ignored is rerouted with harness used", async () => {
+  isolateStateRoot();
+  registerPeer({ name: "main", harness: "grok" });
+  registerPeer({
+    name: "old-orch",
+    harness: "grok",
+    sessionId: "s",
+    computer: "2017 MacBook Pro"
+  });
+  heartbeatPeer({ name: "old-orch", turnState: "idle" });
+  const assigned = await assignTask({
+    from: "main",
+    text: "look at CI",
+    hintHarness: "grok",
+    machines: listMachines(),
+    probes: {}
+  });
+  handleAssignedWork({
+    name: "old-orch",
+    runWake: () => ({
+      status: 0,
+      stdout: `assign ${assigned.message.id} rerouted\nharness: cursor\nused cursor; grok down\n`
+    })
+  });
+  const lin = getLineage(assigned.message.id);
+  assert.equal(lin.decision.status, "rerouted");
+  assert.equal(lin.decision.harness, "cursor");
+  assert.equal(lin.hintHarness, "grok");
+});
+
+test("companion peers lineage is the same shape on two launches", async () => {
+  const dataDir = isolateStateRoot();
+  const repo = makeRepo();
+  const env = { AGENT_COLLAB_DATA: dataDir, AGENT_COLLAB_GROK_BIN: stubBin("process.exit(0);\n") };
+  const self = cli(
+    [
+      "peers",
+      "presence",
+      "--computer",
+      "Mac Mini M4",
+      "--harness",
+      "grok",
+      "--turn-state",
+      "idle",
+      "--name",
+      "mini-orch",
+      "--session-id",
+      "sess-cli",
+      "--once",
+      "--json"
+    ],
+    { cwd: repo, env }
+  );
+  assert.equal(self.status, 0, self.stderr);
+  assert.equal(cli(["peers", "register", "--name", "main", "--harness", "grok", "--json"], { cwd: repo, env }).status, 0);
+  const assigned = cli(["peers", "assign", "--from", "main", "--hint-harness", "grok", "lineage-handoff", "--json"], {
+    cwd: repo,
+    env
+  });
+  assert.equal(assigned.status, 0, assigned.stderr);
+  const sent = JSON.parse(assigned.stdout);
+  assert.ok(sent.message.id);
+  const consume = cli(["peers", "consume", "--name", "mini-orch", "--json"], { cwd: repo, env });
+  assert.equal(consume.status, 0, consume.stderr);
+  const first = cli(["peers", "lineage", "--id", sent.message.id, "--json"], { cwd: repo, env });
+  const second = cli(["peers", "lineage", "--id", sent.message.id, "--json"], { cwd: repo, env });
+  assert.equal(first.status, 0, first.stderr);
+  assert.equal(second.status, 0, second.stderr);
+  const a = JSON.parse(first.stdout);
+  const b = JSON.parse(second.stdout);
+  assert.equal(a.id, sent.message.id);
+  assert.equal(a.from, "main");
+  assert.equal(a.to, "mini-orch");
+  assert.equal(a.computer, "Mac Mini M4");
+  assert.equal(a.hintHarness, "grok");
+  assert.equal(a.text, "lineage-handoff");
+  assert.ok(a.decision);
+  assert.match(a.decision.status, /^(done|refuse|rerouted)$/);
+  assert.equal(a.messages, undefined);
+  assert.equal(a.decision.status, b.decision.status);
+  assert.equal(a.decision.reason, b.decision.reason);
+  assert.equal(a.reply.text, b.reply.text);
+  const pulled = await resolveLineage(sent.message.id);
+  assert.equal(pulled.id, a.id);
+  assert.equal(pulled.decision.status, a.decision.status);
 });

@@ -8,6 +8,7 @@ import { tryDeliver as cursorTryDeliver } from "./peer-inject-cursor.mjs";
 import { replyToAssign } from "./peer-reply.mjs";
 import { run } from "./process.mjs";
 import { getJob } from "./state.mjs";
+import { recordConsumeLineage } from "./peer-lineage.mjs";
 
 function queued(reason, extra = {}) {
   return {
@@ -305,6 +306,27 @@ export function handleAssignedWork({ name, runWake, resumeProbe, refuse, cwd } =
     harness: peer.harness,
     computer: peer.computer
   });
+  try {
+    const decided = refuse
+      ? { status: "refuse", reason: result.reason || "undelivered", kind: null, harness: peer.harness, jobId: null }
+      : peerAckOnly
+        ? { status: "refuse", reason: "wake-only", kind: null, harness: "cursor", jobId: null }
+        : {
+            status: outcome.status,
+            reason: outcome.reason,
+            kind: outcome.kind,
+            harness: outcome.harness,
+            jobId: outcome.jobId
+          };
+    recordConsumeLineage({
+      id: message.id,
+      ...decided,
+      jobStatus: job?.status ?? null,
+      reply
+    });
+  } catch {
+    /* lineage is best-effort; reply already enqueued */
+  }
   return {
     consumed: true,
     name,
