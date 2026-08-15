@@ -10,7 +10,7 @@
 
 ## Global Constraints
 
-- Spec: `docs/superpowers/specs/2026-08-15-machine-orchestrator-design.md` (`8755d8c` plus this plan).
+- Spec: `docs/superpowers/specs/2026-08-15-machine-orchestrator-design.md` (Cursor plan challenge `da99d5d5` folded here).
 - Peer plane must not import `dispatch.mjs`. Job lookup is `getJob`/`isTerminalStatus` from `state.mjs` or a `status` subprocess.
 - No `done` from PEER_ACK or bare exit 0.
 - `--harness` on assign remains sender identity; worker hint is `--hint-harness` / `hintHarness`.
@@ -43,9 +43,10 @@
 
 **Interfaces:**
 - Produces: `ASSIGN_OUTCOME_RE` = `/^assign\s+(\S+)\s+(done|refuse|rerouted)\b/m`
-- Produces: `parseAssignOutcome(stdout, assignId) → { status, assignId, reason, harness, jobId, body } | null`
-- Produces: `finalizeAssignOutcome(parsed, { job } = {}) → { status, reason, harness, jobId, text }`
-- `job` is `{ id, status }` or `null`. Terminal statuses are `completed`, `no-changes`, `failed`, `blocked`, `breach`, `conflicted` (same set as `isTerminalStatus` in `core/state.mjs`).
+- Produces: `parseAssignOutcome(stdout, assignId) → { status, assignId, reason, harness, jobId, kind, body } | null`
+- Produces: `finalizeAssignOutcome(parsed, { job } = {}) → { status, reason, harness, jobId, kind, text }`
+- `job` is `{ id, status }` or `null`. Use `isTerminalStatus` from `core/state.mjs` (includes `cancelled`). Do not duplicate the terminal set.
+- `done` without `jobId` is legal only if `kind === "ping"`. `done` with a `job:` line requires that job to exist and be terminal. `done` with neither `kind: ping` nor a terminal job → `refuse`.
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -83,10 +84,20 @@ test("finalizeAssignOutcome refuses done when implement job is not terminal", ()
   assert.equal(refused.status, "refuse");
   assert.match(refused.reason, /job-not-terminal|unparsed/);
   const ping = finalizeAssignOutcome(
-    parseAssignOutcome(`assign ${id} done\nharness: grok\nok\n`, id),
+    parseAssignOutcome(`assign ${id} done\nkind: ping\nharness: grok\nok\n`, id),
     { job: null }
   );
   assert.equal(ping.status, "done");
+  const forged = finalizeAssignOutcome(
+    parseAssignOutcome(`assign ${id} done\nharness: grok\nimplemented it\n`, id),
+    { job: null }
+  );
+  assert.equal(forged.status, "refuse");
+  const cancelled = finalizeAssignOutcome(
+    parseAssignOutcome(`assign ${id} done\njob: 11111111-2222-3333-4444-555555555555\n`, id),
+    { job: { id: "11111111-2222-3333-4444-555555555555", status: "cancelled" } }
+  );
+  assert.equal(cancelled.status, "done");
 });
 ```
 
@@ -101,10 +112,12 @@ Expected: FAIL `ERR_MODULE_NOT_FOUND` for `peer-outcome.mjs`.
 `core/peer-outcome.mjs`:
 
 ```javascript
+import { isTerminalStatus } from "./state.mjs";
+
 export const ASSIGN_OUTCOME_RE = /^assign\s+(\S+)\s+(done|refuse|rerouted)\b/m;
 const HARNESS_RE = /^harness:\s*(claude|codex|grok|cursor|opencode)\s*$/im;
 const JOB_RE = /^job:\s*([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\s*$/im;
-const TERMINAL = new Set(["completed", "no-changes", "failed", "blocked", "breach", "conflicted"]);
+const KIND_RE = /^kind:\s*(ping|implement)\s*$/im;
 
 export function parseAssignOutcome(stdout, assignId) {
   const text = String(stdout || "");
@@ -114,30 +127,55 @@ export function parseAssignOutcome(stdout, assignId) {
   const after = text.slice(hit.index + hit[0].length);
   const harness = after.match(HARNESS_RE)?.[1]?.toLowerCase() ?? null;
   const jobId = after.match(JOB_RE)?.[1] ?? null;
-  const reason = after.split("\n").map((l) => l.trim()).find((l) => l && !/^harness:/i.test(l) && !/^job:/i.test(l)) || null;
-  return { assignId: hit[1], status: hit[2], reason, harness, jobId, body: after.trim() };
+  const kind = after.match(KIND_RE)?.[1]?.toLowerCase() ?? null;
+  const reason =
+    after
+      .split("\n")
+      .map((l) => l.trim())
+      .find((l) => l && !/^harness:/i.test(l) && !/^job:/i.test(l) && !/^kind:/i.test(l)) || null;
+  return { assignId: hit[1], status: hit[2], reason, harness, jobId, kind, body: after.trim() };
 }
 
 export function finalizeAssignOutcome(parsed, { job = null } = {}) {
   if (!parsed) {
-    return { status: "refuse", reason: "unparsed-outcome", harness: null, jobId: null, text: null };
+    return { status: "refuse", reason: "unparsed-outcome", harness: null, jobId: null, kind: null, text: null };
   }
-  if (parsed.status === "done" && parsed.jobId) {
-    if (!job || job.id !== parsed.jobId || !TERMINAL.has(String(job.status))) {
+  if (parsed.status === "done") {
+    if (parsed.jobId) {
+      if (!job || job.id !== parsed.jobId || !isTerminalStatus(job.status)) {
+        return {
+          status: "refuse",
+          reason: "job-not-terminal",
+          harness: parsed.harness,
+          jobId: parsed.jobId,
+          kind: parsed.kind,
+          text: `assign ${parsed.assignId} refuse: job-not-terminal`
+        };
+      }
+    } else if (parsed.kind !== "ping") {
       return {
         status: "refuse",
-        reason: "job-not-terminal",
+        reason: "done-needs-ping-or-job",
         harness: parsed.harness,
-        jobId: parsed.jobId,
-        text: `assign ${parsed.assignId} refuse: job-not-terminal`
+        jobId: null,
+        kind: parsed.kind,
+        text: `assign ${parsed.assignId} refuse: done-needs-ping-or-job`
       };
     }
   }
   const lines = [`assign ${parsed.assignId} ${parsed.status}`];
+  if (parsed.kind) lines.push(`kind: ${parsed.kind}`);
   if (parsed.harness) lines.push(`harness: ${parsed.harness}`);
   if (parsed.jobId) lines.push(`job: ${parsed.jobId}`);
   if (parsed.reason) lines.push(parsed.reason);
-  return { status: parsed.status, reason: parsed.reason, harness: parsed.harness, jobId: parsed.jobId, text: lines.join("\n") };
+  return {
+    status: parsed.status,
+    reason: parsed.reason,
+    harness: parsed.harness,
+    jobId: parsed.jobId,
+    kind: parsed.kind,
+    text: lines.join("\n")
+  };
 }
 ```
 
@@ -168,7 +206,8 @@ git commit -m "feat(peers): parse assign outcomes and refuse non-terminal jobs"
 - Produces: `sendMessage({ to, from, text, hintHarness, allowCrossMachine })` stores `hintHarness` on the record
 - Produces: `publicMessage` includes `hintHarness: string | null`
 - Produces: `assignTask({ …, hintHarness })` POSTs `{ to, from, text, hintHarness }`
-- Produces: `pickMachine(rows, { computer, from } = {})` skips session name `main` and `from`
+- Produces: `pickMachine(rows, { computer, from, to } = {})` selects at **session** granularity: walk `row.sessions`, skip `main` and `from`, set `row.session` to the chosen session. If `to` is set, pick that session name even if it is `main`.
+- Produces: `assignTask({ …, to })` — explicit session override. CLI `--to <session>`.
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -182,15 +221,32 @@ test("sendMessage round-trips hintHarness", () => {
   assert.equal(readInbox({ name: "old-orch" })[0].hintHarness, "grok");
 });
 
-test("pickMachine skips session main even when it is idle", () => {
+test("pickMachine skips session main even when main is the primary heartbeat", () => {
+  isolateStateRoot();
+  registerPeer({ name: "mini-orch", harness: "grok", computer: "Mac Mini M4", sessionId: "orch" });
+  registerPeer({ name: "main", harness: "grok", computer: "Mac Mini M4", sessionId: "main" });
+  heartbeatPeer({ name: "mini-orch", turnState: "idle" });
+  heartbeatPeer({ name: "main", turnState: "idle" });
+  const picked = pickMachine(listMachines(), { from: "main", computer: "Mac Mini M4" });
+  assert.equal(picked.session.name, "mini-orch");
+});
+
+test("pickMachine --to main is explicit override", () => {
   isolateStateRoot();
   registerPeer({ name: "main", harness: "grok", computer: "Mac Mini M4", sessionId: "main" });
   registerPeer({ name: "mini-orch", harness: "grok", computer: "Mac Mini M4", sessionId: "orch" });
   heartbeatPeer({ name: "main", turnState: "idle" });
   heartbeatPeer({ name: "mini-orch", turnState: "idle" });
-  const picked = pickMachine(listMachines(), { from: "main" });
-  assert.equal(picked.session.name, "mini-orch");
-  assert.notEqual(picked.session.name, "main");
+  assert.equal(pickMachine(listMachines(), { to: "main" }).session.name, "main");
+});
+
+test("pickMachine skips session main even when from is omitted", () => {
+  isolateStateRoot();
+  registerPeer({ name: "main", harness: "grok", computer: "Mac Mini M4", sessionId: "main" });
+  registerPeer({ name: "mini-orch", harness: "grok", computer: "Mac Mini M4", sessionId: "orch" });
+  heartbeatPeer({ name: "main", turnState: "idle" });
+  heartbeatPeer({ name: "mini-orch", turnState: "idle" });
+  assert.equal(pickMachine(listMachines()).session.name, "mini-orch");
 });
 ```
 
@@ -210,31 +266,49 @@ In HTTP `/peers/send`, pass `hintHarness: body.hintHarness` into `sendMessage`.
 
 In `assignTask` remote and local paths, pass `hintHarness`.
 
-In `pickMachine` / `canAssignMachine`:
+Pick at **session** granularity. Do not drop a whole machine because `row.session` is `main`.
 
 ```javascript
-export function canAssignMachine(row, { from } = {}) {
-  const name = row?.session?.name;
+function sessionEligible(session, { from, to } = {}) {
+  const name = session?.name;
   if (!name) return false;
+  if (to) return name === to;
   if (name === "main") return false;
   if (from && name === from) return false;
-  return Boolean(row?.available && row.activity !== "busy");
+  return true;
 }
 
-export function eligibleMachines(rows = [], opts = {}) {
-  return rows.filter((row) => canAssignMachine(row, opts));
+export function canAssignMachine(row, opts = {}) {
+  if (!row?.available || row.activity === "busy") return false;
+  const sessions = row.sessions?.length ? row.sessions : row.session ? [row.session] : [];
+  return sessions.some((s) => sessionEligible(s, opts));
 }
 
-export function pickMachine(rows = [], { computer, from } = {}) {
+export function pickMachine(rows = [], { computer, from, to } = {}) {
   const want = computer ? normalizeComputer(computer) : null;
-  const pool = eligibleMachines(rows, { from }).filter((r) => !want || r.computer === want);
-  // existing sort unchanged
+  const pool = [];
+  for (const row of rows) {
+    if (want && row.computer !== want) continue;
+    if (!row.available || row.activity === "busy") continue;
+    const sessions = row.sessions?.length ? row.sessions : row.session ? [row.session] : [];
+    const sess = sessions.find((s) => sessionEligible(s, { from, to }));
+    if (!sess) continue;
+    pool.push({ ...row, session: sess });
+  }
+  // existing idle-first / oldest lastSeen sort on pool
 }
 ```
 
-Update every `eligibleMachines`/`pickMachine` caller in `peer-assign.mjs` and companion assign/pick to pass `{ from: options.from }`.
+`assignTask` **must** call:
 
-CLI: add `hint-harness` to `VALUE_FLAGS`; `assignTask({ hintHarness: options["hint-harness"] })`.
+```javascript
+const machine = pickMachine(rows, { computer: toComputer, from, to });
+const target = to || machine.session.name;
+```
+
+Companion `peers pick` / `peers assign` / `peers eligible` pass `{ from: options.from, to: options.to }`.
+
+CLI: add `hint-harness` and `to` (session name) to `VALUE_FLAGS` if `to` is not already a send flag (it is — reuse `--to` on assign as session override). `assignTask({ hintHarness: options["hint-harness"], to: options.to })`.
 
 - [ ] **Step 4: Run tests to verify they pass**
 
@@ -337,6 +411,8 @@ const hit = (box.messages || []).find((m) => {
 
 Companion `--wait-seconds` already has `result.message.id`; pass `assignId: result.message.id`.
 
+Also change the existing `rememberRemoteInbox stores credentials used by waitForReply` test: it currently waits on `assign x done` with **no** `assignId`. After this task it must either pass `assignId` matching that text or send a correctly shaped `assign <uuid> done` + `kind: ping` line. Do not leave a wait test that succeeds on unbound `assign x done`.
+
 - [ ] **Step 4: Run tests to verify they pass**
 
 Run: `node --import ./test/_isolate-instances.mjs --test --test-name-pattern "waitForReply" test/peer-handoff.test.mjs`
@@ -363,7 +439,9 @@ git commit -m "feat(peers): bind waitForReply to assign outcome first line"
 - Consumes: `parseAssignOutcome`, `finalizeAssignOutcome` (Task 1); `message.hintHarness` (Task 2)
 - Produces: `buildOrchestratorPrompt({ message })` string containing assign id, `from`, hint, `message.text`, and the words `ping`, `implement`, `hint`, `refuse`
 - Produces: `tryReceive` for presence harness grok/claude/codex/opencode uses orchestrator prompt on argv, **not** `buildWakePrompt`
-- Produces: `handleAssignedWork` reply text = `finalizeAssignOutcome(...)`. Cursor `delivered` from PEER_ACK → `refuse: wake-only` unless parsed outcome exists
+- Produces: `tryReceive` **returns `stdout`** (and `stderr`) on success and failure. Without this, `handleAssignedWork` always sees empty stdout → `unparsed-outcome`.
+- Produces: `handleAssignedWork({ name, runWake, resumeProbe, refuse, cwd })`. `cwd` defaults to `process.cwd()`. Job lookup is `getJob(cwd, parsed.jobId)` only.
+- Produces: reply text = `finalizeAssignOutcome(...)`. Cursor PEER_ACK → `refuse: wake-only` unless a valid outcome block is also present.
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -380,16 +458,38 @@ test("orchestrator consume prompt is not PEER_ACK-only and includes assign body"
     hintHarness: "grok"
   });
   let prompt = "";
-  handleAssignedWork({
+  const out = handleAssignedWork({
     name: "old-orch",
     runWake: ({ args }) => {
       prompt = args.join("\n");
-      return { status: 0, stdout: `assign ${msg.id} done\nharness: grok\nlooked\n` };
+      return { status: 0, stdout: `assign ${msg.id} done\nkind: ping\nharness: grok\nlooked\n` };
     }
   });
   assert.match(prompt, /look at the red test/);
   assert.match(prompt, /implement|ping/i);
   assert.doesNotMatch(prompt, /^PEER_ACK /m);
+  assert.match(out.reply.text, new RegExp(`^assign ${msg.id} done`, "m"));
+});
+
+test("implement done requires terminal job via handleAssignedWork cwd", async () => {
+  isolateStateRoot();
+  const repo = makeRepo();
+  registerPeer({ name: "main", harness: "grok" });
+  registerPeer({ name: "old-orch", harness: "grok", sessionId: "s", computer: "2017 MacBook Pro" });
+  heartbeatPeer({ name: "old-orch", turnState: "idle" });
+  const msg = sendMessage({ to: "old-orch", from: "main", text: "implement the fix" });
+  const { appendJob } = await import("../core/state.mjs");
+  const job = appendJob(repo, { id: "11111111-2222-3333-4444-555555555555", status: "completed" });
+  const out = handleAssignedWork({
+    name: "old-orch",
+    cwd: repo,
+    runWake: () => ({
+      status: 0,
+      stdout: `assign ${msg.id} done\nkind: implement\njob: ${job.id}\nharness: grok\nfixed\n`
+    })
+  });
+  assert.match(out.reply.text, new RegExp(`^assign ${msg.id} done`));
+  assert.match(out.reply.text, /job: 11111111-2222-3333-4444-555555555555/);
 });
 
 test("PEER_ACK-only cursor consume does not enqueue assign done", async () => {
@@ -406,6 +506,28 @@ test("PEER_ACK-only cursor consume does not enqueue assign done", async () => {
   assert.equal(out.consumed, true);
   assert.match(out.reply.text, /^assign \S+ refuse: wake-only/m);
   assert.doesNotMatch(out.reply.text, /^assign \S+ done/m);
+});
+
+test("hint ignored replies rerouted with harness used", () => {
+  isolateStateRoot();
+  registerPeer({ name: "main", harness: "grok" });
+  registerPeer({ name: "old-orch", harness: "grok", sessionId: "s", computer: "2017 MacBook Pro" });
+  heartbeatPeer({ name: "old-orch", turnState: "idle" });
+  const msg = sendMessage({
+    to: "old-orch",
+    from: "main",
+    text: "look at CI",
+    hintHarness: "grok"
+  });
+  const out = handleAssignedWork({
+    name: "old-orch",
+    runWake: () => ({
+      status: 0,
+      stdout: `assign ${msg.id} rerouted\nharness: cursor\nused cursor; grok down\n`
+    })
+  });
+  assert.match(out.reply.text, new RegExp(`^assign ${msg.id} rerouted`));
+  assert.match(out.reply.text, /harness: cursor/);
 });
 
 test("exit 0 without outcome is refuse unparsed-outcome", () => {
@@ -434,26 +556,27 @@ Add `buildOrchestratorPrompt({ message })` in `peer-receive.mjs`. It must includ
 
 `tryReceive`: if harness is `grok|codex|opencode|claude` (claude still no fake inject: if no native socket, do **not** spawn; return `native_required` and let `handleAssignedWork` refuse). If spawning grok/codex/opencode, set `prompt: buildOrchestratorPrompt({ message })` in `buildIdleResume`.
 
-`handleAssignedWork` after `tryReceive`:
+**Required:** every `tryReceive` return value that ran `runWake` must include `stdout: String(result?.stdout || "")` (and `stderr` if present), including `acked-after-resume` and `wake-failed` / `acked-after-PEER_ACK`.
+
+`handleAssignedWork({ name, runWake, resumeProbe, refuse, cwd })` after `tryReceive`:
 
 ```javascript
-const stdout = result.stdout || result.wakeStdout || "";
+const stdout = result.stdout || "";
 let parsed = parseAssignOutcome(stdout, message.id);
-if (!parsed && result.reason === "acked-after-PEER_ACK") {
-  parsed = { assignId: message.id, status: "refuse", reason: "wake-only", harness: "cursor", jobId: null, body: "" };
-}
-if (!parsed) {
-  parsed = null;
+if (!parsed && /PEER_ACK/.test(stdout)) {
+  parsed = { assignId: message.id, status: "refuse", reason: "wake-only", harness: "cursor", jobId: null, kind: null, body: "" };
 }
 let job = null;
 if (parsed?.jobId) {
-  job = getJob(process.cwd(), parsed.jobId);
+  job = getJob(cwd || process.cwd(), parsed.jobId);
 }
 const outcome = finalizeAssignOutcome(parsed, { job });
 const replyText = outcome.text || `assign ${message.id} refuse: ${outcome.reason}`;
 ```
 
-Check `getJob` signature: `getJob(cwd, id)` uses workspace state. For tests, `appendJob` a terminal job when asserting implement-done. Import `getJob` from `state.mjs` only.
+Import `getJob` from `state.mjs` only. Pass `cwd` from tests that `appendJob` into `makeRepo()`.
+
+Update existing `handleAssignedWork` tests that stub `runWake: () => ({ status: 0, stdout: "ok" })` so they expect `refuse: unparsed-outcome` **or** return a valid `assign <id> done` + `kind: ping` block. Update the companion consume CLI test that stubs grok exit 0 and only asserts `consumed` so it either returns a valid outcome block or expects `refuse: unparsed-outcome`. Do not leave stubs that encode the old false-done contract.
 
 Cursor path: if `tryReceive` returns `delivered: true` with reason `acked-after-PEER_ACK`, map to wake-only refuse as above. Do not change Cursor argv (still `--mode ask --trust`).
 
@@ -520,6 +643,14 @@ git commit -m "test(peers): keep orchestrator consume off dispatch.mjs"
 
 ---
 
+## Decisions after Cursor plan challenge (`da99d5d5`)
+
+Accepted and folded: propagate `tryReceive` stdout; pick at session granularity; `--to <session>` override; `isTerminalStatus` (includes `cancelled`); `handleAssignedWork({ cwd })` for `getJob`; require `kind: ping` for job-less `done`; tighten legacy wait/consume stubs; explicit `pickMachine(rows, { from, to })` in assign/pick/eligible.
+
+Rejected as extra scope: presence LaunchAgent cwd injection; HTTP `POST /peers/assign`; Mini forcing a session without `--to`.
+
+---
+
 ## Spec coverage
 
 | Spec requirement | Task |
@@ -529,9 +660,11 @@ git commit -m "test(peers): keep orchestrator consume off dispatch.mjs"
 | One enqueue from parsed outcome | 4 |
 | hintHarness wire + CLI | 2 |
 | wait binds `assign <id> …` | 3 |
-| Exclude `main` from pick | 2 |
+| Exclude `main` from pick (session-level; `--to` override) | 2 |
+| tryReceive returns stdout; handleAssignedWork cwd for getJob | 4 |
 | done + job id must be terminal | 1, 4 |
 | Tests that fail on PEER_ACK-only | 4 |
+| Hint ignored → parsed `rerouted` | 4 |
 | No dispatch import | 5 |
 | Do not switch 2017 presence in this slice | (docs in 4; no ops task) |
 

@@ -77,11 +77,12 @@ enqueue). Unparsed stdout, PEER_ACK-only stdout, or exit 0 without a valid
 first line → `assign <id> refuse: unparsed-outcome`. Never `done` from exit 0.
 
 **`done` handshake:** `done` is allowed only if the parsed first line is
-`done` **and** either (a) the body is a ping completed in-turn, or (b) a
-**terminal job id** on this machine is present and `status` of that job is
-terminal. Nested `delegate` that is still running or missing → `refuse`.
-Classification (ping vs implement) may stay in the model. **Completion may
-not.**
+`done` **and** either (a) the body includes `kind: ping` (ping completed
+in-turn), or (b) a **terminal job id** on this machine is present and
+`status` of that job is terminal (`isTerminalStatus`, including
+`cancelled`). `done` with neither `kind: ping` nor a terminal job →
+`refuse`. Nested `delegate` that is still running or missing → `refuse`.
+Classification may stay in the model. **Completion may not.**
 
 Wire format: `sendMessage` / HTTP `/peers/send` grow an optional
 `hintHarness` (`claude|codex|grok|cursor|opencode`). CLI
