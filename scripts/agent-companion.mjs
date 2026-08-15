@@ -7,8 +7,8 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { decideRoute, resolveDriver, isAuthoritativeDriver, runSetup, runWorkerSync, runWithFallback, resolveFallbackKinds, launchBackground, runJob, waitForJob, refreshJobStatus, applyResult, recommendWorker, cleanupWorkerRuntime } from "../core/dispatch.mjs";
-import { registerPeer, registerSelf, heartbeatPeer, unregisterPeer, listPeers, sendMessage, readInbox, ackInbox, resolveComputer } from "../core/peers.mjs";
-import { listenPeersServer, peersHttp } from "../core/peers-serve.mjs";
+import { registerPeer, registerSelf, heartbeatPeer, unregisterPeer, listPeers, listMachines, listMachineRecords, registerMachine, sendMessage, readInbox, ackInbox, resolveComputer } from "../core/peers.mjs";
+import { listenPeersServer, peersHttp, collectMachineProbes } from "../core/peers-serve.mjs";
 import { deliverInbox } from "../core/peer-deliver.mjs";
 import { runDoctor } from "../core/doctor.mjs";
 import { mergeReviews } from "../core/merge-reviews.mjs";
@@ -20,7 +20,7 @@ import { MODEL_PROFILES } from "../core/model-profiles.mjs";
 import { cleanupJobWorktree, collectGarbage, waitForPidExit } from "../core/gc.mjs";
 import { resolveWorkerRef } from "../core/instances.mjs";
 
-const VALUE_FLAGS = new Set(["worker", "workers", "role", "driver", "base", "timeout", "gate", "sandbox", "focus", "surface", "task", "job", "recent", "retention-days", "artifacts-older-than", "name", "to", "from", "harness", "reply-address", "session-id", "reach", "pid", "listen", "token", "pair", "limit", "turn-state", "computer"]);
+const VALUE_FLAGS = new Set(["worker", "workers", "role", "driver", "base", "timeout", "gate", "sandbox", "focus", "surface", "task", "job", "recent", "retention-days", "artifacts-older-than", "name", "to", "from", "harness", "reply-address", "session-id", "reach", "pid", "listen", "token", "pair", "limit", "turn-state", "computer", "url"]);
 const BOOL_FLAGS = new Set(["json", "apply", "wait", "background", "profiles", "no-fallback", "live", "active", "latest", "refresh", "artifact-only", "force", "dry-run", "include-unapplied", "ack"]);
 
 function optionalComputer(options) {
@@ -476,12 +476,14 @@ switch (subcommand) {
     const verb = positionals[0];
     if (!verb) {
       fail(
-        "usage: agent-companion peers <self|heartbeat|register|unregister|list|send|inbox|deliver|serve>\n" +
+        "usage: agent-companion peers <self|heartbeat|register|unregister|list|machine|machines|send|inbox|deliver|serve>\n" +
           "  peers self --harness <h> [--name <name>] [--session-id <id>] [--pid <n>] [--computer <label>] [--json]\n" +
           "  peers heartbeat --name <name> [--pid <n>] [--turn-state idle|busy] [--computer <label>] [--json]\n" +
           "  peers register --name <name> [--harness <h>] [--reply-address <addr>] [--session-id <id>] [--pid <n>] [--reach local|cross-machine] [--computer <label>] [--pair <secret>] [--json]\n" +
           "  peers unregister --name <name> [--json]\n" +
           "  peers list [--json]\n" +
+          "  peers machine --computer <label> [--url http://100.x:8744]\n" +
+          "  peers machines [--json]\n" +
           "  peers send --to <name> --from <name> <text>\n" +
           "  peers inbox --name <name> [--ack] [--json]\n" +
           "  peers deliver --name <name> [--limit n] [--json]\n" +
@@ -577,6 +579,30 @@ switch (subcommand) {
               .join("\n")
           : "(no peers)";
         out(peers, options, human);
+        break;
+      }
+      if (verb === "machine") {
+        const computer = optionalComputer(options);
+        if (!computer) fail("peers machine: --computer is required");
+        const rec = registerMachine({ computer, url: options.url });
+        out(rec, options, `machine ${rec.computer}\t${rec.url ?? "-"}`);
+        break;
+      }
+      if (verb === "machines") {
+        const pair = options.pair || process.env.AGENT_COLLAB_PEERS_PAIR;
+        const probes = await collectMachineProbes(listMachineRecords(), { pair });
+        const rows = listMachines({ probes });
+        const human = rows.length
+          ? rows
+              .map((m) => {
+                const sess = m.session
+                  ? `${m.session.name}:${m.session.turnState ?? "unknown"}`
+                  : "-";
+                return `${m.computer}\t${m.available ? "available" : "unavailable"}\t${m.activity}\t${sess}\t${m.reason}`;
+              })
+              .join("\n")
+          : "(no machines)";
+        out(rows, options, human);
         break;
       }
       if (verb === "send") {
@@ -741,6 +767,8 @@ switch (subcommand) {
         "  peers register --name <name> [--harness h] [--reply-address addr] [--session-id id] [--pid n] [--reach local|cross-machine] [--computer label]",
         "  peers unregister --name <name>",
         "  peers list [--json]",
+        "  peers machine --computer label [--url http://100.x:port]",
+        "  peers machines [--json]",
         "  peers send --to <name> --from <name> <text>",
         "  peers inbox --name <name> [--ack] [--json]",
         "  peers deliver --name <name> [--limit n] [--json]",

@@ -10,6 +10,8 @@ const PEERS_VERSION = 1;
 const NAME_RE = /^[A-Za-z0-9._-]{1,64}$/;
 const COMPUTER_RE = /^[A-Za-z0-9][A-Za-z0-9 .'_-]{0,63}$/;
 export const PEER_LIVE_TTL_MS = 10 * 60 * 1000;
+/** A computer with no heartbeat/health inside this window is treated as asleep/offline. */
+export const MACHINE_AVAILABLE_TTL_MS = 90 * 1000;
 
 export function resolvePeersDir() {
   const explicit = process.env.AGENT_COLLAB_PEERS_DIR;
@@ -111,16 +113,22 @@ function writeJsonAtomic(file, value) {
 
 function loadRegistry() {
   const file = registryPath();
-  if (!fs.existsSync(file)) return { version: PEERS_VERSION, peers: {} };
+  if (!fs.existsSync(file)) return { version: PEERS_VERSION, peers: {}, machines: {} };
   const parsed = JSON.parse(fs.readFileSync(file, "utf8"));
   if (!parsed || typeof parsed !== "object" || typeof parsed.peers !== "object" || parsed.peers === null) {
-    return { version: PEERS_VERSION, peers: {} };
+    return { version: PEERS_VERSION, peers: {}, machines: {} };
   }
-  return { version: PEERS_VERSION, peers: parsed.peers };
+  const machines =
+    parsed.machines && typeof parsed.machines === "object" && parsed.machines !== null ? parsed.machines : {};
+  return { version: PEERS_VERSION, peers: parsed.peers, machines };
 }
 
 function saveRegistry(reg) {
-  writeJsonAtomic(registryPath(), { version: PEERS_VERSION, peers: reg.peers });
+  writeJsonAtomic(registryPath(), {
+    version: PEERS_VERSION,
+    peers: reg.peers,
+    machines: reg.machines ?? {}
+  });
 }
 
 function nowIso() {
@@ -139,11 +147,36 @@ function pidAlive(pid) {
 }
 
 function isLive(peer, nowMs = Date.now()) {
-  const alive = pidAlive(peer?.pid);
-  if (alive === false) return false;
+  // Remote pids are not this machine's — only lastSeen counts there.
+  if ((peer?.reach ?? "local") === "local") {
+    const alive = pidAlive(peer?.pid);
+    if (alive === false) return false;
+  }
   const ts = Date.parse(peer?.lastSeenAt ?? "");
   if (!Number.isFinite(ts)) return false;
   return nowMs - ts <= PEER_LIVE_TTL_MS;
+}
+
+function isFresh(iso, nowMs, ttlMs) {
+  const ts = Date.parse(iso ?? "");
+  return Number.isFinite(ts) && nowMs - ts <= ttlMs;
+}
+
+function touchMachine(reg, computer) {
+  const name = normalizeComputer(computer);
+  if (!name) return;
+  if (!reg.machines) reg.machines = {};
+  const existing = reg.machines[name];
+  if (!existing) {
+    reg.machines[name] = {
+      computer: name,
+      url: null,
+      registeredAt: nowIso(),
+      lastSeenAt: nowIso()
+    };
+    return;
+  }
+  existing.lastSeenAt = nowIso();
 }
 
 function peerStatus(peer, nowMs = Date.now()) {
@@ -259,6 +292,7 @@ export function registerPeer({
         if (pid !== undefined) existing.pid = normalizePid(pid);
         if (tokenHash !== undefined) existing.tokenHash = tokenHash;
         if (computer !== undefined) existing.computer = normalizeComputer(computer);
+        touchMachine(reg, existing.computer);
         saveRegistry(reg);
         return { ...publicPeer(existing), collided: false };
       }
@@ -280,6 +314,7 @@ export function registerPeer({
       computer
     });
     reg.peers[finalName] = peer;
+    touchMachine(reg, peer.computer);
     saveRegistry(reg);
     return { ...publicPeer(peer), collided };
   });
@@ -310,6 +345,7 @@ export function heartbeatPeer({ name, pid, turnState, computer } = {}) {
     if (pid !== undefined) existing.pid = normalizePid(pid);
     if (turnState !== undefined) existing.turnState = normalizeTurnState(turnState);
     if (computer !== undefined) existing.computer = normalizeComputer(computer);
+    touchMachine(reg, existing.computer);
     saveRegistry(reg);
     return publicPeer(existing);
   });
@@ -438,6 +474,136 @@ export function ackInbox({ name, ids } = {}) {
     writeInboxRecords(name, records);
     return { name, acked };
   });
+}
+
+export function registerMachine({ computer, url } = {}) {
+  const name = normalizeComputer(computer);
+  if (!name) throw new Error("computer is required");
+  let normalizedUrl = null;
+  if (url != null && String(url).trim() !== "") {
+    let parsed;
+    try {
+      parsed = new URL(String(url).trim());
+    } catch {
+      throw new Error(`invalid machine url: ${JSON.stringify(url)}`);
+    }
+    if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+      throw new Error(`invalid machine url protocol: ${parsed.protocol}`);
+    }
+    if (parsed.hostname === "0.0.0.0" || parsed.hostname === "::") {
+      throw new Error("machine url must not use 0.0.0.0");
+    }
+    normalizedUrl = parsed.href.replace(/\/$/, "");
+  }
+  return withPeersLock(() => {
+    const reg = loadRegistry();
+    const existing = reg.machines[name] ?? {};
+    const rec = {
+      computer: name,
+      url: url === undefined ? (existing.url ?? null) : normalizedUrl,
+      registeredAt: existing.registeredAt ?? nowIso(),
+      lastSeenAt: nowIso()
+    };
+    reg.machines[name] = rec;
+    saveRegistry(reg);
+    return rec;
+  });
+}
+
+export function listMachineRecords() {
+  const reg = loadRegistry();
+  return Object.values(reg.machines ?? {}).sort((a, b) => a.computer.localeCompare(b.computer));
+}
+
+function sessionView(peer) {
+  return {
+    name: peer.name,
+    harness: peer.harness ?? null,
+    turnState: peer.turnState ?? null,
+    status: peer.status,
+    lastSeenAt: peer.lastSeenAt
+  };
+}
+
+function summarizeMachine({ rec, sessions, probe, nowMs }) {
+  const remoteSessions = Array.isArray(probe?.sessions)
+    ? probe.sessions.map((s) => ({
+        name: s.name,
+        harness: s.harness ?? null,
+        turnState: s.turnState ?? null,
+        status: s.status ?? "stale",
+        lastSeenAt: s.lastSeenAt,
+        computer: s.computer ?? rec.computer
+      }))
+    : null;
+  const allSessions = remoteSessions ?? sessions;
+  const recent = allSessions.filter(
+    (s) => s.status === "live" && isFresh(s.lastSeenAt, nowMs, MACHINE_AVAILABLE_TTL_MS)
+  );
+
+  let available = false;
+  let reason = "asleep-or-offline";
+  if (probe) {
+    available = Boolean(probe.ok);
+    reason = probe.ok ? "health-ok" : String(probe.error || "unreachable");
+  } else if (rec.url) {
+    available = false;
+    reason = "not-probed";
+  } else {
+    available = recent.length > 0 || isFresh(rec.lastSeenAt, nowMs, MACHINE_AVAILABLE_TTL_MS);
+    reason = available ? "recent-heartbeat" : "asleep-or-offline";
+  }
+
+  let activity = "none";
+  if (recent.some((s) => s.turnState === "busy")) activity = "busy";
+  else if (recent.some((s) => s.turnState === "idle")) activity = "idle";
+  else if (available) activity = "unknown";
+
+  const lastSeenAt = [rec.lastSeenAt, probe?.at, ...allSessions.map((s) => s.lastSeenAt)]
+    .filter(Boolean)
+    .sort()
+    .at(-1) ?? null;
+
+  const primary = [...recent].sort((a, b) => Date.parse(b.lastSeenAt) - Date.parse(a.lastSeenAt))[0] ?? null;
+
+  return {
+    computer: rec.computer,
+    url: rec.url ?? null,
+    available,
+    activity,
+    reason,
+    lastSeenAt,
+    session: primary ? sessionView(primary) : null,
+    sessions: allSessions.map(sessionView)
+  };
+}
+
+/**
+ * Fleet roster for the main orchestrator.
+ * available = computer is awake/reachable (90s heartbeat or live health probe).
+ * activity  = idle|busy from the live session turnState, else unknown|none.
+ * `probes[computer] = { ok, at?, error?, sessions? }` from HTTP health/list.
+ */
+export function listMachines({ nowMs = Date.now(), probes = {} } = {}) {
+  const reg = loadRegistry();
+  const peers = Object.values(reg.peers).map((peer) => publicPeer(peer, nowMs));
+  const names = new Set([
+    ...Object.keys(reg.machines ?? {}),
+    ...peers.map((p) => p.computer).filter(Boolean)
+  ]);
+  const rows = [];
+  for (const computer of names) {
+    const rec = reg.machines[computer] ?? { computer, url: null, lastSeenAt: null };
+    rows.push(
+      summarizeMachine({
+        rec,
+        sessions: peers.filter((p) => p.computer === computer),
+        probe: Object.hasOwn(probes, computer) ? probes[computer] : undefined,
+        nowMs
+      })
+    );
+  }
+  return rows.sort((a, b) => a.computer.localeCompare(b.computer));
 }
 
 export function isPeerConsent(_message) {

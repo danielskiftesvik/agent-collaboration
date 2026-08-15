@@ -13,11 +13,14 @@ import {
   heartbeatPeer,
   unregisterPeer,
   listPeers,
+  listMachines,
+  registerMachine,
   sendMessage,
   readInbox,
   ackInbox,
   isPeerConsent,
-  resolvePeersDir
+  resolvePeersDir,
+  MACHINE_AVAILABLE_TTL_MS
 } from "../core/peers.mjs";
 
 const CLI = fileURLToPath(new URL("../scripts/agent-companion.mjs", import.meta.url));
@@ -273,6 +276,47 @@ test("dead pid is listed stale even inside the TTL window", () => {
   isolateStateRoot();
   registerPeer({ name: "ghost", harness: "cursor", pid: 999999999 });
   assert.equal(listPeers().find((p) => p.name === "ghost").status, "stale");
+});
+
+test("cross-machine peers do not use this machine's pid table", () => {
+  isolateStateRoot();
+  registerPeer({
+    name: "remote-cursor",
+    harness: "cursor",
+    pid: 999999999,
+    reach: "cross-machine",
+    computer: "2017 MacBook Pro"
+  });
+  assert.equal(listPeers().find((p) => p.name === "remote-cursor").status, "live");
+});
+
+test("listMachines reports available/idle vs unavailable for asleep computers", () => {
+  isolateStateRoot();
+  registerPeer({ name: "mini-cursor", harness: "cursor", computer: "Mac Mini M4" });
+  heartbeatPeer({ name: "mini-cursor", turnState: "idle" });
+  registerMachine({ computer: "2017 MacBook Pro", url: "http://100.70.172.74:8744" });
+
+  const now = Date.now();
+  const rows = listMachines({
+    nowMs: now,
+    probes: {
+      "2017 MacBook Pro": { ok: false, at: new Date(now).toISOString(), error: "unreachable" }
+    }
+  });
+  const mini = rows.find((m) => m.computer === "Mac Mini M4");
+  const old = rows.find((m) => m.computer === "2017 MacBook Pro");
+  assert.equal(mini.available, true);
+  assert.equal(mini.activity, "idle");
+  assert.equal(mini.session.name, "mini-cursor");
+  assert.equal(old.available, false);
+  assert.equal(old.activity, "none");
+  assert.equal(old.reason, "unreachable");
+
+  const busy = listMachines({
+    nowMs: now + MACHINE_AVAILABLE_TTL_MS + 1
+  }).find((m) => m.computer === "Mac Mini M4");
+  assert.equal(busy.available, false);
+  assert.equal(busy.reason, "asleep-or-offline");
 });
 
 test("companion peers self and heartbeat drive the shipped CLI", () => {

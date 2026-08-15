@@ -21,6 +21,8 @@ peers heartbeat --name <name> [--pid <n>] [--turn-state idle|busy] [--computer <
 peers register --name <name> [--harness <h>] [--reply-address <addr>] [--session-id <id>] [--pid <n>] [--reach local|cross-machine] [--computer <label>] [--json]
 peers unregister --name <name> [--json]
 peers list [--json]
+peers machine --computer <label> [--url http://100.x:port]
+peers machines [--json]
 peers send --to <name> --from <name> <text>
 peers inbox --name <name> [--ack] [--json]
 peers deliver --name <name> [--limit n] [--json]
@@ -385,6 +387,9 @@ read `tasks/<jobId>/reports/<worker>.md`.
 - `AGENT_COLLAB_PEERS_PAIR` — shared join secret for HTTP register/list/health.
 - `AGENT_COLLAB_PEERS_COMPUTER` — operator-chosen computer label (e.g.
   `Mac Mini M4`, `2017 MacBook Pro`, `MacBook Pro M4 Max`). Not hostname.
+- `peers machines` — fleet roster: `available` (awake/reachable) vs
+  `activity` (session idle/busy). Heartbeat ~30s. Remote laptops need
+  `peers machine --computer … --url …` on the orchestrator host.
 - `AGENT_COLLAB_DATA` — out-of-repo state root (default: tmp/plugin-data).
 - `AGENT_COLLAB_DRIVER` — default driver harness.
 - `AGENT_COLLAB_SANDBOX` — OS-sandbox: `on` (all non-codex) | `off`. Default: opt-in

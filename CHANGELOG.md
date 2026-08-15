@@ -10,6 +10,9 @@
   secret (`--pair` / `AGENT_COLLAB_PEERS_PAIR`) is set; register/list/health
   then require that bearer. Peers and serve accept an operator-chosen
   `--computer` / `AGENT_COLLAB_PEERS_COMPUTER` label (not hostname).
+  `peers machines` reports `available` (awake/reachable, 90s) vs `activity`
+  (session idle/busy) so a main orchestrator can see which computers can
+  take work.
 
 ## 0.12.1 - 2026-08-13
 

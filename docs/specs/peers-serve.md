@@ -16,6 +16,29 @@ Operator-chosen label on the machine, not `os.hostname()` and not Tailscale.
 Suggested labels for this fleet: `Mac Mini M4`, `2017 MacBook Pro`,
 `MacBook Pro M4 Max`.
 
+## Machine availability (orchestrator roster)
+
+Two axes, never mixed:
+
+| Field | Meaning |
+|---|---|
+| `available` | Computer is **awake and reachable**. False if asleep, offline, or traveling. |
+| `activity` | Live session `turnState`: `busy` / `idle` / `unknown` / `none`. |
+
+`peers machines` is what a main orchestrator reads before handing work to a
+per-machine orchestrator.
+
+- Local: available if a heartbeat (or session lastSeen) is newer than 90s.
+  Laptops that sleep stop heartbeating; they become unavailable without a
+  dead-pid check (frozen processes still have pids).
+- Remote: register the serve URL once on the orchestrator host:
+  `peers machine --computer "2017 MacBook Pro" --url http://100.x:8744`
+  then `peers machines` probes `/peers/health`. No answer → unavailable.
+- Agents on an awake machine should `peers heartbeat --turn-state idle|busy`
+  about every 30s.
+
+This is the roster, not the task distributor.
+
 ## Bind
 
 - Default: loopback only (`127.0.0.1` / `localhost` / `::1`).

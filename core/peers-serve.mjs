@@ -9,6 +9,8 @@ import {
   unregisterPeer,
   heartbeatPeer,
   listPeers,
+  listMachines,
+  registerMachine,
   getPeer,
   sendMessage,
   readInbox,
@@ -126,11 +128,17 @@ export function createPeersServer({ pairToken = null, computer = null } = {}) {
           sendJson(res, 401, { error: "pair token required" });
           return;
         }
+        const nowMs = Date.now();
+        const probes = {};
+        if (serveComputer) {
+          probes[serveComputer] = { ok: true, at: new Date(nowMs).toISOString() };
+        }
         sendJson(res, 200, {
           ok: true,
           peers: listPeers().length,
           host: os.hostname(),
-          computer: serveComputer
+          computer: serveComputer,
+          machines: listMachines({ nowMs, probes })
         });
         return;
       }
@@ -149,12 +157,15 @@ export function createPeersServer({ pairToken = null, computer = null } = {}) {
         }
         const body = JSON.parse((await readBody(req)) || "{}");
         const issued = newPeerToken();
+        const remote = req.socket?.remoteAddress || "";
+        const fromLoopback =
+          remote === "127.0.0.1" || remote === "::1" || remote === "::ffff:127.0.0.1";
         const peer = registerPeer({
           name: body.name,
           harness: body.harness,
           sessionId: body.sessionId,
           replyAddress: body.replyAddress,
-          reach: body.reach ?? "local",
+          reach: body.reach ?? (fromLoopback ? "local" : "cross-machine"),
           pid: body.pid,
           tokenHash: hashPeerToken(issued),
           computer: body.computer ?? serveComputer
@@ -227,7 +238,7 @@ export function createPeersServer({ pairToken = null, computer = null } = {}) {
   });
 }
 
-export async function peersHttp(baseUrl, { method = "GET", path, token, body } = {}) {
+export async function peersHttp(baseUrl, { method = "GET", path, token, body, timeoutMs = 5000 } = {}) {
   const url = new URL(path, baseUrl.endsWith("/") ? baseUrl : `${baseUrl}/`);
   const headers = { accept: "application/json" };
   if (token) headers.authorization = `Bearer ${token}`;
@@ -236,7 +247,12 @@ export async function peersHttp(baseUrl, { method = "GET", path, token, body } =
     payload = JSON.stringify(body);
     headers["content-type"] = "application/json";
   }
-  const res = await fetch(url, { method, headers, body: payload });
+  const res = await fetch(url, {
+    method,
+    headers,
+    body: payload,
+    signal: AbortSignal.timeout(Number(timeoutMs) || 5000)
+  });
   const text = await res.text();
   let json;
   try {
@@ -253,6 +269,43 @@ export async function peersHttp(baseUrl, { method = "GET", path, token, body } =
   return json;
 }
 
+/** Probe registered machine URLs. Unreachable / asleep / traveling → ok:false. */
+export async function collectMachineProbes(records, { pair, timeoutMs = 2000 } = {}) {
+  const probes = {};
+  await Promise.all(
+    (records || []).map(async (rec) => {
+      if (!rec?.computer || !rec.url) return;
+      try {
+        const health = await peersHttp(rec.url, {
+          path: "/peers/health",
+          token: pair,
+          timeoutMs
+        });
+        let sessions = [];
+        try {
+          const listed = await peersHttp(rec.url, {
+            path: "/peers/list",
+            token: pair,
+            timeoutMs
+          });
+          sessions = listed.peers || [];
+        } catch {
+          sessions = [];
+        }
+        probes[rec.computer] = {
+          ok: true,
+          at: new Date().toISOString(),
+          sessions,
+          computer: health.computer ?? rec.computer
+        };
+      } catch {
+        probes[rec.computer] = { ok: false, at: new Date().toISOString(), error: "unreachable" };
+      }
+    })
+  );
+  return probes;
+}
+
 export function listenPeersServer({ host = "127.0.0.1", port = 0, pair, computer } = {}) {
   assertPeersBindHost(host);
   const pairToken = resolvePairToken({ pair });
@@ -265,9 +318,16 @@ export function listenPeersServer({ host = "127.0.0.1", port = 0, pair, computer
     server.once("error", reject);
     server.listen(Number(port) || 0, host, () => {
       const addr = server.address();
+      const url = `http://${host}:${addr.port}`;
+      if (serveComputer) {
+        registerMachine({
+          computer: serveComputer,
+          url: isLoopbackHost(host) ? undefined : url
+        });
+      }
       resolve({
         server,
-        url: `http://${host}:${addr.port}`,
+        url,
         host,
         port: addr.port,
         pairRequired: Boolean(pairToken),

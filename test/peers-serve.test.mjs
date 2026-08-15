@@ -160,6 +160,19 @@ test("HTTP send enqueues to a cross-machine dest (daemon path only)", async () =
   }
 });
 
+test("health includes machines roster and this computer is available", async () => {
+  isolateStateRoot();
+  const { server, url } = await listenPeersServer({ computer: "Mac Mini M4" });
+  try {
+    const health = await peersHttp(url, { path: "/peers/health" });
+    const row = health.machines.find((m) => m.computer === "Mac Mini M4");
+    assert.equal(row.available, true);
+    assert.ok(["idle", "unknown", "none", "busy"].includes(row.activity));
+  } finally {
+    server.close();
+  }
+});
+
 test("serve computer label is on health and inherited by register", async () => {
   isolateStateRoot();
   const { server, url, computer } = await listenPeersServer({ computer: "MacBook Pro M4 Max" });

@@ -220,6 +220,8 @@ Two delegation paths, chosen automatically:
 | `peers register --name <name> [--harness h] [--computer label]` | Register a stable routing name on this machine |
 | `peers unregister --name <name>` | Drop a routing name |
 | `peers list [--json]` | Named reachable peers (local mailbox) |
+| `peers machine --computer <label> [--url http://…]` | Remember a computer (and optional serve URL) on the orchestrator host |
+| `peers machines [--json]` | Fleet roster: available (awake) vs activity (session idle/busy) |
 | `peers send --to <name> --from <name> <text>` | Enqueue a plain-text ping (not consent; slash text stays text). Does not wake. |
 | `peers inbox --name <name> [--ack] [--json]` | Read (and optionally ack) unread peer messages |
 | `peers deliver --name <name> [--limit n] [--json]` | Consume inbox (Cursor idle wake; other harnesses stub) |
