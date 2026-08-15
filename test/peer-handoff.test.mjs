@@ -222,6 +222,27 @@ test("pickMachine skips session main even when from is omitted", () => {
   assert.equal(pickMachine(listMachines()).session.name, "mini-orch");
 });
 
+test("pickMachine does not pick stale mini-orch when only main is live", async () => {
+  isolateStateRoot();
+  registerPeer({ name: "main", harness: "grok", computer: "Mac Mini M4", sessionId: "main" });
+  registerPeer({ name: "mini-orch", harness: "grok", computer: "Mac Mini M4", sessionId: "orch" });
+  heartbeatPeer({ name: "main", turnState: "idle" });
+  heartbeatPeer({ name: "mini-orch", turnState: "idle" });
+  agePeer("mini-orch", MACHINE_AVAILABLE_TTL_MS + 5_000);
+  const rows = listMachines();
+  const mini = rows.find((m) => m.computer === "Mac Mini M4");
+  assert.equal(mini.available, true);
+  assert.ok(mini.sessions.some((s) => s.name === "main" && s.status === "live"));
+  const picked = pickMachine(rows, { from: "main", computer: "Mac Mini M4" });
+  assert.equal(picked, null);
+  assert.notEqual(picked?.session?.name, "mini-orch");
+  assert.equal(pickMachine(rows, { to: "mini-orch" }).session.name, "mini-orch");
+  await assert.rejects(
+    () => assignTask({ from: "main", text: "stale-orch", machines: rows, probes: {} }),
+    (err) => err.code === "PEER_NO_CAPACITY"
+  );
+});
+
 test("rememberRemoteInbox stores credentials used by waitForReply", async () => {
   isolateStateRoot();
   registerPeer({ name: "old-orch", harness: "cursor", computer: "2017 MacBook Pro", sessionId: "s" });

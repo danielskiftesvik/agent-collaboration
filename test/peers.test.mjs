@@ -380,6 +380,37 @@ test("pickMachine only assigns available non-busy machines and prefers idle", ()
   assert.equal(picked.session.name, "max-orch");
 });
 
+test("pickMachine does not pick a stale orch when probe.ok keeps the machine available", () => {
+  isolateStateRoot();
+  registerMachine({ computer: "2017 MacBook Pro", url: "http://100.70.172.74:8744" });
+  const now = Date.now();
+  const staleAt = new Date(now - MACHINE_AVAILABLE_TTL_MS - 5_000).toISOString();
+  const rows = listMachines({
+    nowMs: now,
+    probes: {
+      "2017 MacBook Pro": {
+        ok: true,
+        at: new Date(now).toISOString(),
+        sessions: [
+          {
+            name: "old-orch",
+            harness: "grok",
+            turnState: "idle",
+            status: "stale",
+            lastSeenAt: staleAt
+          }
+        ]
+      }
+    }
+  });
+  const row = rows.find((m) => m.computer === "2017 MacBook Pro");
+  assert.equal(row.available, true);
+  assert.equal(row.reason, "health-ok");
+  assert.equal(row.sessions[0].name, "old-orch");
+  assert.equal(eligibleMachines(rows).length, 0);
+  assert.equal(pickMachine(rows), null);
+});
+
 test("assignTask refuses when every machine is busy or asleep", async () => {
   isolateStateRoot();
   registerPeer({ name: "busy-orch", harness: "cursor", computer: "2017 MacBook Pro" });

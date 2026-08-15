@@ -623,13 +623,16 @@ export function listMachines({ nowMs = Date.now(), probes = {} } = {}) {
   return rows.sort((a, b) => a.computer.localeCompare(b.computer));
 }
 
-function sessionEligible(session, { from, to } = {}) {
+function sessionEligible(session, { from, to, nowMs = Date.now() } = {}) {
   const name = session?.name;
   if (!name) return false;
   if (to) return name === to;
   if (name === "main") return false;
   if (from && name === from) return false;
-  return true;
+  // Auto-pick only live+fresh sessions. Machine available can be true
+  // because main is live or HTTP health is ok while *-orch is dead.
+  if (session.status !== "live") return false;
+  return isFresh(session.lastSeenAt, nowMs, MACHINE_AVAILABLE_TTL_MS);
 }
 
 /** Main orchestrator policy: awake, not in a turn, and has a session to receive work. */
@@ -655,9 +658,9 @@ export function eligibleMachines(rows = [], opts = {}) {
  * Then oldest lastSeen, then computer name — do not always pick the mini.
  * Session pick skips `main` / `from` unless `--to` names that session.
  */
-export function pickMachine(rows = [], { computer, from, to } = {}) {
+export function pickMachine(rows = [], { computer, from, to, nowMs = Date.now() } = {}) {
   const want = computer ? normalizeComputer(computer) : null;
-  const pool = eligibleMachines(rows, { from, to }).filter((row) => !want || row.computer === want);
+  const pool = eligibleMachines(rows, { from, to, nowMs }).filter((row) => !want || row.computer === want);
   const rank = (row) => (row.activity === "idle" ? 0 : 1);
   return (
     [...pool].sort((a, b) => {
