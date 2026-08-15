@@ -186,6 +186,7 @@ Two planes, kept separate:
   `reach: cross-machine` still fail-closes. Opt-in Tailscale `peers serve` can
   enqueue over HTTP. The 2017 MacBook Pro and MacBook Pro M4 Max need not be
   awake for assign on this Mini; remote assign may stay HTTP-enqueue.
+  Operator map: [`docs/specs/peers-fleet.md`](docs/specs/peers-fleet.md).
 
 Two delegation paths, chosen automatically:
 
@@ -226,7 +227,7 @@ Two delegation paths, chosen automatically:
 | `peers machine --computer <label> [--url http://…]` | Remember a computer (and optional serve URL) on the orchestrator host |
 | `peers machines [--json]` | Fleet roster: available / activity / harness |
 | `peers eligible` / `peers pick` | Machines that can take work (`available && not busy`) |
-| `peers assign --from <name> <text>` | Enqueue a task ping to the picked machine; refuse if none eligible |
+| `peers assign --from <name> [--to-computer label] [--wait-seconds n] <text>` | Enqueue to an eligible machine; wait polls the remote reply inbox |
 | `peers send --to <name> --from <name> <text>` | Enqueue a plain-text ping (not consent; slash text stays text). Does not wake. |
 | `peers inbox --name <name> [--ack] [--json]` | Read (and optionally ack) unread peer messages |
 | `peers deliver --name <name> [--limit n] [--json]` | Low-level inbox consume (Cursor idle wake; Claude native_required; Codex/Grok/OpenCode idle resume) |

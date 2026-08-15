@@ -3,6 +3,9 @@
 Mailbox daemon. Owns the peers files so clients that cannot write `$HOME`
 can talk over HTTP. File mailbox remains the default.
 
+Fleet operator map (computers, assign/reply, what was proven):
+[`peers-fleet.md`](./peers-fleet.md).
+
 ## Computer names
 
 Operator-chosen label on the machine, not `os.hostname()` and not Tailscale.
