@@ -24,7 +24,7 @@ import { MODEL_PROFILES } from "../core/model-profiles.mjs";
 import { cleanupJobWorktree, collectGarbage, waitForPidExit } from "../core/gc.mjs";
 import { resolveWorkerRef } from "../core/instances.mjs";
 
-const VALUE_FLAGS = new Set(["worker", "workers", "role", "driver", "base", "timeout", "gate", "sandbox", "focus", "surface", "task", "job", "recent", "retention-days", "artifacts-older-than", "name", "to", "from", "harness", "reply-address", "session-id", "reach", "pid", "listen", "token", "pair", "limit", "turn-state", "computer", "url", "interval-ms", "refuse", "to-computer", "wait-seconds"]);
+const VALUE_FLAGS = new Set(["worker", "workers", "role", "driver", "base", "timeout", "gate", "sandbox", "focus", "surface", "task", "job", "recent", "retention-days", "artifacts-older-than", "name", "to", "from", "harness", "hint-harness", "reply-address", "session-id", "reach", "pid", "listen", "token", "pair", "limit", "turn-state", "computer", "url", "interval-ms", "refuse", "to-computer", "wait-seconds"]);
 const BOOL_FLAGS = new Set(["json", "apply", "wait", "background", "profiles", "no-fallback", "live", "active", "latest", "refresh", "artifact-only", "force", "dry-run", "include-unapplied", "ack", "once", "consume", "no-consume"]);
 
 function optionalComputer(options) {
@@ -491,7 +491,7 @@ switch (subcommand) {
           "  peers machines [--json]\n" +
           "  peers eligible [--json]\n" +
           "  peers pick [--json]\n" +
-          "  peers assign --from <name> [--to-computer label] [--wait-seconds n] <text>\n" +
+          "  peers assign --from <name> [--to <session>] [--to-computer label] [--hint-harness h] [--wait-seconds n] <text>\n" +
           "  peers send --to <name> --from <name> <text>\n" +
           "  peers inbox --name <name> [--ack] [--json]\n" +
           "  peers deliver --name <name> [--limit n] [--json]\n" +
@@ -675,7 +675,7 @@ switch (subcommand) {
         const probes = await collectMachineProbes(listMachineRecords(), { pair });
         const rows = listMachines({ probes });
         if (verb === "eligible") {
-          const eligible = eligibleMachines(rows);
+          const eligible = eligibleMachines(rows, { from: options.from, to: options.to });
           const human = eligible.length
             ? eligible
                 .map((m) => `${m.computer}\t${m.activity}\t${m.session.name}`)
@@ -685,7 +685,7 @@ switch (subcommand) {
           break;
         }
         if (verb === "pick") {
-          const picked = pickMachine(rows);
+          const picked = pickMachine(rows, { from: options.from, to: options.to });
           if (!picked) {
             out({ picked: null, machines: rows }, options, "(no eligible machine)");
             process.exitCode = 2;
@@ -705,7 +705,9 @@ switch (subcommand) {
           computer: optionalComputer(options),
           toComputer: options["to-computer"],
           machines: rows,
-          probes
+          probes,
+          hintHarness: options["hint-harness"],
+          to: options.to
         });
         let payload = result;
         if (options["wait-seconds"]) {
@@ -936,7 +938,7 @@ switch (subcommand) {
         "  peers machines [--json]",
         "  peers eligible [--json]",
         "  peers pick [--json]",
-        "  peers assign --from <name> <text>",
+        "  peers assign --from <name> [--to <session>] [--to-computer label] [--hint-harness h] [--wait-seconds n] <text>",
         "  peers send --to <name> --from <name> <text>",
         "  peers inbox --name <name> [--ack] [--json]",
         "  peers deliver --name <name> [--limit n] [--json]",

@@ -331,6 +331,7 @@ test("listMachines reports available/idle vs unavailable for asleep computers", 
 test("pickMachine only assigns available non-busy machines and prefers idle", () => {
   isolateStateRoot();
   registerPeer({ name: "main", harness: "grok", computer: "Mac Mini M4" });
+  registerPeer({ name: "mini-orch", harness: "grok", computer: "Mac Mini M4" });
   registerPeer({ name: "old-orch", harness: "cursor", computer: "2017 MacBook Pro" });
   registerPeer({ name: "max-orch", harness: "cursor", computer: "MacBook Pro M4 Max" });
   heartbeatPeer({ name: "old-orch", turnState: "busy" });
@@ -368,10 +369,12 @@ test("pickMachine only assigns available non-busy machines and prefers idle", ()
       }
     }
   });
-  const names = eligibleMachines(rows).map((m) => m.computer);
+  const eligible = eligibleMachines(rows);
+  const names = eligible.map((m) => m.computer);
   assert.ok(names.includes("Mac Mini M4"));
   assert.ok(names.includes("MacBook Pro M4 Max"));
   assert.ok(!names.includes("2017 MacBook Pro"));
+  assert.equal(eligible.find((m) => m.computer === "Mac Mini M4").session.name, "mini-orch");
   const picked = pickMachine(rows);
   assert.equal(picked.computer, "MacBook Pro M4 Max");
   assert.equal(picked.session.name, "max-orch");
@@ -403,13 +406,16 @@ test("assignTask enqueues to the picked local session", async () => {
   const result = await assignTask({
     from: "main",
     text: "run plate-03",
+    hintHarness: "grok",
     machines: listMachines(),
     probes: {}
   });
   assert.equal(result.to, "mini-orch");
   assert.equal(result.remote, false);
   assert.equal(result.message.text, "run plate-03");
+  assert.equal(result.message.hintHarness, "grok");
   assert.equal(readInbox({ name: "mini-orch" })[0].text, "run plate-03");
+  assert.equal(readInbox({ name: "mini-orch" })[0].hintHarness, "grok");
 });
 
 test("companion peers self and heartbeat drive the shipped CLI", () => {

@@ -206,7 +206,13 @@ export function createPeersServer({ pairToken = null, computer = null } = {}) {
         sendJson(
           res,
           200,
-          sendMessage({ to: body.to, from: body.from, text: body.text, allowCrossMachine: true })
+          sendMessage({
+            to: body.to,
+            from: body.from,
+            text: body.text,
+            hintHarness: body.hintHarness,
+            allowCrossMachine: true
+          })
         );
         return;
       }

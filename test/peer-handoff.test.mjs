@@ -184,6 +184,43 @@ test("pickMachine --to-computer only hits that machine", () => {
   assert.equal(pickMachine(rows, { computer: "Mac Mini M4" }).session.name, "mini-orch");
 });
 
+test("sendMessage round-trips hintHarness", () => {
+  isolateStateRoot();
+  registerPeer({ name: "main", harness: "grok" });
+  registerPeer({ name: "old-orch", harness: "grok" });
+  const sent = sendMessage({ to: "old-orch", from: "main", text: "look at CI", hintHarness: "grok" });
+  assert.equal(sent.hintHarness, "grok");
+  assert.equal(readInbox({ name: "old-orch" })[0].hintHarness, "grok");
+});
+
+test("pickMachine skips session main even when main is the primary heartbeat", () => {
+  isolateStateRoot();
+  registerPeer({ name: "mini-orch", harness: "grok", computer: "Mac Mini M4", sessionId: "orch" });
+  registerPeer({ name: "main", harness: "grok", computer: "Mac Mini M4", sessionId: "main" });
+  heartbeatPeer({ name: "mini-orch", turnState: "idle" });
+  heartbeatPeer({ name: "main", turnState: "idle" });
+  const picked = pickMachine(listMachines(), { from: "main", computer: "Mac Mini M4" });
+  assert.equal(picked.session.name, "mini-orch");
+});
+
+test("pickMachine --to main is explicit override", () => {
+  isolateStateRoot();
+  registerPeer({ name: "main", harness: "grok", computer: "Mac Mini M4", sessionId: "main" });
+  registerPeer({ name: "mini-orch", harness: "grok", computer: "Mac Mini M4", sessionId: "orch" });
+  heartbeatPeer({ name: "main", turnState: "idle" });
+  heartbeatPeer({ name: "mini-orch", turnState: "idle" });
+  assert.equal(pickMachine(listMachines(), { to: "main" }).session.name, "main");
+});
+
+test("pickMachine skips session main even when from is omitted", () => {
+  isolateStateRoot();
+  registerPeer({ name: "main", harness: "grok", computer: "Mac Mini M4", sessionId: "main" });
+  registerPeer({ name: "mini-orch", harness: "grok", computer: "Mac Mini M4", sessionId: "orch" });
+  heartbeatPeer({ name: "main", turnState: "idle" });
+  heartbeatPeer({ name: "mini-orch", turnState: "idle" });
+  assert.equal(pickMachine(listMachines()).session.name, "mini-orch");
+});
+
 test("rememberRemoteInbox stores credentials used by waitForReply", async () => {
   isolateStateRoot();
   registerPeer({ name: "old-orch", harness: "cursor", computer: "2017 MacBook Pro", sessionId: "s" });

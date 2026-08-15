@@ -19,7 +19,9 @@ export async function assignTask({
   toComputer,
   machines,
   probes,
-  sessionId
+  sessionId,
+  hintHarness,
+  to
 } = {}) {
   if (!from) throw new Error("assign: from is required");
   const body = text == null ? "" : String(text);
@@ -30,7 +32,7 @@ export async function assignTask({
     listMachines({
       probes: probes ?? (await collectMachineProbes(listMachineRecords(), { pair }))
     });
-  const machine = pickMachine(rows, { computer: toComputer });
+  const machine = pickMachine(rows, { computer: toComputer, from, to });
   if (!machine) {
     const err = new Error("no eligible machine: need available and not busy");
     err.code = "PEER_NO_CAPACITY";
@@ -38,7 +40,7 @@ export async function assignTask({
     throw err;
   }
 
-  const to = machine.session.name;
+  const target = to || machine.session.name;
   let message;
   let senderToken = null;
   let senderName = from;
@@ -60,14 +62,14 @@ export async function assignTask({
       method: "POST",
       path: "/peers/send",
       token: sender.token,
-      body: { to, from: senderName, text: body }
+      body: { to: target, from: senderName, text: body, hintHarness }
     });
     rememberRemoteInbox({ name: senderName, url: machine.url, token: senderToken });
   } else {
-    message = sendMessage({ to, from, text: body });
+    message = sendMessage({ to: target, from, text: body, hintHarness });
   }
 
-  return { machine, message, to, remote: Boolean(machine.url), senderName, senderToken };
+  return { machine, message, to: target, remote: Boolean(machine.url), senderName, senderToken };
 }
 
 export async function waitForReply({

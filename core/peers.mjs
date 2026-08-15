@@ -403,12 +403,21 @@ function writeInboxRecords(name, records) {
   chmodPrivateFile(file);
 }
 
+const HINT_HARNESSES = new Set(["claude", "codex", "grok", "cursor", "opencode"]);
+
+function normalizeHintHarness(hintHarness) {
+  if (hintHarness == null || hintHarness === "") return null;
+  const v = String(hintHarness).toLowerCase();
+  return HINT_HARNESSES.has(v) ? v : null;
+}
+
 function publicMessage(record) {
   return {
     id: record.id,
     from: record.from,
     to: record.to,
     text: record.text,
+    hintHarness: record.hintHarness ?? null,
     replyAddress: record.replyAddress,
     origin: "peer-session",
     isConsent: false,
@@ -417,7 +426,7 @@ function publicMessage(record) {
   };
 }
 
-export function sendMessage({ to, from, text, allowCrossMachine = false } = {}) {
+export function sendMessage({ to, from, text, hintHarness, allowCrossMachine = false } = {}) {
   assertName(to);
   assertName(from);
   const body = text == null ? "" : String(text);
@@ -437,6 +446,7 @@ export function sendMessage({ to, from, text, allowCrossMachine = false } = {}) 
       from,
       to,
       text: body,
+      hintHarness: normalizeHintHarness(hintHarness),
       replyAddress: sender.replyAddress ?? from,
       origin: "peer-session",
       isConsent: false,
@@ -613,22 +623,41 @@ export function listMachines({ nowMs = Date.now(), probes = {} } = {}) {
   return rows.sort((a, b) => a.computer.localeCompare(b.computer));
 }
 
-/** Main orchestrator policy: awake, not in a turn, and has a session to receive work. */
-export function canAssignMachine(row) {
-  return Boolean(row?.available && row.activity !== "busy" && row.session?.name);
+function sessionEligible(session, { from, to } = {}) {
+  const name = session?.name;
+  if (!name) return false;
+  if (to) return name === to;
+  if (name === "main") return false;
+  if (from && name === from) return false;
+  return true;
 }
 
-export function eligibleMachines(rows = []) {
-  return rows.filter(canAssignMachine);
+/** Main orchestrator policy: awake, not in a turn, and has a session to receive work. */
+export function canAssignMachine(row, opts = {}) {
+  if (!row?.available || row.activity === "busy") return false;
+  const sessions = row.sessions?.length ? row.sessions : row.session ? [row.session] : [];
+  return sessions.some((s) => sessionEligible(s, opts));
+}
+
+export function eligibleMachines(rows = [], opts = {}) {
+  const out = [];
+  for (const row of rows) {
+    if (!canAssignMachine(row, opts)) continue;
+    const sessions = row.sessions?.length ? row.sessions : row.session ? [row.session] : [];
+    const sess = sessions.find((s) => sessionEligible(s, opts));
+    out.push(sess ? { ...row, session: sess } : row);
+  }
+  return out;
 }
 
 /**
  * Prefer idle (published ready) over unknown (awake, no turnState).
  * Then oldest lastSeen, then computer name — do not always pick the mini.
+ * Session pick skips `main` / `from` unless `--to` names that session.
  */
-export function pickMachine(rows = [], { computer } = {}) {
+export function pickMachine(rows = [], { computer, from, to } = {}) {
   const want = computer ? normalizeComputer(computer) : null;
-  const pool = want ? eligibleMachines(rows).filter((r) => r.computer === want) : eligibleMachines(rows);
+  const pool = eligibleMachines(rows, { from, to }).filter((row) => !want || row.computer === want);
   const rank = (row) => (row.activity === "idle" ? 0 : 1);
   return (
     [...pool].sort((a, b) => {
