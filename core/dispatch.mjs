@@ -1030,12 +1030,17 @@ export function runWorkerSync(cwd, opts) {
   const rawEscapedPaths = worktree ? newStatusPaths(breachBefore, workingTreeStatus(cwd)) : [];
   let escapedPaths = rawEscapedPaths;
   let breachWarning;
+  // headAfter/headMoved are read unconditionally, not just when rawEscapedPaths is
+  // non-empty: a worker that commits directly onto the live checkout leaves the tree
+  // CLEAN (nothing dirty for newStatusPaths to see), so gating this on
+  // rawEscapedPaths.length let a clean-tree commit escape breach detection entirely
+  // (#821).
+  const headAfter = worktree ? headRef(cwd) : null;
+  const headMoved = !!(breachHeadBefore && headAfter && breachHeadBefore !== headAfter);
   if (rawEscapedPaths.length) {
     const exemptions = splitPathList([process.env.AGENT_COLLAB_BREACH_EXEMPT_PATHS, opts.breachExemptPaths]);
     const exempted = rawEscapedPaths.filter((p) => isExemptPath(p, exemptions));
     escapedPaths = rawEscapedPaths.filter((p) => !isExemptPath(p, exemptions));
-    const headAfter = worktree ? headRef(cwd) : null;
-    const headMoved = !!(breachHeadBefore && headAfter && breachHeadBefore !== headAfter);
     const patched = pathSet(patchPaths);
     const disjointFromPatch = escapedPaths.length > 0 && escapedPaths.every((p) => !patched.has(p));
     const cleanArtifact =
@@ -1044,11 +1049,25 @@ export function runWorkerSync(cwd, opts) {
         : !timedOut && !frozen && exitCode === 0 && answerText.trim().length > 0;
     const warnConcurrent = process.env.AGENT_COLLAB_BREACH_WARN_CONCURRENT === "on" || opts.breachWarnConcurrent === true;
     const warningPaths = [...exempted];
-    if (escapedPaths.length && warnConcurrent && cleanArtifact && (headMoved || disjointFromPatch)) {
+    // headMoved must DISQUALIFY the downgrade, never qualify it. Before this guard, a
+    // worker that both committed AND left an unrelated dirty file could still hit this
+    // branch (rawEscapedPaths.length > 0) and have headMoved's true value satisfy
+    // `(headMoved || disjointFromPatch)`, downgrading a genuine commit-based containment
+    // escape to a mere breachWarning whenever AGENT_COLLAB_BREACH_WARN_CONCURRENT=on
+    // (#821 follow-up finding). The downgrade exists for the dirty-file-only case; a
+    // moved HEAD is unconditionally the stronger, non-downgradable signal.
+    if (escapedPaths.length && warnConcurrent && cleanArtifact && !headMoved && disjointFromPatch) {
       warningPaths.push(...escapedPaths);
       escapedPaths = [];
     }
     if (warningPaths.length) breachWarning = { escapedPaths: warningPaths, headMoved };
+  } else if (headMoved) {
+    // Clean tree, but HEAD moved: the worker committed directly onto the live
+    // checkout instead of leaving dirty files. No corresponding legitimate driver-
+    // side action explains a moved HEAD here, so this is always a hard breach —
+    // never eligible for the warnConcurrent downgrade (that path exists for merely-
+    // dirty files, a much weaker signal than a moved HEAD with nothing to show for it).
+    escapedPaths = [`HEAD moved ${breachHeadBefore} -> ${headAfter} with a clean working tree (worker likely committed directly)`];
   }
 
   let reportText = answerText;
@@ -1562,10 +1581,26 @@ export function runJob(cwd, jobId) {
   console.log(`[agent-collab] job ${jobId} started ${new Date().toISOString()} — ${job.worker} (${job.harness}, ${job.role})`);
   const slot = acquireHarnessSlot(cwd, jobId, job.harness, job.instance);
   if (slot) updateJob(cwd, jobId, { status: "running", lastProgressKind: "slot-acquired", lastProgressAt: new Date().toISOString() });
+  // Re-snapshot the breach baseline HERE, immediately before the worker actually starts —
+  // not the launch-time snapshot in job.request. acquireHarnessSlot can block for an
+  // arbitrary time waiting for a free harness slot, during which the driver's real
+  // checkout can legitimately advance (another commit, another job's own activity).
+  // Comparing against a stale launch-time baseline would blame this worker for that
+  // unrelated activity (#821 follow-up finding: a queued background job could report an
+  // innocent worker as a hard breach and instruct the user to revert a legitimate commit).
+  let breachHeadBefore = job.request.breachHeadBefore;
+  let breachBefore = job.request.breachBefore;
+  try {
+    breachHeadBefore = headRef(cwd);
+    const s = workingTreeStatus(cwd);
+    breachBefore = s ? [...s] : null;
+  } catch {
+    // best-effort; fall back to the launch-time snapshot if re-snapshotting fails
+  }
   try {
   // Background runs are concurrency-prone → disable codex thread-resume (would risk
   // resuming another job's --resume-last thread).
-  return runWorkerSync(cwd, { ...job.request, jobId, noResume: true });
+  return runWorkerSync(cwd, { ...job.request, breachHeadBefore, breachBefore, jobId, noResume: true });
   } finally {
     if (slot) { try { fs.rmSync(slot, { recursive: true, force: true }); } catch { /* slot dir already gone */ } }
   }
