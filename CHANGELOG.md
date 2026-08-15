@@ -25,7 +25,10 @@
   and returns `idle`. 2017 / M4 Max need not be awake; remote assign may stay
   HTTP-enqueue. Reply to an HTTP-registered orchestrator enqueues on the
   receiving mailbox (`allowCrossMachine`); a failed reply no longer crashes
-  presence.
+  presence. Remote assign keeps a stable `sessionId` (the `--from` name),
+  stores inbox credentials, and `peers assign --wait-seconds` / `peers inbox`
+  can read the reply from the receiving mailbox. `--to-computer` pins the
+  target machine.
 
 ## 0.12.1 - 2026-08-13
 

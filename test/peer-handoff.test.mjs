@@ -18,7 +18,9 @@ import {
   resolvePeersDir,
   MACHINE_AVAILABLE_TTL_MS
 } from "../core/peers.mjs";
-import { assignTask } from "../core/peer-assign.mjs";
+import { assignTask, waitForReply } from "../core/peer-assign.mjs";
+import { listenPeersServer } from "../core/peers-serve.mjs";
+import { rememberRemoteInbox, listRemoteInboxes } from "../core/peers.mjs";
 import { tryDeliver } from "../core/peer-deliver.mjs";
 import {
   buildIdleResume,
@@ -122,6 +124,51 @@ test("assignTask prefer-idle: idle beats an available unknown session", async ()
   });
   assert.equal(result.to, "idle-orch");
   assert.equal(pickMachine(listMachines()).session.name, "idle-orch");
+});
+
+test("pickMachine --to-computer only hits that machine", () => {
+  isolateStateRoot();
+  registerPeer({ name: "main", harness: "grok", computer: "Mac Mini M4" });
+  registerPeer({ name: "mini-orch", harness: "cursor", computer: "Mac Mini M4", sessionId: "s-mini" });
+  registerPeer({ name: "old-orch", harness: "cursor", computer: "2017 MacBook Pro", sessionId: "s-old" });
+  heartbeatPeer({ name: "mini-orch", turnState: "idle" });
+  heartbeatPeer({ name: "old-orch", turnState: "idle" });
+  const rows = listMachines();
+  assert.equal(pickMachine(rows, { computer: "2017 MacBook Pro" }).session.name, "old-orch");
+  assert.equal(pickMachine(rows, { computer: "Mac Mini M4" }).session.name, "mini-orch");
+});
+
+test("rememberRemoteInbox stores credentials used by waitForReply", async () => {
+  isolateStateRoot();
+  registerPeer({ name: "old-orch", harness: "cursor", computer: "2017 MacBook Pro", sessionId: "s" });
+  heartbeatPeer({ name: "old-orch", turnState: "idle" });
+  const { server, url } = await listenPeersServer({ pair: "pair-secret" });
+  try {
+    const { peersHttp } = await import("../core/peers-serve.mjs");
+    const sender = await peersHttp(url, {
+      method: "POST",
+      path: "/peers/register",
+      token: "pair-secret",
+      body: { name: "main", harness: "grok", sessionId: "main" }
+    });
+    assert.equal(sender.name, "main");
+    rememberRemoteInbox({ name: sender.name, url, token: sender.token });
+    assert.equal(listRemoteInboxes("main")[0].url, url);
+    sendMessage({ to: "main", from: "old-orch", text: "assign x done", allowCrossMachine: true });
+    const reply = await waitForReply({
+      name: "main",
+      url,
+      token: sender.token,
+      from: "old-orch",
+      timeoutMs: 2000,
+      pollMs: 200
+    });
+    assert.equal(reply.from, "old-orch");
+    assert.match(reply.text, /done/);
+    assert.equal(reply.isConsent, false);
+  } finally {
+    server.close();
+  }
 });
 
 test("replyToAssign enqueues to a cross-machine sender on this mailbox", () => {
@@ -357,12 +404,14 @@ test("handleAssignedWork publishes busy so a second assign skips, then replies a
     sessionId: "sess-work"
   });
   heartbeatPeer({ name: "mini-orch", turnState: "idle" });
-  await assignTask({
+  const assigned = await assignTask({
     from: "main",
     text: "plate-handoff",
     machines: listMachines(),
     probes: {}
   });
+  assert.equal(assigned.to, "mini-orch");
+  assert.equal(readInbox({ name: "mini-orch" }).length, 1);
   let midFlightPick = "unset";
   let sawArgv = "";
   const out = handleAssignedWork({

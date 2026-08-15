@@ -626,10 +626,12 @@ export function eligibleMachines(rows = []) {
  * Prefer idle (published ready) over unknown (awake, no turnState).
  * Then oldest lastSeen, then computer name — do not always pick the mini.
  */
-export function pickMachine(rows = []) {
+export function pickMachine(rows = [], { computer } = {}) {
+  const want = computer ? normalizeComputer(computer) : null;
+  const pool = want ? eligibleMachines(rows).filter((r) => r.computer === want) : eligibleMachines(rows);
   const rank = (row) => (row.activity === "idle" ? 0 : 1);
   return (
-    [...eligibleMachines(rows)].sort((a, b) => {
+    [...pool].sort((a, b) => {
       const byReady = rank(a) - rank(b);
       if (byReady) return byReady;
       const ta = Date.parse(a.lastSeenAt ?? "") || 0;
@@ -642,4 +644,34 @@ export function pickMachine(rows = []) {
 
 export function isPeerConsent(_message) {
   return false;
+}
+
+function remoteTokenPath() {
+  return path.join(resolvePeersDir(), "remote-inbox-tokens.json");
+}
+
+/** Remember how to read a reply inbox on a remote serve after assign. */
+export function rememberRemoteInbox({ name, url, token } = {}) {
+  if (!name || !url || !token) return null;
+  ensurePeersDir();
+  let store = {};
+  try {
+    store = JSON.parse(fs.readFileSync(remoteTokenPath(), "utf8"));
+  } catch {
+    store = {};
+  }
+  if (!store || typeof store !== "object") store = {};
+  store[`${name}@${url}`] = { name, url, token, at: nowIso() };
+  writeJsonAtomic(remoteTokenPath(), store);
+  return store[`${name}@${url}`];
+}
+
+export function listRemoteInboxes(name) {
+  let store = {};
+  try {
+    store = JSON.parse(fs.readFileSync(remoteTokenPath(), "utf8"));
+  } catch {
+    return [];
+  }
+  return Object.values(store || {}).filter((r) => !name || r.name === name);
 }

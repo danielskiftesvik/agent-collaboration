@@ -7,10 +7,10 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { decideRoute, resolveDriver, isAuthoritativeDriver, runSetup, runWorkerSync, runWithFallback, resolveFallbackKinds, launchBackground, runJob, waitForJob, refreshJobStatus, applyResult, recommendWorker, cleanupWorkerRuntime } from "../core/dispatch.mjs";
-import { registerPeer, registerSelf, heartbeatPeer, unregisterPeer, listPeers, listMachines, listMachineRecords, registerMachine, pickMachine, eligibleMachines, sendMessage, readInbox, ackInbox, resolveComputer } from "../core/peers.mjs";
+import { registerPeer, registerSelf, heartbeatPeer, unregisterPeer, listPeers, listMachines, listMachineRecords, registerMachine, pickMachine, eligibleMachines, sendMessage, readInbox, ackInbox, resolveComputer, listRemoteInboxes } from "../core/peers.mjs";
 import { listenPeersServer, peersHttp, collectMachineProbes } from "../core/peers-serve.mjs";
 import { deliverInbox } from "../core/peer-deliver.mjs";
-import { assignTask } from "../core/peer-assign.mjs";
+import { assignTask, waitForReply } from "../core/peer-assign.mjs";
 import { handleAssignedWork } from "../core/peer-receive.mjs";
 import { replyToAssign } from "../core/peer-reply.mjs";
 import { tickPresence, runPresenceLoop } from "../core/peer-presence.mjs";
@@ -24,7 +24,7 @@ import { MODEL_PROFILES } from "../core/model-profiles.mjs";
 import { cleanupJobWorktree, collectGarbage, waitForPidExit } from "../core/gc.mjs";
 import { resolveWorkerRef } from "../core/instances.mjs";
 
-const VALUE_FLAGS = new Set(["worker", "workers", "role", "driver", "base", "timeout", "gate", "sandbox", "focus", "surface", "task", "job", "recent", "retention-days", "artifacts-older-than", "name", "to", "from", "harness", "reply-address", "session-id", "reach", "pid", "listen", "token", "pair", "limit", "turn-state", "computer", "url", "interval-ms", "refuse"]);
+const VALUE_FLAGS = new Set(["worker", "workers", "role", "driver", "base", "timeout", "gate", "sandbox", "focus", "surface", "task", "job", "recent", "retention-days", "artifacts-older-than", "name", "to", "from", "harness", "reply-address", "session-id", "reach", "pid", "listen", "token", "pair", "limit", "turn-state", "computer", "url", "interval-ms", "refuse", "to-computer", "wait-seconds"]);
 const BOOL_FLAGS = new Set(["json", "apply", "wait", "background", "profiles", "no-fallback", "live", "active", "latest", "refresh", "artifact-only", "force", "dry-run", "include-unapplied", "ack", "once", "consume", "no-consume"]);
 
 function optionalComputer(options) {
@@ -491,7 +491,7 @@ switch (subcommand) {
           "  peers machines [--json]\n" +
           "  peers eligible [--json]\n" +
           "  peers pick [--json]\n" +
-          "  peers assign --from <name> <text>\n" +
+          "  peers assign --from <name> [--to-computer label] [--wait-seconds n] <text>\n" +
           "  peers send --to <name> --from <name> <text>\n" +
           "  peers inbox --name <name> [--ack] [--json]\n" +
           "  peers deliver --name <name> [--limit n] [--json]\n" +
@@ -703,13 +703,30 @@ switch (subcommand) {
           pair,
           harness: options.harness,
           computer: optionalComputer(options),
+          toComputer: options["to-computer"],
           machines: rows,
           probes
         });
+        let payload = result;
+        if (options["wait-seconds"]) {
+          const reply = await waitForReply({
+            name: result.senderName,
+            url: result.remote ? result.machine.url : null,
+            token: result.senderToken,
+            from: result.to,
+            afterCreatedAt: result.message.createdAt,
+            timeoutMs: Number(options["wait-seconds"]) * 1000
+          });
+          payload = { ...result, reply };
+        }
+        const shown = { ...payload };
+        if (!options.json) delete shown.senderToken;
         out(
-          result,
+          shown,
           options,
-          `assigned ${result.message.id} to ${result.to} on ${result.machine.computer} (${result.machine.activity})`
+          payload.reply
+            ? `assigned ${result.message.id} to ${result.to} on ${result.machine.computer}; reply ${payload.reply.id} from ${payload.reply.from}`
+            : `assigned ${result.message.id} to ${result.to} on ${result.machine.computer} (${result.machine.activity})`
         );
         break;
       }
@@ -742,9 +759,24 @@ switch (subcommand) {
             token: options.token || process.env.AGENT_COLLAB_PEERS_TOKEN
           });
         } else {
-          const messages = readInbox({ name: options.name });
-          if (options.ack) ackInbox({ name: options.name, ids: messages.map((m) => m.id) });
-          payload = { name: options.name, messages, acked: !!options.ack };
+          const local = readInbox({ name: options.name });
+          if (local.length) {
+            if (options.ack) ackInbox({ name: options.name, ids: local.map((m) => m.id) });
+            payload = { name: options.name, messages: local, acked: !!options.ack };
+          } else {
+            const remotes = listRemoteInboxes(options.name);
+            const messages = [];
+            for (const c of remotes) {
+              const q = new URLSearchParams({ name: c.name });
+              if (options.ack) q.set("ack", "1");
+              const box = await peersHttp(c.url, {
+                path: `/peers/inbox?${q}`,
+                token: options.token || c.token
+              });
+              messages.push(...(box.messages || []));
+            }
+            payload = { name: options.name, messages, acked: !!options.ack, remote: remotes.length > 0 };
+          }
         }
         const human = payload.messages.length
           ? payload.messages.map((m) => `[${m.from}] ${m.text}`).join("\n")
