@@ -9,6 +9,7 @@ import { fileURLToPath } from "node:url";
 import { decideRoute, resolveDriver, isAuthoritativeDriver, runSetup, runWorkerSync, runWithFallback, resolveFallbackKinds, launchBackground, runJob, waitForJob, refreshJobStatus, applyResult, recommendWorker, cleanupWorkerRuntime } from "../core/dispatch.mjs";
 import { registerPeer, registerSelf, heartbeatPeer, unregisterPeer, listPeers, sendMessage, readInbox, ackInbox } from "../core/peers.mjs";
 import { listenPeersServer, peersHttp } from "../core/peers-serve.mjs";
+import { deliverInbox } from "../core/peer-deliver.mjs";
 import { runDoctor } from "../core/doctor.mjs";
 import { mergeReviews } from "../core/merge-reviews.mjs";
 import { version } from "../core/version.mjs";
@@ -19,7 +20,7 @@ import { MODEL_PROFILES } from "../core/model-profiles.mjs";
 import { cleanupJobWorktree, collectGarbage, waitForPidExit } from "../core/gc.mjs";
 import { resolveWorkerRef } from "../core/instances.mjs";
 
-const VALUE_FLAGS = new Set(["worker", "workers", "role", "driver", "base", "timeout", "gate", "sandbox", "focus", "surface", "task", "job", "recent", "retention-days", "artifacts-older-than", "name", "to", "from", "harness", "reply-address", "session-id", "reach", "pid", "listen", "token", "pair"]);
+const VALUE_FLAGS = new Set(["worker", "workers", "role", "driver", "base", "timeout", "gate", "sandbox", "focus", "surface", "task", "job", "recent", "retention-days", "artifacts-older-than", "name", "to", "from", "harness", "reply-address", "session-id", "reach", "pid", "listen", "token", "pair", "limit", "turn-state"]);
 const BOOL_FLAGS = new Set(["json", "apply", "wait", "background", "profiles", "no-fallback", "live", "active", "latest", "refresh", "artifact-only", "force", "dry-run", "include-unapplied", "ack"]);
 
 function parseArgs(tokens) {
@@ -27,6 +28,10 @@ function parseArgs(tokens) {
   const positionals = [];
   for (let i = 0; i < tokens.length; i++) {
     const t = tokens[i];
+    if (t === "--") {
+      positionals.push(...tokens.slice(i + 1));
+      break;
+    }
     if (t.startsWith("--")) {
       const key = t.slice(2);
       if (BOOL_FLAGS.has(key)) options[key] = true;
@@ -463,14 +468,15 @@ switch (subcommand) {
     const verb = positionals[0];
     if (!verb) {
       fail(
-        "usage: agent-companion peers <self|heartbeat|register|unregister|list|send|inbox|serve>\n" +
+        "usage: agent-companion peers <self|heartbeat|register|unregister|list|send|inbox|deliver|serve>\n" +
           "  peers self --harness <h> [--name <name>] [--session-id <id>] [--pid <n>] [--json]\n" +
-          "  peers heartbeat --name <name> [--pid <n>] [--json]\n" +
+          "  peers heartbeat --name <name> [--pid <n>] [--turn-state idle|busy] [--json]\n" +
           "  peers register --name <name> [--harness <h>] [--reply-address <addr>] [--session-id <id>] [--pid <n>] [--reach local|cross-machine] [--json]\n" +
           "  peers unregister --name <name> [--json]\n" +
           "  peers list [--json]\n" +
           "  peers send --to <name> --from <name> <text>\n" +
-          "  peers inbox --name <name> [--ack] [--json]"
+          "  peers inbox --name <name> [--ack] [--json]\n" +
+          "  peers deliver --name <name> [--limit n] [--json]"
       );
     }
     try {
@@ -488,8 +494,16 @@ switch (subcommand) {
       }
       if (verb === "heartbeat") {
         if (!options.name) fail("peers heartbeat: --name is required");
-        const peer = heartbeatPeer({ name: options.name, pid: options.pid });
-        out(peer, options, `heartbeat ${peer.name} ${peer.status}`);
+        const peer = heartbeatPeer({
+          name: options.name,
+          pid: options.pid,
+          turnState: options["turn-state"]
+        });
+        out(
+          peer,
+          options,
+          `heartbeat ${peer.name} ${peer.status} turnState=${peer.turnState ?? "-"}`
+        );
         break;
       }
       if (verb === "register") {
@@ -555,6 +569,22 @@ switch (subcommand) {
         }
         const human = payload.messages.length
           ? payload.messages.map((m) => `[${m.from}] ${m.text}`).join("\n")
+          : "(empty inbox)";
+        out(payload, options, human);
+        break;
+      }
+      if (verb === "deliver") {
+        if (!options.name) fail("peers deliver: --name is required");
+        // send enqueues only; deliver is the separate consumer. Mailbox write
+        // lock is never held across the Cursor spawn.
+        const payload = deliverInbox({
+          name: options.name,
+          limit: options.limit ? Number(options.limit) : 1
+        });
+        const human = payload.results.length
+          ? payload.results
+              .map((r) => `${r.messageId}\tdelivered=${r.delivered}\tqueued=${r.queued}\t${r.reason || ""}`)
+              .join("\n")
           : "(empty inbox)";
         out(payload, options, human);
         break;
@@ -655,12 +685,13 @@ switch (subcommand) {
         "  gc [--dry-run] [--artifacts-older-than days] [--include-unapplied] [--json]",
         "  cancel <jobId> [--force]",
         "  peers self --harness <h> [--name n] [--session-id id] [--pid n]",
-        "  peers heartbeat --name <name> [--pid n]",
+        "  peers heartbeat --name <name> [--pid n] [--turn-state idle|busy]",
         "  peers register --name <name> [--harness h] [--reply-address addr] [--session-id id] [--pid n] [--reach local|cross-machine]",
         "  peers unregister --name <name>",
         "  peers list [--json]",
         "  peers send --to <name> --from <name> <text>",
         "  peers inbox --name <name> [--ack] [--json]",
+        "  peers deliver --name <name> [--limit n] [--json]",
         "  peers serve [--listen 127.0.0.1:port]"
       ].join("\n")
     );

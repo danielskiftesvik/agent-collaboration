@@ -149,6 +149,15 @@ function peerStatus(peer, nowMs = Date.now()) {
   return isLive(peer, nowMs) ? "live" : "stale";
 }
 
+function normalizeTurnState(turnState) {
+  if (turnState == null || turnState === "") return null;
+  const v = String(turnState).toLowerCase();
+  if (v !== "idle" && v !== "busy") {
+    throw new Error(`invalid turnState: ${JSON.stringify(turnState)} (use idle|busy)`);
+  }
+  return v;
+}
+
 function publicPeer(peer, nowMs = Date.now()) {
   return {
     name: peer.name,
@@ -157,6 +166,7 @@ function publicPeer(peer, nowMs = Date.now()) {
     pid: peer.pid ?? null,
     replyAddress: peer.replyAddress ?? peer.name,
     reach: peer.reach ?? "local",
+    turnState: peer.turnState ?? null,
     status: peerStatus(peer, nowMs),
     registeredAt: peer.registeredAt,
     lastSeenAt: peer.lastSeenAt
@@ -252,7 +262,7 @@ export function registerSelf({ harness, name, sessionId, replyAddress, pid } = {
   });
 }
 
-export function heartbeatPeer({ name, pid } = {}) {
+export function heartbeatPeer({ name, pid, turnState } = {}) {
   assertName(name);
   return withPeersLock(() => {
     const reg = loadRegistry();
@@ -260,6 +270,7 @@ export function heartbeatPeer({ name, pid } = {}) {
     if (!existing) throw new Error(`unknown peer: ${name}`);
     existing.lastSeenAt = nowIso();
     if (pid !== undefined) existing.pid = normalizePid(pid);
+    if (turnState !== undefined) existing.turnState = normalizeTurnState(turnState);
     saveRegistry(reg);
     return publicPeer(existing);
   });
@@ -330,7 +341,7 @@ function publicMessage(record) {
   };
 }
 
-export function sendMessage({ to, from, text } = {}) {
+export function sendMessage({ to, from, text, allowCrossMachine = false } = {}) {
   assertName(to);
   assertName(from);
   const body = text == null ? "" : String(text);
@@ -340,7 +351,7 @@ export function sendMessage({ to, from, text } = {}) {
     const dest = reg.peers[to];
     if (!sender) throw new Error(`unknown sender: ${from}`);
     if (!dest) throw new Error(`unknown peer: ${to}`);
-    if ((dest.reach ?? "local") === "cross-machine") {
+    if ((dest.reach ?? "local") === "cross-machine" && !allowCrossMachine) {
       const err = new Error(`cross-machine send is not implemented: ${to}`);
       err.code = "PEER_CROSS_MACHINE";
       throw err;

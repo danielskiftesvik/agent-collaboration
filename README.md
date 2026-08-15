@@ -177,12 +177,13 @@ node <plugin-dir>/scripts/agent-companion.mjs setup   # Codex / agy / any shell
 Two planes, kept separate:
 
 - **Job plane** (`delegate` / `review` / `apply`) — worktrees, artifacts, job status.
-- **Peer plane** (`peers register|list|send|inbox`) — named plain-text pings
-  (Claude-class discovery + send). Not founder consent. Not a merge gate.
-  Claude↔Claude may keep native `ListAgents` / `SendMessage`. Otherwise use
-  these verbs. Same-machine uses a local mailbox under the plugin data dir
-  (analog of Claude’s UDS inbox). Cross-machine is plugin-owned and currently
-  fails closed (unverified; not Anthropic Remote Control for non-Claude).
+- **Peer plane** (`peers register|list|send|inbox|deliver`) — named plain-text
+  pings (Claude-class discovery + send). `send` enqueues only. `deliver` is a
+  separate consumer (Cursor idle wake today). Not founder consent. Not a merge
+  gate. Claude↔Claude may keep native `ListAgents` / `SendMessage`. Same-machine
+  uses a local mailbox under the plugin data dir (analog of Claude’s UDS inbox).
+  File-path send to `reach: cross-machine` still fail-closes. Opt-in Tailscale
+  `peers serve` can enqueue over HTTP; pairing is unfinished.
 
 Two delegation paths, chosen automatically:
 
@@ -215,13 +216,14 @@ Two delegation paths, chosen automatically:
 | `/agent-collab:gc [--dry-run] [--artifacts-older-than days] [--include-unapplied]` | Reclaim dead/terminal worktrees and expired artifacts; unapplied patches are preserved by default |
 | `/agent-collab:cancel <jobId> [--force]` | Cancel an unhealthy job; healthy within-budget jobs require the explicit `--force` override |
 | `peers self --harness <h>` | Register this process (pid + lastSeen) |
-| `peers heartbeat --name <name>` | Refresh lastSeen / pid |
+| `peers heartbeat --name <name> [--turn-state idle\|busy]` | Refresh lastSeen / pid / published turn state |
 | `peers register --name <name> [--harness h] [--reply-address addr]` | Register a stable routing name on this machine |
 | `peers unregister --name <name>` | Drop a routing name |
 | `peers list [--json]` | Named reachable peers (local mailbox) |
-| `peers send --to <name> --from <name> <text>` | Enqueue a plain-text ping (not consent; slash text stays text) |
+| `peers send --to <name> --from <name> <text>` | Enqueue a plain-text ping (not consent; slash text stays text). Does not wake. |
 | `peers inbox --name <name> [--ack] [--json]` | Read (and optionally ack) unread peer messages |
-| `peers serve [--listen 127.0.0.1:port]` | Loopback mailbox daemon (explicit `AGENT_COLLAB_PEERS_URL`; per-peer tokens) |
+| `peers deliver --name <name> [--limit n] [--json]` | Consume inbox (Cursor idle wake; other harnesses stub) |
+| `peers serve [--listen 127.0.0.1:port]` | Mailbox daemon. Loopback by default; Tailscale `100.x` only with `AGENT_COLLAB_PEERS_ALLOW_REMOTE_BIND=on`. Explicit `AGENT_COLLAB_PEERS_URL`; per-peer tokens on send/inbox. |
 
 Review commands accept `--surface head|working-tree|diff`. Unified diffs are detected automatically and clean prose defaults to `head`. Dirty prose fails closed until the caller chooses `working-tree` (safely snapshotted with a temporary Git index) or `head` (dirty paths excluded). `review-followup --job <prior-id> ...` runs a focused verification tied to the earlier review.
 

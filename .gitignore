@@ -13,4 +13,8 @@ reviews/
 
 docs/reports/
 
+# Local mailbox / dual-Mac smoke debris (never commit)
+.peers-verify/
+.agent-collab-data/
+
 .worktrees/

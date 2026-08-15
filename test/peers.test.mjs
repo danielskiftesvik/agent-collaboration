@@ -114,6 +114,30 @@ test("cross-machine send fails closed with no inbox write", () => {
   assert.equal(readInbox({ name: "other-mac" }).length, 0);
 });
 
+test("file-path send still fail-closes unless allowCrossMachine is explicit", () => {
+  isolateStateRoot();
+  registerPeer({ name: "local", harness: "grok", reach: "local" });
+  registerPeer({ name: "other-mac", harness: "cursor", reach: "cross-machine" });
+  const sent = sendMessage({
+    to: "other-mac",
+    from: "local",
+    text: "daemon-path",
+    allowCrossMachine: true
+  });
+  assert.equal(sent.to, "other-mac");
+  assert.equal(readInbox({ name: "other-mac" })[0].text, "daemon-path");
+});
+
+test("heartbeatPeer publishes idle|busy turnState", () => {
+  isolateStateRoot();
+  registerPeer({ name: "alice", harness: "cursor" });
+  const idle = heartbeatPeer({ name: "alice", turnState: "idle" });
+  assert.equal(idle.turnState, "idle");
+  const busy = heartbeatPeer({ name: "alice", turnState: "busy" });
+  assert.equal(busy.turnState, "busy");
+  assert.throws(() => heartbeatPeer({ name: "alice", turnState: "thinking" }), /turnState/);
+});
+
 test("readInbox does not create the exclusive write lock", () => {
   isolateStateRoot();
   registerPeer({ name: "alice", harness: "grok" });
@@ -250,9 +274,14 @@ test("companion peers self and heartbeat drive the shipped CLI", () => {
   const body = JSON.parse(self.stdout);
   assert.equal(body.name, "cursor");
   assert.ok(Number(body.pid) > 0);
-  const beat = cli(["peers", "heartbeat", "--name", "cursor", "--json"], { cwd: repo, env });
+  const beat = cli(["peers", "heartbeat", "--name", "cursor", "--turn-state", "idle", "--json"], {
+    cwd: repo,
+    env
+  });
   assert.equal(beat.status, 0, beat.stderr);
-  assert.equal(JSON.parse(beat.stdout).name, "cursor");
+  const after = JSON.parse(beat.stdout);
+  assert.equal(after.name, "cursor");
+  assert.equal(after.turnState, "idle");
 });
 
 test("runWorkerSync does not enqueue a peer ping", () => {

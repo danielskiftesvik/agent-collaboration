@@ -41,8 +41,11 @@ native tools; every other pair uses the plugin verbs. Agent teams and channels a
 
 ## Idle wake vs mid-turn delivery
 
-- [ ] **Idle**: when the receiver is idle, Claude Code **starts a new turn**
-      with the message.
+- [x] **Idle (Cursor, pull)**: `peers deliver` starts a new `--mode ask`
+      `--resume` turn when the receiver published `turnState: idle`. Not
+      session-native (someone must call deliver). Claude stays native.
+- [ ] **Idle (session-native)**: the receiving session itself starts a new
+      turn with no external `deliver` poke.
 - [ ] **Mid-turn**: the receiving Claude reads the message **between tool
       calls**. A **running tool is never interrupted**.
 - [ ] Messages may be **Delivered**, **Held** (set aside until approved or a
@@ -68,9 +71,9 @@ native tools; every other pair uses the plugin verbs. Agent teams and channels a
 
 - [ ] Same-machine first: bind/register a local inbox; list only sessions that
       share the inbox visibility.
-- [ ] Cross-machine for Claude uses Remote Control. The plugin must **not**
-      require Anthropic Remote Control for non-Claude peers; it must document
-      a **plugin-owned** path (or mark dual-Mac unverified).
+- [~] Cross-machine for Claude uses Remote Control. Plugin path: opt-in
+      Tailscale `peers serve` (enqueue only). Pairing unfinished; file-path
+      send still fail-closes. Reverse mini→MacBook unverified.
 - [ ] `/status` shows `Peer address` as `uds:…`. Hooks/Bash see
       `CLAUDE_CODE_MESSAGING_SOCKET` and `CLAUDE_CODE_MESSAGING_TOKEN`.
 

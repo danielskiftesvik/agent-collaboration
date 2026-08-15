@@ -14,9 +14,20 @@ test("dispatch.mjs does not import the peer server", () => {
   assert.doesNotMatch(src, /peers-serve\.mjs/);
 });
 
-test("listenPeersServer refuses non-loopback binds", () => {
+test("listenPeersServer refuses all-interfaces and Tailscale without opt-in", () => {
   isolateStateRoot();
-  assert.throws(() => listenPeersServer({ host: "0.0.0.0", port: 0 }), /loopback/);
+  delete process.env.AGENT_COLLAB_PEERS_ALLOW_REMOTE_BIND;
+  assert.throws(() => listenPeersServer({ host: "0.0.0.0", port: 0 }), /all-interfaces|loopback/);
+  assert.throws(() => listenPeersServer({ host: "100.109.229.92", port: 0 }), /Tailscale|loopback/);
+});
+
+test("assertPeersBindHost allows Tailscale CGNAT when opt-in is on", async () => {
+  isolateStateRoot();
+  const { assertPeersBindHost } = await import("../core/peers-serve.mjs");
+  process.env.AGENT_COLLAB_PEERS_ALLOW_REMOTE_BIND = "on";
+  assert.doesNotThrow(() => assertPeersBindHost("100.109.229.92"));
+  assert.throws(() => assertPeersBindHost("10.0.0.7"), /loopback|Tailscale/);
+  delete process.env.AGENT_COLLAB_PEERS_ALLOW_REMOTE_BIND;
 });
 
 test("HTTP send requires the sender token; inbox requires the owner token", async () => {
@@ -66,6 +77,33 @@ test("HTTP send requires the sender token; inbox requires the owner token", asyn
     assert.equal(box.messages[0].text, "serve-ping-exact");
     assert.equal(readInbox({ name: "bob" })[0].text, "serve-ping-exact");
     assert.equal(hashPeerToken(alice.token).length, 64);
+  } finally {
+    server.close();
+  }
+});
+
+test("HTTP send enqueues to a cross-machine dest (daemon path only)", async () => {
+  isolateStateRoot();
+  const { server, url } = await listenPeersServer();
+  try {
+    const alice = await peersHttp(url, {
+      method: "POST",
+      path: "/peers/register",
+      body: { name: "alice", harness: "grok", reach: "local" }
+    });
+    await peersHttp(url, {
+      method: "POST",
+      path: "/peers/register",
+      body: { name: "other-mac", harness: "cursor", reach: "cross-machine" }
+    });
+    const sent = await peersHttp(url, {
+      method: "POST",
+      path: "/peers/send",
+      token: alice.token,
+      body: { to: "other-mac", from: "alice", text: "via-http" }
+    });
+    assert.equal(sent.text, "via-http");
+    assert.equal(readInbox({ name: "other-mac" })[0].text, "via-http");
   } finally {
     server.close();
   }

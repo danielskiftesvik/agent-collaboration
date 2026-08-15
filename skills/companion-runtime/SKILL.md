@@ -17,12 +17,13 @@ generalization of codex-plugin-cc's `codex-cli-runtime` skill.
 setup [--json] [--gate on|off] [--sandbox on|off] [--retention-days <n>]
 doctor [--live] [--workers a,b] [--json]
 peers self --harness <h> [--name <name>] [--session-id <id>] [--pid <n>] [--json]
-peers heartbeat --name <name> [--pid <n>] [--json]
+peers heartbeat --name <name> [--pid <n>] [--turn-state idle|busy] [--json]
 peers register --name <name> [--harness <h>] [--reply-address <addr>] [--session-id <id>] [--pid <n>] [--reach local|cross-machine] [--json]
 peers unregister --name <name> [--json]
 peers list [--json]
 peers send --to <name> --from <name> <text>
 peers inbox --name <name> [--ack] [--json]
+peers deliver --name <name> [--limit n] [--json]
 peers serve [--listen 127.0.0.1:port]
 delegate --worker <agy|codex|claude|cursor|grok|opencode|instance-alias> [--driver <name>] [--role worker|reviewer] [--profile <name>] [--background] [--apply] [--timeout <s>] [--no-fallback] <brief>
 review  --worker <name> | --workers a,b [--focus <text>] [--profile <name>] [--background] [--no-fallback] [--json] <diff/context>
@@ -50,15 +51,27 @@ messages are named plain-text pings (Claude-class list/send/inbox). They are
   `<resolveDataRoot()>/peers` (plugin analog of Claude’s UDS inbox). Two
   sessions on this machine share it. `peers self --harness <you>` registers
   this process (pid + lastSeen); dead pids list as stale.
+- **`send` never wakes.** `peers deliver --name` is the consumer
+  (`core/peer-deliver.mjs`). Cursor idle wake lives in
+  `core/peer-inject-cursor.mjs` (not dispatch, not `adapters/contract.mjs`).
+  Receiver must publish `peers heartbeat --name <n> --turn-state idle` and a
+  Cursor `--session-id`. Wake uses `--mode ask --trust` and a plugin-owned
+  ACK-first prompt (`PEER_ACK <id>`); raw peer text never goes on argv.
+  `--trust` is not consent. Claude → `native_required`. Other harnesses →
+  `inject-stub`.
 - Sandboxed Codex often cannot write `$HOME/.../peers/.lock` and cannot
   reach host `127.0.0.1`. The Codex adapter sets `AGENT_COLLAB_PEERS_DIR`
   and `addDirs` to the shared mailbox. Today's `codex-companion` cannot
   take `--add-dir` (it would pollute the prompt). Until that exists, point
   `AGENT_COLLAB_PEERS_DIR` at a workspace-writable path or run `peers`
   unsandboxed.
-- **Cross-machine**: plugin-owned path; this slice **fails closed** (no write).
-  Dual-Mac is unverified. Do not require Anthropic Remote Control for
-  non-Claude peers.
+- **Cross-machine**: file-path `send` **fails closed** (no write). HTTP
+  `peers serve` may enqueue when `allowCrossMachine` is set on that daemon
+  path. Bind is loopback unless `AGENT_COLLAB_PEERS_ALLOW_REMOTE_BIND=on`
+  and the listen host is Tailscale CGNAT `100.64.0.0/10`. Register / list /
+  health are unauthenticated — this is **not** a pair table. Reverse
+  mini→MacBook is still a smoke. Do not require Anthropic Remote Control
+  for non-Claude peers.
 - `delegate` must not be used as a chat bus.
 
 `--driver` is irrelevant to `peers` (not a job). Always pass `--driver` on
@@ -361,6 +374,12 @@ read `tasks/<jobId>/reports/<worker>.md`.
 
 ## Env
 
+- `AGENT_COLLAB_PEERS_DIR` — mailbox root (default `<resolveDataRoot()>/peers`).
+- `AGENT_COLLAB_PEERS_URL` — if set, companion peers verbs use this HTTP
+  broker instead of files. No auto-probe of 127.0.0.1.
+- `AGENT_COLLAB_PEERS_TOKEN` — bearer for HTTP send/inbox/heartbeat.
+- `AGENT_COLLAB_PEERS_ALLOW_REMOTE_BIND=on` — allow `peers serve` on a
+  Tailscale `100.x` address. Still refuses `0.0.0.0` / `::`.
 - `AGENT_COLLAB_DATA` — out-of-repo state root (default: tmp/plugin-data).
 - `AGENT_COLLAB_DRIVER` — default driver harness.
 - `AGENT_COLLAB_SANDBOX` — OS-sandbox: `on` (all non-codex) | `off`. Default: opt-in
