@@ -42,6 +42,7 @@ const RECEIVE_SRC = fileURLToPath(new URL("../core/peer-receive.mjs", import.met
 const PRESENCE_SRC = fileURLToPath(new URL("../core/peer-presence.mjs", import.meta.url));
 const REPLY_SRC = fileURLToPath(new URL("../core/peer-reply.mjs", import.meta.url));
 const DELIVER_SRC = fileURLToPath(new URL("../core/peer-deliver.mjs", import.meta.url));
+const OUTCOME_SRC = fileURLToPath(new URL("../core/peer-outcome.mjs", import.meta.url));
 const DISPATCH_SRC = fileURLToPath(new URL("../core/dispatch.mjs", import.meta.url));
 
 function cli(args, { cwd, env } = {}) {
@@ -62,8 +63,8 @@ function cursorFlags(joined) {
   return /--mode(?:\s+|=)ask/.test(joined) || /(?:^|\s)--trust(?:\s|$)/.test(joined) || /--workspace/.test(joined);
 }
 
-test("assign, receive, presence, and reply stay off the job-plane dispatcher", () => {
-  for (const src of [ASSIGN_SRC, RECEIVE_SRC, PRESENCE_SRC, REPLY_SRC, DELIVER_SRC]) {
+test("assign, receive, presence, outcome, and reply stay off the job-plane dispatcher", () => {
+  for (const src of [ASSIGN_SRC, RECEIVE_SRC, PRESENCE_SRC, REPLY_SRC, DELIVER_SRC, OUTCOME_SRC]) {
     const text = fs.readFileSync(src, "utf8");
     assert.doesNotMatch(text, /dispatch\.mjs/);
     assert.doesNotMatch(text, /runWorkerSync|launchBackground|decideRoute/);
