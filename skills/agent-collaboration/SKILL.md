@@ -24,6 +24,7 @@ Short same-machine pings (“schema landed”) are still `peers send` / `inbox`,
 not `delegate`. Claude↔Claude may keep native `ListAgents` / `SendMessage`.
 
 Work on another machine: **REQUIRED SUB-SKILL:** `peer-fleet`.
+Stand-up (Tailscale, pair, serve, presence, worker-ready): **REQUIRED SUB-SKILL:** `setting-up-collaboration`.
 CLI flags: `companion-runtime`.
 
 ## When to Delegate

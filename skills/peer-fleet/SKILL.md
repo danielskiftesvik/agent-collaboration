@@ -17,6 +17,7 @@ This plugin has **two planes**. Mixing them is a bug.
 
 `delegate` never leaves this computer. `apply` never pulls a remote job onto the sender. SSH is ops/debug, not the work path. Do not import `dispatch.mjs` on the peer plane.
 
+**REQUIRED SUB-SKILL:** `setting-up-collaboration` when serve, presence, pair, or workers are not standing yet.
 **REQUIRED SUB-SKILL:** `assigning-across-machines` when sending.
 **REQUIRED SUB-SKILL:** `receiving-peer-assign` when you are `old-orch` / `mini-orch` (or any standing consumer).
 

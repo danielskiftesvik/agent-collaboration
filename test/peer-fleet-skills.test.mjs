@@ -24,7 +24,12 @@ function wordCount(text) {
   return text.trim().split(/\s+/).filter(Boolean).length;
 }
 
-const FLEET = ["peer-fleet", "assigning-across-machines", "receiving-peer-assign"];
+const FLEET = [
+  "peer-fleet",
+  "assigning-across-machines",
+  "receiving-peer-assign",
+  "setting-up-collaboration"
+];
 
 test("fleet skill set exists with Use-when descriptions", () => {
   for (const name of FLEET) {
@@ -74,6 +79,22 @@ test("agent-collaboration skill forks to peer-fleet instead of treating assign a
   assert.match(md, /peer-fleet/);
   assert.match(md, /Job plane|job plane|Two planes/i);
   assert.match(md, /not `delegate`|not delegate|is not `delegate`/i);
+});
+
+test("setting-up-collaboration covers Tailscale pair serve presence and job-plane setup", () => {
+  const md = readSkill("setting-up-collaboration");
+  assert.match(md, /Tailscale|100\.x/);
+  assert.match(md, /peers-bridge\.token/);
+  assert.match(md, /AGENT_COLLAB_PEERS_PAIR/);
+  assert.match(md, /peers serve/);
+  assert.match(md, /peers presence/);
+  assert.match(md, /AGENT_COLLAB_DATA|AGENT_COLLAB_PEERS_DIR/);
+  assert.match(md, /doctor/);
+  assert.match(md, /delegate/);
+  assert.match(md, /peer-fleet/);
+  assert.match(md, /agent-collaboration/);
+  assert.doesNotMatch(md, /AGENT_COLLAB_PEERS_PAIR=\S{8,}/);
+  assert.match(md, /Do not paste|do not paste/);
 });
 
 test("companion-runtime lists fleet assign flags and lineage", () => {

@@ -4,8 +4,9 @@
 
 - **Collab UI auto-update**: `/collab` polls `/peers/collab` and keeps the
   selected assign. Fleet agent skills (`peer-fleet`,
-  `assigning-across-machines`, `receiving-peer-assign`) split that plane
-  from job-plane `delegate` / `review` / `apply`.
+  `assigning-across-machines`, `receiving-peer-assign`,
+  `setting-up-collaboration`) split that plane from job-plane `delegate` /
+  `review` / `apply` and cover Tailscale stand-up.
 - **Peer plane join**: mailbox (`register`/`list`/`send`/`inbox`) stays
   enqueue-only. Cursor idle wake is a separate `peers deliver` consumer
   (`turnState` heartbeat, `PEER_ACK`, wake lease). File-path send to

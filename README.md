@@ -246,6 +246,7 @@ Review commands accept `--surface head|working-tree|diff`. Unified diffs are det
 |---|---|
 | `agent-collaboration` | Job plane: when/how to `delegate` / `review` / `apply` on this computer |
 | `peer-fleet` | Peer plane: other computer — not `delegate`; watch `/collab` |
+| `setting-up-collaboration` | Stand-up: Tailscale, pair, serve+presence, plugin install, `setup`/`doctor` |
 | `assigning-across-machines` | Sender: `peers assign`, `--hint-harness`, short brief |
 | `receiving-peer-assign` | Standing orch: ping vs local `delegate`, outcome envelope |
 | `harness-prompting` | How to compose a brief; per-harness guides + prompt blocks + the model-strengths matrix |
