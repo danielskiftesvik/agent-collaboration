@@ -194,6 +194,13 @@ export function getLineage(assignId, { cwd } = {}) {
   return attachJob(record, cwd);
 }
 
+export function listLineage({ cwd } = {}) {
+  const store = loadStore();
+  return Object.keys(store)
+    .map((id) => getLineage(id, { cwd }))
+    .sort((a, b) => String(b.createdAt || "").localeCompare(String(a.createdAt || "")));
+}
+
 export async function resolveLineage(assignId, { cwd } = {}) {
   let record = getLineage(assignId, { cwd });
   if (record.decision) return record;

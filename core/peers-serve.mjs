@@ -1,8 +1,11 @@
 // Local mailbox daemon. Owns peers files so sandboxed clients can send over
 // loopback instead of writing $HOME. Opt-in Tailscale CGNAT bind for dual-Mac.
 import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
+import fs from "node:fs";
 import http from "node:http";
 import os from "node:os";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 
 import {
   registerPeer,
@@ -17,6 +20,29 @@ import {
   ackInbox,
   resolveComputer
 } from "./peers.mjs";
+import { listLineage } from "./peer-lineage.mjs";
+
+const UI_DIR = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "ui");
+
+const COLLAB_ASSETS = {
+  "/collab": "collaboration.html",
+  "/collab/": "collaboration.html",
+  "/collab/collaboration.html": "collaboration.html",
+  "/collab/collaboration-view.js": "collaboration-view.js",
+  "/collab/collaboration-page.js": "collaboration-page.js",
+  "/collaboration-view.js": "collaboration-view.js",
+  "/collaboration-page.js": "collaboration-page.js"
+};
+
+function sendFile(res, file, type) {
+  const body = fs.readFileSync(file);
+  res.writeHead(200, {
+    "content-type": type,
+    "content-length": body.length,
+    "cache-control": "no-store"
+  });
+  res.end(body);
+}
 
 export function hashPeerToken(token) {
   return createHash("sha256").update(String(token)).digest("hex");
@@ -226,6 +252,19 @@ export function createPeersServer({ pairToken = null, computer = null } = {}) {
         const messages = readInbox({ name });
         if (url.searchParams.get("ack") === "1") ackInbox({ name, ids: messages.map((m) => m.id) });
         sendJson(res, 200, { name, messages, acked: url.searchParams.get("ack") === "1" });
+        return;
+      }
+      if (req.method === "GET" && url.pathname === "/peers/collab") {
+        sendJson(res, 200, {
+          machines: listMachines(),
+          assigns: listLineage()
+        });
+        return;
+      }
+      if (req.method === "GET" && COLLAB_ASSETS[url.pathname]) {
+        const name = COLLAB_ASSETS[url.pathname];
+        const type = name.endsWith(".js") ? "text/javascript; charset=utf-8" : "text/html; charset=utf-8";
+        sendFile(res, path.join(UI_DIR, name), type);
         return;
       }
       if (req.method === "POST" && url.pathname === "/peers/unregister") {

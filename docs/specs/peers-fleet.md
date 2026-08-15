@@ -193,6 +193,12 @@ node $C peers assign --from old-orch --to-computer "Mac Mini M4" \
   --wait-seconds 90 "look at the failing test"
 ```
 
+Watch the fleet in a browser on a machine running `peers serve`:
+`http://<tailscale-ip>:8744/collab`. The page lists machines and recent
+assigns and shows one lineage (decision, harness, job, reply). It is not a
+chat log. Opening `ui/collaboration.html` as a `file:` shows fixture data
+and tells you to use serve for live state.
+
 `--wait-seconds` polls `GET /peers/inbox` on the **destination mailbox** with
 the token from register. The Mini stores that token under
 `<peersDir>/remote-inbox-tokens.json`. `peers inbox --name main` will use it

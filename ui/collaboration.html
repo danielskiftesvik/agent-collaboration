@@ -1,0 +1,56 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Fleet collaboration</title>
+    <style>
+      body { font-family: ui-sans-serif, system-ui, sans-serif; margin: 1.5rem; color: #111; }
+      #collab-banner { background: #f4f1ea; padding: 0.6rem 0.8rem; }
+      #machines .machine, #assigns .assign { display: block; margin: 0.35rem 0; text-align: left; }
+      #assigns .assign { width: 100%; padding: 0.45rem 0.6rem; }
+      #assigns .selected { outline: 2px solid #222; }
+      #detail pre { white-space: pre-wrap; }
+      dt { font-weight: 600; margin-top: 0.5rem; }
+    </style>
+  </head>
+  <body>
+    <p id="collab-banner">Loading collaboration view…</p>
+    <div id="app"></div>
+    <script type="application/json" id="collab-fixture">
+      {
+        "machines": [
+          {
+            "computer": "Mac Mini M4",
+            "available": true,
+            "activity": "idle",
+            "harness": "grok",
+            "session": { "name": "mini-orch", "harness": "grok" }
+          },
+          {
+            "computer": "2017 MacBook Pro",
+            "available": true,
+            "activity": "idle",
+            "harness": "grok",
+            "session": { "name": "old-orch", "harness": "grok" }
+          }
+        ],
+        "assigns": [
+          {
+            "id": "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
+            "from": "main",
+            "to": "old-orch",
+            "text": "fixture ping",
+            "computer": "2017 MacBook Pro",
+            "hintHarness": "grok",
+            "assignedHarness": "grok",
+            "decision": { "status": "done", "reason": "looked", "kind": "ping", "harness": "grok" },
+            "job": null,
+            "reply": { "from": "old-orch", "text": "assign aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee done\\nkind: ping\\nharness: grok\\nlooked" }
+          }
+        ]
+      }
+    </script>
+    <script src="collaboration-view.js"></script>
+    <script src="collaboration-page.js"></script>
+  </body>
+</html>
