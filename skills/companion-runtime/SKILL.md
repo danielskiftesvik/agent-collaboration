@@ -26,7 +26,8 @@ peers machine --computer <label> [--url http://100.x:port]
 peers machines [--json]
 peers eligible [--json]
 peers pick [--json]
-peers assign --from <name> <text>
+peers assign --from <name> [--to <session>] [--to-computer <label>] [--hint-harness <h>] [--wait-seconds n] <text>
+peers lineage --id <assign-id> [--json]
 peers send --to <name> --from <name> <text>
 peers inbox --name <name> [--ack] [--json]
 peers deliver --name <name> [--limit n] [--json]
@@ -51,6 +52,8 @@ spawned by `--background`; don't call it directly.)
 `peers *` is a **separate plane** from `delegate` / `review` / `apply`. Peer
 messages are named plain-text pings (Claude-class list/send/inbox). They are
 **not** founder consent, not a merge gate, and not worktree jobs.
+Fleet assign / receive / watch: **REQUIRED SUB-SKILL:** `peer-fleet`. This
+file stays the CLI contract (`--hint-harness`, `peers lineage --id`, serve).
 
 - Claude↔Claude that already fits native `ListAgents` / `SendMessage` /
   `/list-agents` / `@` should keep using those.

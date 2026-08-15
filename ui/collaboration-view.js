@@ -143,6 +143,10 @@
     for (var j = 0; j < assigns.length; j++) {
       if (assigns[j].id === pick) selected = assigns[j];
     }
+    if (!selected && assigns[0]) {
+      selected = assigns[0];
+      pick = selected.id;
+    }
     var html = "<h1>Fleet collaboration</h1>";
     html += '<section id="machines"><h2>Machines</h2>';
     if (!machines.length) html += "<p>No machines.</p>";
@@ -156,6 +160,7 @@
     html += detailHtml(selected);
     html += "</section>";
     root.innerHTML = html;
+    root.collabSelectedId = pick || null;
     if (root.querySelectorAll) {
       var buttons = root.querySelectorAll("button.assign");
       for (var b = 0; b < buttons.length; b++) {

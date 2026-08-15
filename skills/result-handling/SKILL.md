@@ -5,6 +5,9 @@ description: How to present the output of a cross-harness worker or reviewer bac
 
 # Result Handling
 
+Job-plane only (`delegate` / `review` / `apply`). A fleet assign closes with
+a peer reply, not `apply` on the sender — **REQUIRED SUB-SKILL:** `peer-fleet`.
+
 How the driver presents what a delegated worker or reviewer produced — and the
 hard rules about acting on it.
 

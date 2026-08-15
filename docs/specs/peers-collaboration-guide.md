@@ -373,12 +373,13 @@ Examples: `http://100.109.229.92:8744/collab` (Mini),
 |---|---|
 | `GET /collab` | `ui/collaboration.html` + classic scripts |
 | `GET /collab/collaboration-view.js` | View: roster cards, assign list, one lineage detail |
-| `GET /collab/collaboration-page.js` | Fetches live JSON; `file:` uses fixture |
+| `GET /collab/collaboration-page.js` | Fetches live JSON; polls `/peers/collab` (~4s) and keeps the selected assign; `file:` uses fixture (no poll) |
 | `GET /peers/collab` | `{ machines: listMachines(probes), assigns: listLineage() }` |
 
 The page lists **machines** (awake/asleep, activity, harness, session)
 and **recent assigns**. Selecting a row shows **one lineage** (decision,
-harness, job, reply). It is **not** a chat log.
+harness, job, reply). Live mode **auto-updates**; it does not require
+refresh. It is **not** a chat log. Agent rules: `skills/peer-fleet/`.
 
 Opening `ui/collaboration.html` as `file:` shows embedded fixture data
 and a banner:

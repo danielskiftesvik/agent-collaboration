@@ -177,8 +177,10 @@ node <plugin-dir>/scripts/agent-companion.mjs setup   # Codex / agy / any shell
 Two planes, kept separate:
 
 - **Job plane** (`delegate` / `review` / `apply`) — worktrees, artifacts, job status.
-- **Peer plane** (`peers register|list|send|inbox|deliver|presence|assign`) — named
-  plain-text pings (Claude-class discovery + send). `send` / `assign` enqueue only.
+- **Peer plane** (`peers register|list|send|inbox|deliver|presence|assign|lineage`) — named
+  plain-text pings (Claude-class discovery + send) **and** cross-machine assign.
+  Not `delegate` / `review` / `apply`. Agent rules: `skills/peer-fleet/`.
+  `send` / `assign` enqueue only.
   A machine-side `peers presence` process heartbeats about every 30s and consumes
   assigns per harness. Not founder consent. Not a merge gate. Claude↔Claude may
   keep native `ListAgents` / `SendMessage`. Same-machine uses a local mailbox
@@ -227,7 +229,8 @@ Two delegation paths, chosen automatically:
 | `peers machine --computer <label> [--url http://…]` | Remember a computer (and optional serve URL) on the orchestrator host |
 | `peers machines [--json]` | Fleet roster: available / activity / harness |
 | `peers eligible` / `peers pick` | Machines that can take work (`available && not busy`) |
-| `peers assign --from <name> [--to-computer label] [--wait-seconds n] <text>` | Enqueue to an eligible machine; wait polls the remote reply inbox |
+| `peers assign --from <name> [--to session] [--to-computer label] [--hint-harness h] [--wait-seconds n] <text>` | Enqueue to an eligible machine; hint is not `--harness`; wait polls the remote reply |
+| `peers lineage --id <assign-id>` | One assign → consume → job → reply (not a chat log) |
 | `peers send --to <name> --from <name> <text>` | Enqueue a plain-text ping (not consent; slash text stays text). Does not wake. |
 | `peers inbox --name <name> [--ack] [--json]` | Read (and optionally ack) unread peer messages |
 | `peers deliver --name <name> [--limit n] [--json]` | Low-level inbox consume (Cursor idle wake; Claude native_required; Codex/Grok/OpenCode idle resume) |
@@ -241,7 +244,10 @@ Review commands accept `--surface head|working-tree|diff`. Unified diffs are det
 
 | Skill | What it governs |
 |---|---|
-| `agent-collaboration` | Policy: when/how to delegate, the authority model, routing by model strength |
+| `agent-collaboration` | Job plane: when/how to `delegate` / `review` / `apply` on this computer |
+| `peer-fleet` | Peer plane: other computer — not `delegate`; watch `/collab` |
+| `assigning-across-machines` | Sender: `peers assign`, `--hint-harness`, short brief |
+| `receiving-peer-assign` | Standing orch: ping vs local `delegate`, outcome envelope |
 | `harness-prompting` | How to compose a brief; per-harness guides + prompt blocks + the model-strengths matrix |
 | `collaborative-investigation` | Two-party confidence gate: hypothesis + an independent second opinion from another harness before hard work |
 | `companion-runtime` | Internal contract for invoking the companion CLI |
