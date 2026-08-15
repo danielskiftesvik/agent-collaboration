@@ -34,8 +34,10 @@ per-machine orchestrator.
 - Remote: register the serve URL once on the orchestrator host:
   `peers machine --computer "2017 MacBook Pro" --url http://100.x:8744`
   then `peers machines` probes `/peers/health`. No answer → unavailable.
-- Agents on an awake machine should `peers heartbeat --turn-state idle|busy`
-  about every 30s.
+- Agents on an awake machine should run `peers presence --computer <label>
+  --harness <h> --turn-state idle|busy` (or `peers heartbeat` on the same
+  fields) about every 30s. Stopping that process makes the computer
+  unavailable. A frozen pid is not treated as awake once lastSeen ages out.
 
 This is the roster. Assign is the policy layer on top:
 
@@ -43,9 +45,31 @@ This is the roster. Assign is the policy layer on top:
 - `peers pick` chooses idle before unknown, then oldest `lastSeenAt`.
 - `peers assign --from <orchestrator> <text>` enqueues to that session
   (HTTP if the machine has a serve URL). Refuses with `PEER_NO_CAPACITY`
-  when every computer is asleep or busy.
+  when every computer is asleep or busy. After accept, presence publishes
+  `busy` so a second assign skips that machine. On finish or refuse the
+  machine `peers reply`s to the orchestrator name (peer-session text, not
+  consent) and returns to `idle`.
+
+The 2017 MacBook Pro and MacBook Pro M4 Max need not be awake for assign on
+this Mini. Record their serve URLs with `peers machine --computer … --url …`;
+unreachable / asleep remotes stay `available: false`. Remote assign may stay
+HTTP-enqueue.
 
 Plain `peers send` is unchanged (no policy). Job-plane `delegate` is unchanged.
+
+## Receive
+
+`peers deliver` / `peers consume` are the consumers. Assign never calls
+`delegate`.
+
+| Harness | Idle consume |
+|---|---|
+| Cursor | Existing `--resume` + `PEER_ACK`, `--mode ask --trust`, no `--workspace` |
+| Claude | Native `SendMessage` / inbox if `CLAUDE_CODE_MESSAGING_SOCKET` is present; otherwise mailbox consume + `native_required`. Do not fake a Claude inject. |
+| Codex | Mailbox consume + `codex exec resume <session>` (set `AGENT_COLLAB_PEERS_DIR`; `--add-dir` when possible). EPERM stays honest. |
+| Grok | Mailbox consume + `grok --resume <session> --single <prompt>` |
+| OpenCode | Mailbox consume + `opencode run --session <id>` |
+| unknown | `inject-stub` |
 
 ## Bind
 

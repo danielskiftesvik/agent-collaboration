@@ -335,7 +335,7 @@ export function registerSelf({ harness, name, sessionId, replyAddress, pid, comp
   });
 }
 
-export function heartbeatPeer({ name, pid, turnState, computer } = {}) {
+export function heartbeatPeer({ name, pid, turnState, computer, harness } = {}) {
   assertName(name);
   return withPeersLock(() => {
     const reg = loadRegistry();
@@ -345,6 +345,7 @@ export function heartbeatPeer({ name, pid, turnState, computer } = {}) {
     if (pid !== undefined) existing.pid = normalizePid(pid);
     if (turnState !== undefined) existing.turnState = normalizeTurnState(turnState);
     if (computer !== undefined) existing.computer = normalizeComputer(computer);
+    if (harness !== undefined) existing.harness = harness;
     touchMachine(reg, existing.computer);
     saveRegistry(reg);
     return publicPeer(existing);
@@ -549,8 +550,13 @@ function summarizeMachine({ rec, sessions, probe, nowMs }) {
   } else if (rec.url) {
     available = false;
     reason = "not-probed";
+  } else if (allSessions.length > 0) {
+    // Local sessions decide liveness. A dead pid is stale immediately; a frozen
+    // (still-alive) pid is not treated as awake once lastSeen ages past the TTL.
+    available = recent.length > 0;
+    reason = available ? "recent-heartbeat" : "asleep-or-offline";
   } else {
-    available = recent.length > 0 || isFresh(rec.lastSeenAt, nowMs, MACHINE_AVAILABLE_TTL_MS);
+    available = isFresh(rec.lastSeenAt, nowMs, MACHINE_AVAILABLE_TTL_MS);
     reason = available ? "recent-heartbeat" : "asleep-or-offline";
   }
 
@@ -571,6 +577,7 @@ function summarizeMachine({ rec, sessions, probe, nowMs }) {
     url: rec.url ?? null,
     available,
     activity,
+    harness: primary?.harness ?? null,
     reason,
     lastSeenAt,
     session: primary ? sessionView(primary) : null,

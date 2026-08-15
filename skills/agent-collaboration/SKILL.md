@@ -16,10 +16,12 @@ landed”, “hold verify”) the way Claude uses `ListAgents` / `SendMessage`.
 node scripts/agent-companion.mjs peers self --harness <self>
 node scripts/agent-companion.mjs peers list --json
 node scripts/agent-companion.mjs peers register --name <stable-name> --harness <self> --reply-address <stable-name> --computer "Mac Mini M4"
-node scripts/agent-companion.mjs peers heartbeat --name <self> --turn-state idle
+node scripts/agent-companion.mjs peers heartbeat --name <self> --turn-state idle --harness <self>
+node scripts/agent-companion.mjs peers presence --computer "Mac Mini M4" --harness <self> --turn-state idle
 node scripts/agent-companion.mjs peers send --to <name> --from <self> "schema landed"
 node scripts/agent-companion.mjs peers inbox --name <self> --json
 node scripts/agent-companion.mjs peers deliver --name <self> --json
+node scripts/agent-companion.mjs peers consume --name <self> --json
 node scripts/agent-companion.mjs peers machines --json
 node scripts/agent-companion.mjs peers assign --from <self> "run the next plate"
 ```
@@ -27,10 +29,12 @@ node scripts/agent-companion.mjs peers assign --from <self> "run the next plate"
 - Claude↔Claude: keep native `/list-agents` and `SendMessage` when both sides
   are Claude on a path that already works.
 - Any other pair (or Claude talking to non-Claude): these plugin verbs.
-- **`send` enqueues only.** `deliver` is the separate consumer. Cursor idle
-  wake requires the receiver to publish `--turn-state idle` and a `--session-id`.
-  `--trust` on that wake is not user consent. Other harnesses stub; Claude stays
-  native.
+- **`send` / `assign` enqueue only.** `presence` / `consume` / `deliver` are the
+  consumers. Cursor idle wake requires `--turn-state idle` and a `--session-id`.
+  `--trust` on that wake is not user consent. Claude stays native (`native_required`
+  if no SendMessage/inbox socket). Codex/Grok/OpenCode use that harness’s idle
+  resume, not Cursor flags. Unknown harness stays `inject-stub`. After accept the
+  machine is `busy`; finish/refuse replies to the main name and returns `idle`.
 - **Same-machine** = local mailbox (like Claude’s UDS inbox). File-path send to
   `reach: cross-machine` still fail-closes. Opt-in Tailscale `peers serve`
   requires `--pair` / `AGENT_COLLAB_PEERS_PAIR`. Not Anthropic Remote Control.

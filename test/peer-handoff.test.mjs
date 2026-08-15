@@ -1,0 +1,422 @@
+import { test } from "node:test";
+import assert from "node:assert/strict";
+import fs from "node:fs";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+
+import { isolateStateRoot, makeRepo, stubBin } from "./helpers.mjs";
+import { run } from "../core/process.mjs";
+import {
+  registerPeer,
+  heartbeatPeer,
+  listMachines,
+  registerMachine,
+  pickMachine,
+  sendMessage,
+  readInbox,
+  isPeerConsent,
+  resolvePeersDir,
+  MACHINE_AVAILABLE_TTL_MS
+} from "../core/peers.mjs";
+import { assignTask } from "../core/peer-assign.mjs";
+import { tryDeliver } from "../core/peer-deliver.mjs";
+import {
+  buildIdleResume,
+  claudeNativeInboxPresent,
+  handleAssignedWork
+} from "../core/peer-receive.mjs";
+import { replyToAssign } from "../core/peer-reply.mjs";
+import {
+  DEFAULT_HEARTBEAT_MS,
+  resolveHeartbeatIntervalMs,
+  tickPresence,
+  runPresenceLoop
+} from "../core/peer-presence.mjs";
+
+const CLI = fileURLToPath(new URL("../scripts/agent-companion.mjs", import.meta.url));
+const ASSIGN_SRC = fileURLToPath(new URL("../core/peer-assign.mjs", import.meta.url));
+const RECEIVE_SRC = fileURLToPath(new URL("../core/peer-receive.mjs", import.meta.url));
+const PRESENCE_SRC = fileURLToPath(new URL("../core/peer-presence.mjs", import.meta.url));
+const REPLY_SRC = fileURLToPath(new URL("../core/peer-reply.mjs", import.meta.url));
+const DELIVER_SRC = fileURLToPath(new URL("../core/peer-deliver.mjs", import.meta.url));
+const DISPATCH_SRC = fileURLToPath(new URL("../core/dispatch.mjs", import.meta.url));
+
+function cli(args, { cwd, env } = {}) {
+  return run(process.execPath, [CLI, ...args], { cwd: cwd ?? makeRepo(), env: { ...process.env, ...env } });
+}
+
+function agePeer(name, msAgo) {
+  const file = path.join(resolvePeersDir(), "registry.json");
+  const reg = JSON.parse(fs.readFileSync(file, "utf8"));
+  const iso = new Date(Date.now() - msAgo).toISOString();
+  if (reg.peers[name]) reg.peers[name].lastSeenAt = iso;
+  const computer = reg.peers[name]?.computer;
+  if (computer && reg.machines?.[computer]) reg.machines[computer].lastSeenAt = iso;
+  fs.writeFileSync(file, JSON.stringify(reg, null, 2));
+}
+
+function cursorFlags(joined) {
+  return /--mode(?:\s+|=)ask/.test(joined) || /(?:^|\s)--trust(?:\s|$)/.test(joined) || /--workspace/.test(joined);
+}
+
+test("assign, receive, presence, and reply stay off the job-plane dispatcher", () => {
+  for (const src of [ASSIGN_SRC, RECEIVE_SRC, PRESENCE_SRC, REPLY_SRC, DELIVER_SRC]) {
+    const text = fs.readFileSync(src, "utf8");
+    assert.doesNotMatch(text, /dispatch\.mjs/);
+    assert.doesNotMatch(text, /runWorkerSync|launchBackground|decideRoute/);
+  }
+  const dispatch = fs.readFileSync(DISPATCH_SRC, "utf8");
+  assert.doesNotMatch(dispatch, /peer-assign|peer-receive|peer-presence|peer-reply|handleAssignedWork/);
+});
+
+test("assignTask skip-busy: a busy machine is not picked when another is idle", async () => {
+  isolateStateRoot();
+  registerPeer({ name: "main", harness: "grok", computer: "Mac Mini M4" });
+  registerPeer({ name: "busy-orch", harness: "cursor", computer: "Mac Mini M4", sessionId: "s-busy" });
+  registerPeer({ name: "idle-orch", harness: "grok", computer: "MacBook Pro M4 Max", sessionId: "s-idle" });
+  heartbeatPeer({ name: "busy-orch", turnState: "busy" });
+  heartbeatPeer({ name: "idle-orch", turnState: "idle" });
+  const result = await assignTask({
+    from: "main",
+    text: "skip-busy-task",
+    machines: listMachines(),
+    probes: {}
+  });
+  assert.equal(result.to, "idle-orch");
+  assert.equal(result.machine.computer, "MacBook Pro M4 Max");
+  assert.equal(readInbox({ name: "busy-orch" }).length, 0);
+  assert.equal(readInbox({ name: "idle-orch" })[0].text, "skip-busy-task");
+});
+
+test("assignTask skip-asleep: a stale machine is not picked", async () => {
+  isolateStateRoot();
+  registerPeer({ name: "main", harness: "grok", computer: "Mac Mini M4" });
+  registerPeer({ name: "asleep-orch", harness: "cursor", computer: "2017 MacBook Pro", sessionId: "s-asleep" });
+  registerPeer({ name: "awake-orch", harness: "grok", computer: "Mac Mini M4", sessionId: "s-awake" });
+  heartbeatPeer({ name: "asleep-orch", turnState: "idle" });
+  heartbeatPeer({ name: "awake-orch", turnState: "idle" });
+  agePeer("asleep-orch", MACHINE_AVAILABLE_TTL_MS + 5_000);
+  const result = await assignTask({
+    from: "main",
+    text: "skip-asleep-task",
+    machines: listMachines({ nowMs: Date.now() }),
+    probes: {}
+  });
+  assert.equal(result.to, "awake-orch");
+  assert.equal(result.machine.computer, "Mac Mini M4");
+  assert.equal(readInbox({ name: "asleep-orch" }).length, 0);
+  assert.equal(readInbox({ name: "awake-orch" })[0].text, "skip-asleep-task");
+});
+
+test("assignTask prefer-idle: idle beats an available unknown session", async () => {
+  isolateStateRoot();
+  registerPeer({ name: "main", harness: "grok", computer: "Mac Mini M4" });
+  registerPeer({ name: "unknown-orch", harness: "cursor", computer: "Mac Mini M4", sessionId: "s-unk" });
+  registerPeer({ name: "idle-orch", harness: "grok", computer: "MacBook Pro M4 Max", sessionId: "s-idle" });
+  heartbeatPeer({ name: "idle-orch", turnState: "idle" });
+  const result = await assignTask({
+    from: "main",
+    text: "prefer-idle-task",
+    machines: listMachines(),
+    probes: {}
+  });
+  assert.equal(result.to, "idle-orch");
+  assert.equal(pickMachine(listMachines()).session.name, "idle-orch");
+});
+
+test("replyToAssign writes the same peer-session shape to main, not consent", () => {
+  isolateStateRoot();
+  registerPeer({ name: "main", harness: "grok" });
+  registerPeer({ name: "mini-orch", harness: "cursor" });
+  const reply = replyToAssign({ from: "mini-orch", to: "main", text: "assign m1 done" });
+  assert.equal(reply.from, "mini-orch");
+  assert.equal(reply.to, "main");
+  assert.equal(reply.text, "assign m1 done");
+  assert.equal(reply.origin, "peer-session");
+  assert.equal(reply.isConsent, false);
+  assert.equal(isPeerConsent(reply), false);
+  const inbox = readInbox({ name: "main" });
+  assert.equal(inbox.length, 1);
+  assert.equal(inbox[0].from, "mini-orch");
+  assert.equal(inbox[0].text, "assign m1 done");
+  assert.equal(inbox[0].origin, "peer-session");
+  assert.equal(inbox[0].isConsent, false);
+});
+
+test("codex/grok/opencode idle resume argv is not Cursor argv", () => {
+  const peersDir = "/var/peers-mailbox";
+  for (const harness of ["codex", "grok", "opencode"]) {
+    const spec = buildIdleResume({
+      harness,
+      sessionId: "sess-1",
+      prompt: "PEER_ACK msg-1",
+      peersDir
+    });
+    assert.ok(Array.isArray(spec.args), harness);
+    const joined = spec.args.join(" ");
+    assert.equal(cursorFlags(joined), false, `${harness} argv leaked Cursor flags: ${joined}`);
+    assert.doesNotMatch(joined, /--mode/);
+    assert.doesNotMatch(joined, /--trust/);
+    assert.doesNotMatch(joined, /--workspace/);
+    assert.notEqual(path.basename(spec.bin), "cursor-agent");
+    assert.notEqual(path.basename(spec.bin), "agent");
+  }
+  const cursor = buildIdleResume({ harness: "cursor", sessionId: "sess-1", prompt: "PEER_ACK msg-1" });
+  const cursorJoined = cursor.args.join(" ");
+  assert.match(cursorJoined, /--mode/);
+  assert.match(cursorJoined, /ask/);
+  assert.match(cursorJoined, /--trust/);
+  assert.doesNotMatch(cursorJoined, /--workspace/);
+});
+
+test("codex resume uses exec resume and can add the peers mailbox dir", () => {
+  const spec = buildIdleResume({
+    harness: "codex",
+    sessionId: "sess-codex",
+    prompt: "PEER_ACK x",
+    peersDir: "/writable/peers"
+  });
+  const joined = spec.args.join(" ");
+  assert.match(joined, /\bexec\b/);
+  assert.match(joined, /\bresume\b/);
+  assert.match(joined, /sess-codex/);
+  assert.equal(spec.env?.AGENT_COLLAB_PEERS_DIR, "/writable/peers");
+});
+
+test("grok resume uses --resume/--single, opencode uses --session", () => {
+  const grok = buildIdleResume({ harness: "grok", sessionId: "sess-g", prompt: "PEER_ACK x" });
+  assert.match(grok.args.join(" "), /--resume/);
+  assert.match(grok.args.join(" "), /--single|sess-g/);
+  const oc = buildIdleResume({ harness: "opencode", sessionId: "sess-o", prompt: "PEER_ACK x" });
+  assert.match(oc.args.join(" "), /--session/);
+  assert.match(oc.args.join(" "), /sess-o/);
+});
+
+test("claude without a native inbox is native_required and does not spawn", () => {
+  isolateStateRoot();
+  delete process.env.CLAUDE_CODE_MESSAGING_SOCKET;
+  assert.equal(claudeNativeInboxPresent({ env: {} }), false);
+  registerPeer({ name: "main", harness: "grok" });
+  registerPeer({ name: "claude", harness: "claude", sessionId: "s-claude" });
+  heartbeatPeer({ name: "claude", turnState: "idle" });
+  const msg = sendMessage({ to: "claude", from: "main", text: "do not fake inject" });
+  let spawns = 0;
+  const r = tryDeliver({
+    peer: { name: "claude", harness: "claude", sessionId: "s-claude", turnState: "idle" },
+    message: msg,
+    runWake: () => {
+      spawns += 1;
+      return { status: 0, stdout: "nope" };
+    }
+  });
+  assert.equal(spawns, 0);
+  assert.equal(r.reason, "native_required");
+  assert.equal(r.spawned, false);
+});
+
+test("unknown harness stays inject-stub and does not spawn", () => {
+  isolateStateRoot();
+  let spawns = 0;
+  const r = tryDeliver({
+    peer: { name: "q", harness: "qwen", sessionId: "s", turnState: "idle" },
+    message: { id: "1", from: "main", text: "x", replyAddress: "main" },
+    runWake: () => {
+      spawns += 1;
+      return { status: 0, stdout: "" };
+    }
+  });
+  assert.equal(spawns, 0);
+  assert.match(r.reason, /inject-stub:qwen/);
+});
+
+test("tickPresence publishes computer, harness, and turn-state; machines expose harness", () => {
+  isolateStateRoot();
+  registerMachine({ computer: "2017 MacBook Pro", url: "http://100.70.172.74:8744" });
+  registerMachine({ computer: "MacBook Pro M4 Max", url: "http://100.109.243.67:8744" });
+  const peer = tickPresence({
+    computer: "Mac Mini M4",
+    harness: "cursor",
+    turnState: "idle",
+    name: "mini-orch",
+    sessionId: "s1",
+    persistPid: false
+  });
+  assert.equal(peer.computer, "Mac Mini M4");
+  assert.equal(peer.harness, "cursor");
+  assert.equal(peer.turnState, "idle");
+  const rows = listMachines({
+    probes: {
+      "2017 MacBook Pro": { ok: false, error: "unreachable" },
+      "MacBook Pro M4 Max": { ok: false, error: "unreachable" }
+    }
+  });
+  assert.deepEqual(
+    rows.map((r) => r.computer).sort(),
+    ["2017 MacBook Pro", "Mac Mini M4", "MacBook Pro M4 Max"]
+  );
+  for (const row of rows) {
+    assert.equal("available" in row, true, row.computer);
+    assert.equal("activity" in row, true, row.computer);
+    assert.equal("harness" in row, true, row.computer);
+  }
+  const mini = rows.find((r) => r.computer === "Mac Mini M4");
+  assert.equal(mini.available, true);
+  assert.equal(mini.activity, "idle");
+  assert.equal(mini.harness, "cursor");
+});
+
+test("heartbeatPeer --harness updates harness without requiring a new name", () => {
+  isolateStateRoot();
+  registerPeer({ name: "worker", harness: "cursor" });
+  const beat = heartbeatPeer({ name: "worker", turnState: "idle", harness: "grok" });
+  assert.equal(beat.name, "worker");
+  assert.equal(beat.harness, "grok");
+  assert.equal(beat.turnState, "idle");
+});
+
+test("presence interval defaults to 30s and is injectable", async () => {
+  assert.equal(DEFAULT_HEARTBEAT_MS, 30_000);
+  assert.equal(resolveHeartbeatIntervalMs({}), 30_000);
+  assert.equal(resolveHeartbeatIntervalMs({ intervalMs: 15 }), 15);
+  isolateStateRoot();
+  const sleeps = [];
+  let ticks = 0;
+  await runPresenceLoop({
+    computer: "Mac Mini M4",
+    harness: "cursor",
+    turnState: "idle",
+    name: "mini-orch",
+    persistPid: false,
+    intervalMs: 15,
+    consume: false,
+    sleep: async (ms) => {
+      sleeps.push(ms);
+    },
+    shouldContinue: () => {
+      ticks += 1;
+      return ticks < 2;
+    }
+  });
+  assert.equal(sleeps[0], 15);
+  assert.ok(ticks >= 2);
+});
+
+test("handleAssignedWork publishes busy so a second assign skips, then replies and returns idle", async () => {
+  isolateStateRoot();
+  registerPeer({ name: "main", harness: "grok", computer: "Mac Mini M4" });
+  registerPeer({
+    name: "mini-orch",
+    harness: "grok",
+    computer: "Mac Mini M4",
+    sessionId: "sess-work"
+  });
+  heartbeatPeer({ name: "mini-orch", turnState: "idle" });
+  await assignTask({
+    from: "main",
+    text: "plate-handoff",
+    machines: listMachines(),
+    probes: {}
+  });
+  let midFlightPick = "unset";
+  let sawArgv = "";
+  const out = handleAssignedWork({
+    name: "mini-orch",
+    runWake: ({ args }) => {
+      sawArgv = args.join(" ");
+      midFlightPick = pickMachine(listMachines());
+      return { status: 0, stdout: "ok" };
+    }
+  });
+  assert.equal(out.consumed, true);
+  assert.equal(midFlightPick, null);
+  assert.equal(cursorFlags(sawArgv), false, sawArgv);
+  assert.equal(out.peer.turnState, "idle");
+  const inbox = readInbox({ name: "main" });
+  assert.equal(inbox.length, 1);
+  assert.equal(inbox[0].from, "mini-orch");
+  assert.equal(inbox[0].origin, "peer-session");
+  assert.equal(inbox[0].isConsent, false);
+  assert.match(inbox[0].text, /assign /);
+  assert.equal(readInbox({ name: "mini-orch" }).length, 0);
+});
+
+test("handleAssignedWork refuse still replies with the same shape and returns idle", async () => {
+  isolateStateRoot();
+  registerPeer({ name: "main", harness: "grok", computer: "Mac Mini M4" });
+  registerPeer({ name: "mini-orch", harness: "cursor", computer: "Mac Mini M4", sessionId: "s" });
+  heartbeatPeer({ name: "mini-orch", turnState: "idle" });
+  await assignTask({
+    from: "main",
+    text: "nope",
+    machines: listMachines(),
+    probes: {}
+  });
+  const out = handleAssignedWork({ name: "mini-orch", refuse: "operator-refused" });
+  assert.equal(out.consumed, true);
+  assert.equal(out.peer.turnState, "idle");
+  const inbox = readInbox({ name: "main" });
+  assert.equal(inbox[0].from, "mini-orch");
+  assert.match(inbox[0].text, /refuse/);
+  assert.equal(inbox[0].isConsent, false);
+});
+
+test("dead presence pid makes the computer unavailable without a manual heartbeat", () => {
+  isolateStateRoot();
+  tickPresence({
+    computer: "Mac Mini M4",
+    harness: "cursor",
+    turnState: "idle",
+    name: "mini-orch",
+    pid: 999999999,
+    persistPid: true
+  });
+  const row = listMachines().find((m) => m.computer === "Mac Mini M4");
+  assert.equal(row.available, false);
+  assert.equal(pickMachine(listMachines()), null);
+});
+
+test("companion peers presence --once and consume drive the shipped CLI", () => {
+  const dataDir = isolateStateRoot();
+  const repo = makeRepo();
+  const env = { AGENT_COLLAB_DATA: dataDir, AGENT_COLLAB_GROK_BIN: stubBin("process.exit(0);\n") };
+  const self = cli(
+    [
+      "peers",
+      "presence",
+      "--computer",
+      "Mac Mini M4",
+      "--harness",
+      "grok",
+      "--turn-state",
+      "idle",
+      "--name",
+      "mini-orch",
+      "--session-id",
+      "sess-cli",
+      "--once",
+      "--json"
+    ],
+    { cwd: repo, env }
+  );
+  assert.equal(self.status, 0, self.stderr);
+  const beat = JSON.parse(self.stdout);
+  assert.equal(beat.computer, "Mac Mini M4");
+  assert.equal(beat.harness, "grok");
+  assert.equal(beat.turnState, "idle");
+  const main = cli(["peers", "register", "--name", "main", "--harness", "grok", "--json"], {
+    cwd: repo,
+    env
+  });
+  assert.equal(main.status, 0, main.stderr);
+  const assigned = cli(["peers", "assign", "--from", "main", "cli-handoff", "--json"], { cwd: repo, env });
+  assert.equal(assigned.status, 0, assigned.stderr);
+  const consume = cli(["peers", "consume", "--name", "mini-orch", "--json"], { cwd: repo, env });
+  assert.equal(consume.status, 0, consume.stderr);
+  const body = JSON.parse(consume.stdout);
+  assert.equal(body.consumed, true);
+  const inbox = cli(["peers", "inbox", "--name", "main", "--json"], { cwd: repo, env });
+  assert.equal(inbox.status, 0, inbox.stderr);
+  const box = JSON.parse(inbox.stdout);
+  assert.equal(box.messages[0].from, "mini-orch");
+  assert.equal(box.messages[0].isConsent, false);
+});

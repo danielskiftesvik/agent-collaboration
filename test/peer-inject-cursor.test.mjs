@@ -242,7 +242,8 @@ test("concurrent lease holder prevents a second wake spawn", async () => {
   }
 });
 
-test("claude native_required; other harnesses stub", () => {
+test("claude native_required; unknown harnesses stub", () => {
+  isolateStateRoot();
   assert.equal(
     tryDeliver({
       peer: { name: "c", harness: "claude", sessionId: "x", turnState: "idle" },
@@ -252,10 +253,10 @@ test("claude native_required; other harnesses stub", () => {
   );
   assert.match(
     tryDeliver({
-      peer: { name: "x", harness: "codex", sessionId: "x", turnState: "idle" },
+      peer: { name: "x", harness: "qwen", sessionId: "x", turnState: "idle" },
       message: { id: "1", from: "a", text: "t", replyAddress: "a" }
     }).reason,
-    /inject-stub:codex/
+    /inject-stub:qwen/
   );
 });
 

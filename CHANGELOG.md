@@ -14,6 +14,16 @@
   (session idle/busy) so a main orchestrator can see which computers can
   take work. `peers assign` only enqueues to `available && not busy`
   (prefers idle); refuses when the fleet is asleep or mid-turn.
+  `peers presence` heartbeats `--computer` / `--harness` / `--turn-state` about
+  every 30s (interval injectable). Stopping it (or a dead pid) makes that
+  computer unavailable; a frozen pid is not treated as awake past the 90s
+  window. Consume is per harness: Cursor keeps the existing idle deliver;
+  Claude is native SendMessage/inbox or mailbox + `native_required` (no fake
+  inject); Codex `exec resume`, Grok `--resume --single`, OpenCode
+  `--session` — never Cursor `--mode ask --trust`. After accept the heartbeat
+  is `busy`; finish/refuse sends the same peer-session reply to the main name
+  and returns `idle`. 2017 / M4 Max need not be awake; remote assign may stay
+  HTTP-enqueue.
 
 ## 0.12.1 - 2026-08-13
 

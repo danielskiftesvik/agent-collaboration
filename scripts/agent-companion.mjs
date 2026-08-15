@@ -11,6 +11,9 @@ import { registerPeer, registerSelf, heartbeatPeer, unregisterPeer, listPeers, l
 import { listenPeersServer, peersHttp, collectMachineProbes } from "../core/peers-serve.mjs";
 import { deliverInbox } from "../core/peer-deliver.mjs";
 import { assignTask } from "../core/peer-assign.mjs";
+import { handleAssignedWork } from "../core/peer-receive.mjs";
+import { replyToAssign } from "../core/peer-reply.mjs";
+import { tickPresence, runPresenceLoop } from "../core/peer-presence.mjs";
 import { runDoctor } from "../core/doctor.mjs";
 import { mergeReviews } from "../core/merge-reviews.mjs";
 import { version } from "../core/version.mjs";
@@ -21,8 +24,8 @@ import { MODEL_PROFILES } from "../core/model-profiles.mjs";
 import { cleanupJobWorktree, collectGarbage, waitForPidExit } from "../core/gc.mjs";
 import { resolveWorkerRef } from "../core/instances.mjs";
 
-const VALUE_FLAGS = new Set(["worker", "workers", "role", "driver", "base", "timeout", "gate", "sandbox", "focus", "surface", "task", "job", "recent", "retention-days", "artifacts-older-than", "name", "to", "from", "harness", "reply-address", "session-id", "reach", "pid", "listen", "token", "pair", "limit", "turn-state", "computer", "url"]);
-const BOOL_FLAGS = new Set(["json", "apply", "wait", "background", "profiles", "no-fallback", "live", "active", "latest", "refresh", "artifact-only", "force", "dry-run", "include-unapplied", "ack"]);
+const VALUE_FLAGS = new Set(["worker", "workers", "role", "driver", "base", "timeout", "gate", "sandbox", "focus", "surface", "task", "job", "recent", "retention-days", "artifacts-older-than", "name", "to", "from", "harness", "reply-address", "session-id", "reach", "pid", "listen", "token", "pair", "limit", "turn-state", "computer", "url", "interval-ms", "refuse"]);
+const BOOL_FLAGS = new Set(["json", "apply", "wait", "background", "profiles", "no-fallback", "live", "active", "latest", "refresh", "artifact-only", "force", "dry-run", "include-unapplied", "ack", "once", "consume", "no-consume"]);
 
 function optionalComputer(options) {
   if (options.computer != null && options.computer !== "") {
@@ -477,9 +480,10 @@ switch (subcommand) {
     const verb = positionals[0];
     if (!verb) {
       fail(
-        "usage: agent-companion peers <self|heartbeat|register|unregister|list|machine|machines|eligible|pick|assign|send|inbox|deliver|serve>\n" +
+        "usage: agent-companion peers <self|heartbeat|presence|register|unregister|list|machine|machines|eligible|pick|assign|send|inbox|deliver|consume|reply|serve>\n" +
           "  peers self --harness <h> [--name <name>] [--session-id <id>] [--pid <n>] [--computer <label>] [--json]\n" +
-          "  peers heartbeat --name <name> [--pid <n>] [--turn-state idle|busy] [--computer <label>] [--json]\n" +
+          "  peers heartbeat --name <name> [--pid <n>] [--turn-state idle|busy] [--computer <label>] [--harness <h>] [--json]\n" +
+          "  peers presence --computer <label> --harness <h> [--turn-state idle|busy] [--name <name>] [--session-id <id>] [--interval-ms n] [--once] [--consume|--no-consume] [--json]\n" +
           "  peers register --name <name> [--harness <h>] [--reply-address <addr>] [--session-id <id>] [--pid <n>] [--reach local|cross-machine] [--computer <label>] [--pair <secret>] [--json]\n" +
           "  peers unregister --name <name> [--json]\n" +
           "  peers list [--json]\n" +
@@ -491,6 +495,8 @@ switch (subcommand) {
           "  peers send --to <name> --from <name> <text>\n" +
           "  peers inbox --name <name> [--ack] [--json]\n" +
           "  peers deliver --name <name> [--limit n] [--json]\n" +
+          "  peers consume --name <name> [--refuse <reason>] [--json]\n" +
+          "  peers reply --from <name> --to <name> <text>\n" +
           "  peers serve [--listen host:port] [--pair <secret>] [--computer <label>]"
       );
     }
@@ -518,13 +524,68 @@ switch (subcommand) {
           name: options.name,
           pid: options.pid,
           turnState: options["turn-state"],
-          computer: optionalComputer(options)
+          computer: optionalComputer(options),
+          harness: options.harness
         });
         out(
           peer,
           options,
-          `heartbeat ${peer.name} ${peer.status} turnState=${peer.turnState ?? "-"} computer=${peer.computer ?? "-"}`
+          `heartbeat ${peer.name} ${peer.status} turnState=${peer.turnState ?? "-"} harness=${peer.harness ?? "-"} computer=${peer.computer ?? "-"}`
         );
+        break;
+      }
+      if (verb === "presence") {
+        if (!options.harness) fail("peers presence: --harness is required");
+        const computer = optionalComputer(options);
+        if (!computer) fail("peers presence: --computer is required");
+        const consume = options["no-consume"] ? false : options.once ? Boolean(options.consume) : options.consume !== false;
+        const presence = {
+          name: options.name,
+          harness: options.harness,
+          computer,
+          turnState: options["turn-state"] || "idle",
+          sessionId: options["session-id"],
+          pid: options.pid,
+          persistPid: !options.once
+        };
+        if (options.once) {
+          const peer = tickPresence(presence);
+          if (consume) {
+            const work = handleAssignedWork({ name: peer.name, refuse: options.refuse });
+            out(work.consumed ? work : peer, options, work.consumed
+              ? `consumed ${work.message?.id ?? "-"} reply=${work.reply?.id ?? "-"} turnState=${work.turnState}`
+              : `presence ${peer.name} ${peer.harness} ${peer.computer} turnState=${peer.turnState ?? "-"}`);
+          } else {
+            out(
+              peer,
+              options,
+              `presence ${peer.name} ${peer.harness} ${peer.computer} turnState=${peer.turnState ?? "-"}`
+            );
+          }
+          break;
+        }
+        const ac = new AbortController();
+        const stop = () => ac.abort();
+        process.on("SIGINT", stop);
+        process.on("SIGTERM", stop);
+        process.stdout.write(
+          JSON.stringify({
+            presence: true,
+            name: options.name || options.harness,
+            harness: options.harness,
+            computer,
+            turnState: presence.turnState,
+            intervalMs: Number(options["interval-ms"]) || undefined,
+            consume
+          }) + "\n"
+        );
+        await runPresenceLoop({
+          ...presence,
+          intervalMs: options["interval-ms"],
+          consume,
+          signal: ac.signal,
+          shouldContinue: () => !ac.signal.aborted
+        });
         break;
       }
       if (verb === "register") {
@@ -602,7 +663,7 @@ switch (subcommand) {
                 const sess = m.session
                   ? `${m.session.name}:${m.session.turnState ?? "unknown"}`
                   : "-";
-                return `${m.computer}\t${m.available ? "available" : "unavailable"}\t${m.activity}\t${sess}\t${m.reason}`;
+                return `${m.computer}\t${m.available ? "available" : "unavailable"}\t${m.activity}\t${m.harness ?? "-"}\t${sess}\t${m.reason}`;
               })
               .join("\n")
           : "(no machines)";
@@ -705,6 +766,30 @@ switch (subcommand) {
               .join("\n")
           : "(empty inbox)";
         out(payload, options, human);
+        break;
+      }
+      if (verb === "consume") {
+        if (!options.name) fail("peers consume: --name is required");
+        const payload = handleAssignedWork({
+          name: options.name,
+          refuse: options.refuse
+        });
+        out(
+          payload,
+          options,
+          payload.consumed
+            ? `consumed ${payload.message?.id ?? "-"} reply=${payload.reply?.id ?? "-"} turnState=${payload.turnState}`
+            : `(empty inbox)`
+        );
+        break;
+      }
+      if (verb === "reply") {
+        if (!options.from) fail("peers reply: --from is required");
+        if (!options.to) fail("peers reply: --to is required");
+        const text = positionals.slice(1).join(" ");
+        if (!text) fail("peers reply: a text payload is required");
+        const msg = replyToAssign({ from: options.from, to: options.to, text });
+        out(msg, options, `replied ${msg.id} to ${msg.to} from ${msg.from}`);
         break;
       }
       if (verb === "serve") {
@@ -810,7 +895,8 @@ switch (subcommand) {
         "  gc [--dry-run] [--artifacts-older-than days] [--include-unapplied] [--json]",
         "  cancel <jobId> [--force]",
         "  peers self --harness <h> [--name n] [--session-id id] [--pid n] [--computer label]",
-        "  peers heartbeat --name <name> [--pid n] [--turn-state idle|busy] [--computer label]",
+        "  peers heartbeat --name <name> [--pid n] [--turn-state idle|busy] [--computer label] [--harness h]",
+        "  peers presence --computer label --harness h [--turn-state idle|busy] [--name n] [--session-id id] [--interval-ms n] [--once] [--consume|--no-consume]",
         "  peers register --name <name> [--harness h] [--reply-address addr] [--session-id id] [--pid n] [--reach local|cross-machine] [--computer label]",
         "  peers unregister --name <name>",
         "  peers list [--json]",
@@ -822,6 +908,8 @@ switch (subcommand) {
         "  peers send --to <name> --from <name> <text>",
         "  peers inbox --name <name> [--ack] [--json]",
         "  peers deliver --name <name> [--limit n] [--json]",
+        "  peers consume --name <name> [--refuse reason] [--json]",
+        "  peers reply --from <name> --to <name> <text>",
         "  peers serve [--listen 127.0.0.1:port] [--pair secret] [--computer label]"
       ].join("\n")
     );

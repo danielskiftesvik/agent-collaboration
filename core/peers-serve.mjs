@@ -187,7 +187,8 @@ export function createPeersServer({ pairToken = null, computer = null } = {}) {
             name: body.name,
             pid: body.pid,
             turnState: body.turnState,
-            computer: body.computer
+            computer: body.computer,
+            harness: body.harness
           })
         );
         return;

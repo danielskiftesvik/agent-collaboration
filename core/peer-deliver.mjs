@@ -1,18 +1,9 @@
 // Harness router + inbox consumer. peers send never imports this for auto-wake.
-import { tryDeliver as cursorTryDeliver } from "./peer-inject-cursor.mjs";
+import { tryReceive } from "./peer-receive.mjs";
 import { getPeer, readInbox } from "./peers.mjs";
 
-export function tryDeliver({ peer, message, runWake, resumeProbe } = {}) {
-  const harness = String(peer?.harness || "").toLowerCase();
-  if (harness === "cursor" || harness === "claude") {
-    return cursorTryDeliver({ peer, message, runWake, resumeProbe });
-  }
-  return {
-    delivered: false,
-    queued: true,
-    reason: `inject-stub:${harness || "unknown"}`,
-    asOfMs: Date.now()
-  };
+export function tryDeliver({ peer, message, runWake, resumeProbe, claimed } = {}) {
+  return tryReceive({ peer, message, runWake, resumeProbe, claimed });
 }
 
 /**

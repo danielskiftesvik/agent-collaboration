@@ -17,7 +17,8 @@ generalization of codex-plugin-cc's `codex-cli-runtime` skill.
 setup [--json] [--gate on|off] [--sandbox on|off] [--retention-days <n>]
 doctor [--live] [--workers a,b] [--json]
 peers self --harness <h> [--name <name>] [--session-id <id>] [--pid <n>] [--computer <label>] [--json]
-peers heartbeat --name <name> [--pid <n>] [--turn-state idle|busy] [--computer <label>] [--json]
+peers heartbeat --name <name> [--pid <n>] [--turn-state idle|busy] [--computer <label>] [--harness <h>] [--json]
+peers presence --computer <label> --harness <h> [--turn-state idle|busy] [--name <name>] [--session-id <id>] [--interval-ms n] [--once] [--consume|--no-consume] [--json]
 peers register --name <name> [--harness <h>] [--reply-address <addr>] [--session-id <id>] [--pid <n>] [--reach local|cross-machine] [--computer <label>] [--json]
 peers unregister --name <name> [--json]
 peers list [--json]
@@ -29,6 +30,8 @@ peers assign --from <name> <text>
 peers send --to <name> --from <name> <text>
 peers inbox --name <name> [--ack] [--json]
 peers deliver --name <name> [--limit n] [--json]
+peers consume --name <name> [--refuse <reason>] [--json]
+peers reply --from <name> --to <name> <text>
 peers serve [--listen 127.0.0.1:port] [--pair <secret>] [--computer <label>]
 delegate --worker <agy|codex|claude|cursor|grok|opencode|instance-alias> [--driver <name>] [--role worker|reviewer] [--profile <name>] [--background] [--apply] [--timeout <s>] [--no-fallback] <brief>
 review  --worker <name> | --workers a,b [--focus <text>] [--profile <name>] [--background] [--no-fallback] [--json] <diff/context>
@@ -59,11 +62,15 @@ messages are named plain-text pings (Claude-class list/send/inbox). They are
 - **`send` never wakes.** `peers deliver --name` is the consumer
   (`core/peer-deliver.mjs`). Cursor idle wake lives in
   `core/peer-inject-cursor.mjs` (not dispatch, not `adapters/contract.mjs`).
-  Receiver must publish `peers heartbeat --name <n> --turn-state idle` and a
-  Cursor `--session-id`. Wake uses `--mode ask --trust` and a plugin-owned
-  ACK-first prompt (`PEER_ACK <id>`); raw peer text never goes on argv.
-  `--trust` is not consent. Claude → `native_required`. Other harnesses →
-  `inject-stub`.
+  Receiver must publish `peers presence` / `peers heartbeat --name <n>
+  --turn-state idle` (and a session id when that harness resumes by id).
+  Cursor wake uses `--mode ask --trust` and a plugin-owned ACK-first prompt
+  (`PEER_ACK <id>`); raw peer text never goes on argv. `--trust` is not consent.
+  Claude → native SendMessage/inbox if present, else mailbox + `native_required`
+  (do not fake a Claude inject). Codex `exec resume`, Grok `--resume --single`,
+  OpenCode `--session` — never Cursor flags. Unknown harness → `inject-stub`.
+  After accept, heartbeat is `busy`; finish/refuse `peers reply`s to the main
+  name (same peer-session shape) and returns `idle`.
 - Sandboxed Codex often cannot write `$HOME/.../peers/.lock` and cannot
   reach host `127.0.0.1`. The Codex adapter sets `AGENT_COLLAB_PEERS_DIR`
   and `addDirs` to the shared mailbox. Today's `codex-companion` cannot
@@ -391,10 +398,13 @@ read `tasks/<jobId>/reports/<worker>.md`.
 - `AGENT_COLLAB_PEERS_COMPUTER` — operator-chosen computer label (e.g.
   `Mac Mini M4`, `2017 MacBook Pro`, `MacBook Pro M4 Max`). Not hostname.
 - `peers machines` — fleet roster: `available` (awake/reachable) vs
-  `activity` (session idle/busy). Heartbeat ~30s. Remote laptops need
-  `peers machine --computer … --url …` on the orchestrator host.
+  `activity` (session idle/busy) vs `harness`. Heartbeat ~30s. Remote
+  laptops need `peers machine --computer … --url …` on the orchestrator host.
+  2017 / M4 Max need not be awake; remote assign may stay HTTP-enqueue.
 - `peers assign --from <main> <text>` — only to `available && not busy`.
   Prefer idle. Not `delegate`.
+- `peers presence` — machine-side process: `--computer`, `--harness`,
+  `--turn-state`. Consumes assign. Dead/stopped process → unavailable.
 - `AGENT_COLLAB_DATA` — out-of-repo state root (default: tmp/plugin-data).
 - `AGENT_COLLAB_DRIVER` — default driver harness.
 - `AGENT_COLLAB_SANDBOX` — OS-sandbox: `on` (all non-codex) | `off`. Default: opt-in

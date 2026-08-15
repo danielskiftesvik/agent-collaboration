@@ -181,20 +181,26 @@ function defaultRunWake({ bin, args, env, timeoutMs }) {
  * Requires receiver-published turnState === "idle" (via heartbeat).
  * delivered:true only after ackInbox of that exact message id.
  */
-export function tryDeliver({ peer, message, runWake = defaultRunWake, resumeProbe = resumeProcessAlive } = {}) {
+export function tryDeliver({
+  peer,
+  message,
+  runWake = defaultRunWake,
+  resumeProbe = resumeProcessAlive,
+  claimed = false
+} = {}) {
   try {
-    return tryDeliverInner({ peer, message, runWake, resumeProbe });
+    return tryDeliverInner({ peer, message, runWake, resumeProbe, claimed });
   } catch (e) {
     return queued(`inject-error:${e?.message || e}`);
   }
 }
 
-function tryDeliverInner({ peer, message, runWake, resumeProbe }) {
+function tryDeliverInner({ peer, message, runWake, resumeProbe, claimed = false }) {
   if (!peer || !message) return queued("missing-peer-or-message");
 
   const harness = String(peer.harness || "").toLowerCase();
   if (harness === "claude") {
-    return queued("native_required", { status: "native_required", deliveryMode: "native" });
+    return queued("native_required", { status: "native_required", deliveryMode: "native", spawned: false });
   }
   if (harness !== "cursor") {
     return queued(`inject-stub:${harness || "unknown"}`);
@@ -204,8 +210,10 @@ function tryDeliverInner({ peer, message, runWake, resumeProbe }) {
   }
 
   const turn = peer.turnState == null || peer.turnState === "" ? null : String(peer.turnState).toLowerCase();
-  if (!turn) return queued("no-turn-state");
-  if (turn !== "idle") return queued("busy:turn-state");
+  if (!claimed) {
+    if (!turn) return queued("no-turn-state");
+    if (turn !== "idle") return queued("busy:turn-state");
+  }
 
   const sessionId = peer.sessionId;
   if (!sessionId) return queued("no-session-id");
@@ -228,7 +236,7 @@ function tryDeliverInner({ peer, message, runWake, resumeProbe }) {
       return queued("destination-changed");
     }
     const liveTurn = live.turnState == null ? null : String(live.turnState).toLowerCase();
-    if (liveTurn !== "idle") {
+    if (!claimed && liveTurn !== "idle") {
       return queued(liveTurn ? "busy:turn-state" : "no-turn-state");
     }
 
