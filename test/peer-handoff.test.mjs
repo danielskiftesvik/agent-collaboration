@@ -34,6 +34,7 @@ import {
   tickPresence,
   runPresenceLoop
 } from "../core/peer-presence.mjs";
+import { parseAssignOutcome, finalizeAssignOutcome } from "../core/peer-outcome.mjs";
 
 const CLI = fileURLToPath(new URL("../scripts/agent-companion.mjs", import.meta.url));
 const ASSIGN_SRC = fileURLToPath(new URL("../core/peer-assign.mjs", import.meta.url));
@@ -69,6 +70,51 @@ test("assign, receive, presence, and reply stay off the job-plane dispatcher", (
   }
   const dispatch = fs.readFileSync(DISPATCH_SRC, "utf8");
   assert.doesNotMatch(dispatch, /peer-assign|peer-receive|peer-presence|peer-reply|handleAssignedWork/);
+});
+
+test("parseAssignOutcome binds id and rejects PEER_ACK-only stdout", () => {
+  const id = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee";
+  assert.equal(parseAssignOutcome(`PEER_ACK ${id}\n`, id), null);
+  assert.equal(parseAssignOutcome("ok\n", id), null);
+  const p = parseAssignOutcome(
+    `notes\nassign ${id} rerouted\nharness: cursor\nused cursor; grok down\n`,
+    id
+  );
+  assert.equal(p.status, "rerouted");
+  assert.equal(p.harness, "cursor");
+  const done = parseAssignOutcome(
+    `assign ${id} done\nharness: grok\njob: 11111111-2222-3333-4444-555555555555\nlooked at the test\n`,
+    id
+  );
+  assert.equal(done.status, "done");
+  assert.equal(done.jobId, "11111111-2222-3333-4444-555555555555");
+  assert.equal(parseAssignOutcome(`assign other-id done\n`, id), null);
+});
+
+test("finalizeAssignOutcome refuses done when implement job is not terminal", () => {
+  const id = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee";
+  const parsed = parseAssignOutcome(
+    `assign ${id} done\njob: 11111111-2222-3333-4444-555555555555\n`,
+    id
+  );
+  const refused = finalizeAssignOutcome(parsed, { job: { id: parsed.jobId, status: "running" } });
+  assert.equal(refused.status, "refuse");
+  assert.match(refused.reason, /job-not-terminal|unparsed/);
+  const ping = finalizeAssignOutcome(
+    parseAssignOutcome(`assign ${id} done\nkind: ping\nharness: grok\nok\n`, id),
+    { job: null }
+  );
+  assert.equal(ping.status, "done");
+  const forged = finalizeAssignOutcome(
+    parseAssignOutcome(`assign ${id} done\nharness: grok\nimplemented it\n`, id),
+    { job: null }
+  );
+  assert.equal(forged.status, "refuse");
+  const cancelled = finalizeAssignOutcome(
+    parseAssignOutcome(`assign ${id} done\njob: 11111111-2222-3333-4444-555555555555\n`, id),
+    { job: { id: "11111111-2222-3333-4444-555555555555", status: "cancelled" } }
+  );
+  assert.equal(cancelled.status, "done");
 });
 
 test("assignTask skip-busy: a busy machine is not picked when another is idle", async () => {
