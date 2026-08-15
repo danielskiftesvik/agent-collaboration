@@ -15,6 +15,8 @@ import {
   listPeers,
   listMachines,
   registerMachine,
+  eligibleMachines,
+  pickMachine,
   sendMessage,
   readInbox,
   ackInbox,
@@ -35,6 +37,13 @@ function cli(args, { cwd, env } = {}) {
 test("peers.mjs does not import the job-plane dispatcher", () => {
   const src = fs.readFileSync(PEERS_SRC, "utf8");
   assert.doesNotMatch(src, /^import .*dispatch\.mjs/m);
+});
+
+test("assign stays off the job-plane dispatcher", () => {
+  const assignSrc = fs.readFileSync(new URL("../core/peer-assign.mjs", import.meta.url), "utf8");
+  const dispatchSrc = fs.readFileSync(DISPATCH_SRC, "utf8");
+  assert.doesNotMatch(assignSrc, /dispatch\.mjs/);
+  assert.doesNotMatch(dispatchSrc, /peer-assign/);
 });
 
 test("dispatch.mjs has no peer-ping control flow", () => {
@@ -312,11 +321,95 @@ test("listMachines reports available/idle vs unavailable for asleep computers", 
   assert.equal(old.activity, "none");
   assert.equal(old.reason, "unreachable");
 
-  const busy = listMachines({
+  const asleep = listMachines({
     nowMs: now + MACHINE_AVAILABLE_TTL_MS + 1
   }).find((m) => m.computer === "Mac Mini M4");
-  assert.equal(busy.available, false);
-  assert.equal(busy.reason, "asleep-or-offline");
+  assert.equal(asleep.available, false);
+  assert.equal(asleep.reason, "asleep-or-offline");
+});
+
+test("pickMachine only assigns available non-busy machines and prefers idle", () => {
+  isolateStateRoot();
+  registerPeer({ name: "main", harness: "grok", computer: "Mac Mini M4" });
+  registerPeer({ name: "old-orch", harness: "cursor", computer: "2017 MacBook Pro" });
+  registerPeer({ name: "max-orch", harness: "cursor", computer: "MacBook Pro M4 Max" });
+  heartbeatPeer({ name: "old-orch", turnState: "busy" });
+  heartbeatPeer({ name: "max-orch", turnState: "idle" });
+
+  const now = Date.now();
+  const rows = listMachines({
+    nowMs: now,
+    probes: {
+      "2017 MacBook Pro": {
+        ok: true,
+        at: new Date(now).toISOString(),
+        sessions: [
+          {
+            name: "old-orch",
+            harness: "cursor",
+            turnState: "busy",
+            status: "live",
+            lastSeenAt: new Date(now).toISOString()
+          }
+        ]
+      },
+      "MacBook Pro M4 Max": {
+        ok: true,
+        at: new Date(now).toISOString(),
+        sessions: [
+          {
+            name: "max-orch",
+            harness: "cursor",
+            turnState: "idle",
+            status: "live",
+            lastSeenAt: new Date(now).toISOString()
+          }
+        ]
+      }
+    }
+  });
+  const names = eligibleMachines(rows).map((m) => m.computer);
+  assert.ok(names.includes("Mac Mini M4"));
+  assert.ok(names.includes("MacBook Pro M4 Max"));
+  assert.ok(!names.includes("2017 MacBook Pro"));
+  const picked = pickMachine(rows);
+  assert.equal(picked.computer, "MacBook Pro M4 Max");
+  assert.equal(picked.session.name, "max-orch");
+});
+
+test("assignTask refuses when every machine is busy or asleep", async () => {
+  isolateStateRoot();
+  registerPeer({ name: "busy-orch", harness: "cursor", computer: "2017 MacBook Pro" });
+  heartbeatPeer({ name: "busy-orch", turnState: "busy" });
+  const { assignTask } = await import("../core/peer-assign.mjs");
+  await assert.rejects(
+    () =>
+      assignTask({
+        from: "main",
+        text: "do the thing",
+        machines: listMachines(),
+        probes: {}
+      }),
+    (err) => err.code === "PEER_NO_CAPACITY"
+  );
+});
+
+test("assignTask enqueues to the picked local session", async () => {
+  isolateStateRoot();
+  registerPeer({ name: "main", harness: "grok", computer: "Mac Mini M4" });
+  registerPeer({ name: "mini-orch", harness: "cursor", computer: "Mac Mini M4" });
+  heartbeatPeer({ name: "mini-orch", turnState: "idle" });
+  const { assignTask } = await import("../core/peer-assign.mjs");
+  const result = await assignTask({
+    from: "main",
+    text: "run plate-03",
+    machines: listMachines(),
+    probes: {}
+  });
+  assert.equal(result.to, "mini-orch");
+  assert.equal(result.remote, false);
+  assert.equal(result.message.text, "run plate-03");
+  assert.equal(readInbox({ name: "mini-orch" })[0].text, "run plate-03");
 });
 
 test("companion peers self and heartbeat drive the shipped CLI", () => {

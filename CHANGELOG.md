@@ -12,7 +12,8 @@
   `--computer` / `AGENT_COLLAB_PEERS_COMPUTER` label (not hostname).
   `peers machines` reports `available` (awake/reachable, 90s) vs `activity`
   (session idle/busy) so a main orchestrator can see which computers can
-  take work.
+  take work. `peers assign` only enqueues to `available && not busy`
+  (prefers idle); refuses when the fleet is asleep or mid-turn.
 
 ## 0.12.1 - 2026-08-13
 

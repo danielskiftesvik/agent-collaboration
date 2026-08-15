@@ -23,6 +23,9 @@ peers unregister --name <name> [--json]
 peers list [--json]
 peers machine --computer <label> [--url http://100.x:port]
 peers machines [--json]
+peers eligible [--json]
+peers pick [--json]
+peers assign --from <name> <text>
 peers send --to <name> --from <name> <text>
 peers inbox --name <name> [--ack] [--json]
 peers deliver --name <name> [--limit n] [--json]
@@ -390,6 +393,8 @@ read `tasks/<jobId>/reports/<worker>.md`.
 - `peers machines` — fleet roster: `available` (awake/reachable) vs
   `activity` (session idle/busy). Heartbeat ~30s. Remote laptops need
   `peers machine --computer … --url …` on the orchestrator host.
+- `peers assign --from <main> <text>` — only to `available && not busy`.
+  Prefer idle. Not `delegate`.
 - `AGENT_COLLAB_DATA` — out-of-repo state root (default: tmp/plugin-data).
 - `AGENT_COLLAB_DRIVER` — default driver harness.
 - `AGENT_COLLAB_SANDBOX` — OS-sandbox: `on` (all non-codex) | `off`. Default: opt-in

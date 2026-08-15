@@ -20,6 +20,8 @@ node scripts/agent-companion.mjs peers heartbeat --name <self> --turn-state idle
 node scripts/agent-companion.mjs peers send --to <name> --from <self> "schema landed"
 node scripts/agent-companion.mjs peers inbox --name <self> --json
 node scripts/agent-companion.mjs peers deliver --name <self> --json
+node scripts/agent-companion.mjs peers machines --json
+node scripts/agent-companion.mjs peers assign --from <self> "run the next plate"
 ```
 
 - Claude↔Claude: keep native `/list-agents` and `SendMessage` when both sides

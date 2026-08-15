@@ -37,7 +37,15 @@ per-machine orchestrator.
 - Agents on an awake machine should `peers heartbeat --turn-state idle|busy`
   about every 30s.
 
-This is the roster, not the task distributor.
+This is the roster. Assign is the policy layer on top:
+
+- Eligible: `available && activity !== "busy"` and a live session name.
+- `peers pick` chooses idle before unknown, then oldest `lastSeenAt`.
+- `peers assign --from <orchestrator> <text>` enqueues to that session
+  (HTTP if the machine has a serve URL). Refuses with `PEER_NO_CAPACITY`
+  when every computer is asleep or busy.
+
+Plain `peers send` is unchanged (no policy). Job-plane `delegate` is unchanged.
 
 ## Bind
 

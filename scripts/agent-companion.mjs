@@ -7,9 +7,10 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { decideRoute, resolveDriver, isAuthoritativeDriver, runSetup, runWorkerSync, runWithFallback, resolveFallbackKinds, launchBackground, runJob, waitForJob, refreshJobStatus, applyResult, recommendWorker, cleanupWorkerRuntime } from "../core/dispatch.mjs";
-import { registerPeer, registerSelf, heartbeatPeer, unregisterPeer, listPeers, listMachines, listMachineRecords, registerMachine, sendMessage, readInbox, ackInbox, resolveComputer } from "../core/peers.mjs";
+import { registerPeer, registerSelf, heartbeatPeer, unregisterPeer, listPeers, listMachines, listMachineRecords, registerMachine, pickMachine, eligibleMachines, sendMessage, readInbox, ackInbox, resolveComputer } from "../core/peers.mjs";
 import { listenPeersServer, peersHttp, collectMachineProbes } from "../core/peers-serve.mjs";
 import { deliverInbox } from "../core/peer-deliver.mjs";
+import { assignTask } from "../core/peer-assign.mjs";
 import { runDoctor } from "../core/doctor.mjs";
 import { mergeReviews } from "../core/merge-reviews.mjs";
 import { version } from "../core/version.mjs";
@@ -476,7 +477,7 @@ switch (subcommand) {
     const verb = positionals[0];
     if (!verb) {
       fail(
-        "usage: agent-companion peers <self|heartbeat|register|unregister|list|machine|machines|send|inbox|deliver|serve>\n" +
+        "usage: agent-companion peers <self|heartbeat|register|unregister|list|machine|machines|eligible|pick|assign|send|inbox|deliver|serve>\n" +
           "  peers self --harness <h> [--name <name>] [--session-id <id>] [--pid <n>] [--computer <label>] [--json]\n" +
           "  peers heartbeat --name <name> [--pid <n>] [--turn-state idle|busy] [--computer <label>] [--json]\n" +
           "  peers register --name <name> [--harness <h>] [--reply-address <addr>] [--session-id <id>] [--pid <n>] [--reach local|cross-machine] [--computer <label>] [--pair <secret>] [--json]\n" +
@@ -484,6 +485,9 @@ switch (subcommand) {
           "  peers list [--json]\n" +
           "  peers machine --computer <label> [--url http://100.x:8744]\n" +
           "  peers machines [--json]\n" +
+          "  peers eligible [--json]\n" +
+          "  peers pick [--json]\n" +
+          "  peers assign --from <name> <text>\n" +
           "  peers send --to <name> --from <name> <text>\n" +
           "  peers inbox --name <name> [--ack] [--json]\n" +
           "  peers deliver --name <name> [--limit n] [--json]\n" +
@@ -603,6 +607,49 @@ switch (subcommand) {
               .join("\n")
           : "(no machines)";
         out(rows, options, human);
+        break;
+      }
+      if (verb === "eligible" || verb === "pick" || verb === "assign") {
+        const pair = options.pair || process.env.AGENT_COLLAB_PEERS_PAIR;
+        const probes = await collectMachineProbes(listMachineRecords(), { pair });
+        const rows = listMachines({ probes });
+        if (verb === "eligible") {
+          const eligible = eligibleMachines(rows);
+          const human = eligible.length
+            ? eligible
+                .map((m) => `${m.computer}\t${m.activity}\t${m.session.name}`)
+                .join("\n")
+            : "(none eligible)";
+          out(eligible, options, human);
+          break;
+        }
+        if (verb === "pick") {
+          const picked = pickMachine(rows);
+          if (!picked) {
+            out({ picked: null, machines: rows }, options, "(no eligible machine)");
+            process.exitCode = 2;
+            break;
+          }
+          out(picked, options, `${picked.computer}\t${picked.activity}\t${picked.session.name}`);
+          break;
+        }
+        if (!options.from) fail("peers assign: --from is required");
+        const text = positionals.slice(1).join(" ");
+        if (!text) fail("peers assign: a text payload is required");
+        const result = await assignTask({
+          from: options.from,
+          text,
+          pair,
+          harness: options.harness,
+          computer: optionalComputer(options),
+          machines: rows,
+          probes
+        });
+        out(
+          result,
+          options,
+          `assigned ${result.message.id} to ${result.to} on ${result.machine.computer} (${result.machine.activity})`
+        );
         break;
       }
       if (verb === "send") {
@@ -769,6 +816,9 @@ switch (subcommand) {
         "  peers list [--json]",
         "  peers machine --computer label [--url http://100.x:port]",
         "  peers machines [--json]",
+        "  peers eligible [--json]",
+        "  peers pick [--json]",
+        "  peers assign --from <name> <text>",
         "  peers send --to <name> --from <name> <text>",
         "  peers inbox --name <name> [--ack] [--json]",
         "  peers deliver --name <name> [--limit n] [--json]",

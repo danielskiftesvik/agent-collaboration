@@ -606,6 +606,33 @@ export function listMachines({ nowMs = Date.now(), probes = {} } = {}) {
   return rows.sort((a, b) => a.computer.localeCompare(b.computer));
 }
 
+/** Main orchestrator policy: awake, not in a turn, and has a session to receive work. */
+export function canAssignMachine(row) {
+  return Boolean(row?.available && row.activity !== "busy" && row.session?.name);
+}
+
+export function eligibleMachines(rows = []) {
+  return rows.filter(canAssignMachine);
+}
+
+/**
+ * Prefer idle (published ready) over unknown (awake, no turnState).
+ * Then oldest lastSeen, then computer name — do not always pick the mini.
+ */
+export function pickMachine(rows = []) {
+  const rank = (row) => (row.activity === "idle" ? 0 : 1);
+  return (
+    [...eligibleMachines(rows)].sort((a, b) => {
+      const byReady = rank(a) - rank(b);
+      if (byReady) return byReady;
+      const ta = Date.parse(a.lastSeenAt ?? "") || 0;
+      const tb = Date.parse(b.lastSeenAt ?? "") || 0;
+      if (ta !== tb) return ta - tb;
+      return String(a.computer).localeCompare(String(b.computer));
+    })[0] ?? null
+  );
+}
+
 export function isPeerConsent(_message) {
   return false;
 }
