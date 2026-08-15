@@ -18,7 +18,9 @@ fleet roster and **assigns** a text task to one **per-machine orchestrator**
 (a live `presence` session on that computer). That machine:
 
 1. Accepts (heartbeat `busy` so a second assign skips it).
-2. Consumes the mailbox (per-harness idle resume).
+2. Consumes the mailbox. Default consume is an **orchestrator prompt**
+   (assign body + ping / implement / hint / refuse). Cursor `PEER_ACK` is
+   wake-only and cannot yield `assign done`.
 3. Replies with the same peer-session shape (`from` = machine session, text
    present, `isConsent: false`).
 4. Returns to `idle`.
@@ -174,6 +176,11 @@ node $C peers machine --computer "Mac Mini M4" --url http://100.109.229.92:8744
 Restart **presence** after a `git pull` (node has the old code loaded). Serve
 can stay unless the HTTP contract changed.
 
+**Do not switch 2017 presence to `--harness grok` until this consume commit
+is on that machine.** Cursor `old-orch` stays wake-only until then. A machine
+still running pre-consume presence would treat a silent Grok exit as
+`assign done`.
+
 ## Assign, consume, reply
 
 ```bash
@@ -191,22 +198,29 @@ the token from register. The Mini stores that token under
 `<peersDir>/remote-inbox-tokens.json`. `peers inbox --name main` will use it
 when the local inbox is empty.
 
-Consume is per harness (idle resume, **not** Cursor flags on the others):
+Default consume is the **orchestrator prompt** (assign id, from,
+`hintHarness`, body, and ping / implement / hint / refuse). That is **not**
+`PEER_ACK`. Grok / Codex / OpenCode / Claude get that prompt on the
+orchestrator turn (Claude still does not fake-inject: native socket or
+`native_required`). Cursor stays a wake-only plugin path.
 
 | Harness | What consume does |
 |---|---|
-| Cursor | `--resume` + plugin `PEER_ACK <id>` prompt, `--mode ask --trust`, no `--workspace` |
+| Cursor | `--resume` + plugin `PEER_ACK <id>` prompt, `--mode ask --trust`, no `--workspace`. Wake-only: `PEER_ACK` cannot yield `assign done` (`refuse: wake-only` unless a valid outcome block is also present) |
 | Claude | Native inbox if `CLAUDE_CODE_MESSAGING_SOCKET` exists; else mailbox + `native_required` (no fake inject) |
-| Codex | `codex exec resume <session>` + `AGENT_COLLAB_PEERS_DIR` / `--add-dir` |
-| Grok | `grok --resume <session> --single <prompt>` |
-| OpenCode | `opencode run --session <id>` |
+| Codex | `codex exec resume <session>` + orchestrator prompt + `AGENT_COLLAB_PEERS_DIR` / `--add-dir` |
+| Grok | `grok --resume <session> --single` + orchestrator prompt |
+| OpenCode | `opencode run --session <id>` + orchestrator prompt |
 | unknown | `inject-stub` |
 
 **Cursor limitation (important):** the wake prompt is a fixed plugin string
 with the message id only. Raw assign text is **not** on argv (`--mode ask` is
-read-only). A successful Cursor consume often means “woke and PEER_ACK’d,”
-not “executed the plate.” Grok/Codex/OpenCode resume a real new turn with
-that harness’s flags; a missing session id refuses honestly and still replies.
+read-only). `PEER_ACK` means “woke,” not “executed the plate,” and consume
+replies `assign <id> refuse: wake-only`. Exit 0 without a parsed
+`assign <id> done|refuse|rerouted` is `refuse: unparsed-outcome`, never
+`done`. Grok/Codex/OpenCode resume a real new turn with the orchestrator
+prompt and that harness’s flags; a missing session id refuses honestly and
+still replies.
 
 ## What was proven live
 
@@ -220,10 +234,15 @@ that harness’s flags; a missing session id refuses honestly and still replies.
 | File-path send to `reach: cross-machine` | still fail-closed |
 | Reply without `allowCrossMachine` | crashed presence (fixed `6edce8d`) |
 
+Those live `assign <id> done` replies were Cursor `PEER_ACK`-as-done. After
+orchestrator consume, that path is `refuse: wake-only` and cannot yield
+`assign done`.
+
 ## Hygiene
 
 Do not run two `presence` loops for the same name. On the Mini, drop leftover
 isolated processes (other worktrees / other ports) so `mini-orch` is one pid.
 
 `--session-id` must be a **real** idle session if you want that harness to
-resume work. A placeholder still consume+replies (`done` or `refuse`).
+resume work. A placeholder still consume+replies; without a parsed outcome
+block the reply is `refuse: unparsed-outcome`, not `done`.

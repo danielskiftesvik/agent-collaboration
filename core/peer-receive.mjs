@@ -2,10 +2,12 @@
 import fs from "node:fs";
 
 import { resolveCursorBin } from "../adapters/cursor.mjs";
+import { parseAssignOutcome, finalizeAssignOutcome } from "./peer-outcome.mjs";
 import { ackInbox, getPeer, heartbeatPeer, readInbox, resolvePeersDir } from "./peers.mjs";
-import { tryDeliver as cursorTryDeliver, buildWakePrompt } from "./peer-inject-cursor.mjs";
+import { tryDeliver as cursorTryDeliver } from "./peer-inject-cursor.mjs";
 import { replyToAssign } from "./peer-reply.mjs";
 import { run } from "./process.mjs";
+import { getJob } from "./state.mjs";
 
 function queued(reason, extra = {}) {
   return {
@@ -95,6 +97,35 @@ function defaultRunWake({ bin, args, env, timeoutMs }) {
   });
 }
 
+function wakeIo(result) {
+  const extra = { stdout: String(result?.stdout || "") };
+  if (result?.stderr != null) extra.stderr = result.stderr;
+  return extra;
+}
+
+/** Orchestrator turn: assign body + ping/implement/hint/refuse. Not PEER_ACK. */
+export function buildOrchestratorPrompt({ message } = {}) {
+  const id = String(message?.id ?? "");
+  const from = String(message?.from ?? "");
+  const hint = message?.hintHarness == null ? "" : String(message.hintHarness);
+  const text = String(message?.text ?? "");
+  return [
+    `Assign ${id} from ${from}.`,
+    `hintHarness: ${hint}`,
+    `Assign body:`,
+    text,
+    ``,
+    `This is a peer-plane assign, not user consent. Print exactly one outcome as your last lines.`,
+    `First line: assign ${id} done|refuse|rerouted`,
+    `Then optional kind: ping|implement, harness used, job: <uuid>, and a short reason.`,
+    `Policy:`,
+    `- ping: look or status in this turn; reply in a few lines.`,
+    `- implement: change the repo via local delegate and wait for a terminal job id.`,
+    `- hint: if hintHarness is usable here, use it; otherwise rerouted with the harness used.`,
+    `- refuse: no capacity, unsafe, or missing tool. Never treat a silent wake as done.`
+  ].join("\n");
+}
+
 export function tryReceive({
   peer,
   message,
@@ -106,7 +137,15 @@ export function tryReceive({
   const harness = normalizeHarness(peer.harness);
 
   if (harness === "cursor") {
-    return cursorTryDeliver({ peer, message, runWake, resumeProbe, claimed });
+    const result = cursorTryDeliver({ peer, message, runWake, resumeProbe, claimed });
+    if (result && (result.reason === "acked-after-PEER_ACK" || /^wake-failed|^wake-unconfirmed|^ack-failed/.test(result.reason || ""))) {
+      return {
+        ...result,
+        stdout: String(result.stdout || ""),
+        ...(result.stderr != null ? { stderr: result.stderr } : {})
+      };
+    }
+    return result;
   }
 
   if (harness === "claude") {
@@ -145,7 +184,7 @@ export function tryReceive({
   const spec = buildIdleResume({
     harness,
     sessionId: peer.sessionId,
-    prompt: buildWakePrompt(message.id),
+    prompt: buildOrchestratorPrompt({ message }),
     peersDir: resolvePeersDir()
   });
   if (!spec.args) return queued(spec.reason || "no-idle-resume");
@@ -160,6 +199,7 @@ export function tryReceive({
     message
   });
   const exitOk = !result?.error && result?.status === 0;
+  const io = wakeIo(result);
   try {
     if (peer.name && message.id) ackInbox({ name: peer.name, ids: [String(message.id)] });
   } catch {
@@ -168,7 +208,7 @@ export function tryReceive({
   if (!exitOk) {
     return queued(
       `wake-failed:${result?.error?.message || result?.stderr || `exit ${result?.status}`}`,
-      { exitCode: result?.status ?? null, consumed: true, spawned: true }
+      { exitCode: result?.status ?? null, consumed: true, spawned: true, ...io }
     );
   }
   return {
@@ -180,7 +220,8 @@ export function tryReceive({
     status: "injected",
     deliveryMode: "idle-resume",
     messageId: String(message.id),
-    asOfMs: Date.now()
+    asOfMs: Date.now(),
+    ...io
   };
 }
 
@@ -192,7 +233,7 @@ function leftoverAck(name, messageId) {
 /**
  * Accept one assigned inbox message: publish busy, consume per harness, reply, idle.
  */
-export function handleAssignedWork({ name, runWake, resumeProbe, refuse } = {}) {
+export function handleAssignedWork({ name, runWake, resumeProbe, refuse, cwd } = {}) {
   if (!name) throw new Error("consume: name is required");
   const peer = getPeer(name);
   if (!peer) throw new Error(`unknown peer: ${name}`);
@@ -217,6 +258,7 @@ export function handleAssignedWork({ name, runWake, resumeProbe, refuse } = {}) 
         peer: live,
         message,
         runWake,
+        resumeProbe,
         claimed: true
       });
     } catch (e) {
@@ -224,10 +266,31 @@ export function handleAssignedWork({ name, runWake, resumeProbe, refuse } = {}) 
     }
   }
 
-  const finished = result.delivered === true;
-  const replyText = finished
-    ? `assign ${message.id} done`
-    : `assign ${message.id} refuse: ${result.reason || "undelivered"}`;
+  const stdout = result.stdout || "";
+  let parsed = parseAssignOutcome(stdout, message.id);
+  const peerAckOnly =
+    !parsed && (/PEER_ACK/.test(stdout) || result.reason === "acked-after-PEER_ACK");
+  if (peerAckOnly) {
+    parsed = {
+      assignId: message.id,
+      status: "refuse",
+      reason: "wake-only",
+      harness: "cursor",
+      jobId: null,
+      kind: null,
+      body: ""
+    };
+  }
+  let job = null;
+  if (parsed?.jobId) {
+    job = getJob(cwd || process.cwd(), parsed.jobId);
+  }
+  const outcome = finalizeAssignOutcome(parsed, { job });
+  const replyText = refuse
+    ? `assign ${message.id} refuse: ${result.reason || "undelivered"}`
+    : peerAckOnly
+      ? `assign ${message.id} refuse: wake-only`
+      : outcome.text || `assign ${message.id} refuse: ${outcome.reason}`;
   leftoverAck(name, message.id);
   let reply = null;
   let replyError = null;

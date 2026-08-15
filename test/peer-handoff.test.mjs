@@ -350,7 +350,7 @@ test("handleAssignedWork replies to a cross-machine main and stays idle if reply
   assert.equal(out.reply.from, "old-orch");
   assert.equal(out.reply.to, "main");
   assert.equal(out.reply.isConsent, false);
-  assert.match(out.reply.text, /assign /);
+  assert.match(out.reply.text, /refuse: unparsed-outcome/);
   assert.equal(readInbox({ name: "main" })[0].from, "old-orch");
   assert.equal(readInbox({ name: "old-orch" }).length, 0);
 });
@@ -569,7 +569,7 @@ test("handleAssignedWork publishes busy so a second assign skips, then replies a
   assert.equal(inbox[0].from, "mini-orch");
   assert.equal(inbox[0].origin, "peer-session");
   assert.equal(inbox[0].isConsent, false);
-  assert.match(inbox[0].text, /assign /);
+  assert.match(inbox[0].text, /refuse: unparsed-outcome/);
   assert.equal(readInbox({ name: "mini-orch" }).length, 0);
 });
 
@@ -591,6 +591,103 @@ test("handleAssignedWork refuse still replies with the same shape and returns id
   assert.equal(inbox[0].from, "mini-orch");
   assert.match(inbox[0].text, /refuse/);
   assert.equal(inbox[0].isConsent, false);
+});
+
+test("orchestrator consume prompt is not PEER_ACK-only and includes assign body", () => {
+  isolateStateRoot();
+  registerPeer({ name: "main", harness: "grok" });
+  registerPeer({ name: "old-orch", harness: "grok", computer: "2017 MacBook Pro", sessionId: "sess-g" });
+  heartbeatPeer({ name: "old-orch", turnState: "idle" });
+  const msg = sendMessage({
+    to: "old-orch",
+    from: "main",
+    text: "look at the red test",
+    hintHarness: "grok"
+  });
+  let prompt = "";
+  const out = handleAssignedWork({
+    name: "old-orch",
+    runWake: ({ args }) => {
+      prompt = args.join("\n");
+      return { status: 0, stdout: `assign ${msg.id} done\nkind: ping\nharness: grok\nlooked\n` };
+    }
+  });
+  assert.match(prompt, /look at the red test/);
+  assert.match(prompt, /implement|ping/i);
+  assert.doesNotMatch(prompt, /^PEER_ACK /m);
+  assert.match(out.reply.text, new RegExp(`^assign ${msg.id} done`, "m"));
+});
+
+test("implement done requires terminal job via handleAssignedWork cwd", async () => {
+  isolateStateRoot();
+  const repo = makeRepo();
+  registerPeer({ name: "main", harness: "grok" });
+  registerPeer({ name: "old-orch", harness: "grok", sessionId: "s", computer: "2017 MacBook Pro" });
+  heartbeatPeer({ name: "old-orch", turnState: "idle" });
+  const msg = sendMessage({ to: "old-orch", from: "main", text: "implement the fix" });
+  const { appendJob } = await import("../core/state.mjs");
+  const job = appendJob(repo, { id: "11111111-2222-3333-4444-555555555555", status: "completed" });
+  const out = handleAssignedWork({
+    name: "old-orch",
+    cwd: repo,
+    runWake: () => ({
+      status: 0,
+      stdout: `assign ${msg.id} done\nkind: implement\njob: ${job.id}\nharness: grok\nfixed\n`
+    })
+  });
+  assert.match(out.reply.text, new RegExp(`^assign ${msg.id} done`));
+  assert.match(out.reply.text, /job: 11111111-2222-3333-4444-555555555555/);
+});
+
+test("PEER_ACK-only cursor consume does not enqueue assign done", async () => {
+  isolateStateRoot();
+  registerPeer({ name: "main", harness: "grok" });
+  registerPeer({ name: "old-orch", harness: "cursor", computer: "2017 MacBook Pro", sessionId: "sess-c" });
+  heartbeatPeer({ name: "old-orch", turnState: "idle" });
+  const msg = sendMessage({ to: "old-orch", from: "main", text: "run the plate" });
+  const out = handleAssignedWork({
+    name: "old-orch",
+    resumeProbe: () => false,
+    runWake: () => ({ status: 0, stdout: `PEER_ACK ${msg.id}\n` })
+  });
+  assert.equal(out.consumed, true);
+  assert.match(out.reply.text, /^assign \S+ refuse: wake-only/m);
+  assert.doesNotMatch(out.reply.text, /^assign \S+ done/m);
+});
+
+test("hint ignored replies rerouted with harness used", () => {
+  isolateStateRoot();
+  registerPeer({ name: "main", harness: "grok" });
+  registerPeer({ name: "old-orch", harness: "grok", sessionId: "s", computer: "2017 MacBook Pro" });
+  heartbeatPeer({ name: "old-orch", turnState: "idle" });
+  const msg = sendMessage({
+    to: "old-orch",
+    from: "main",
+    text: "look at CI",
+    hintHarness: "grok"
+  });
+  const out = handleAssignedWork({
+    name: "old-orch",
+    runWake: () => ({
+      status: 0,
+      stdout: `assign ${msg.id} rerouted\nharness: cursor\nused cursor; grok down\n`
+    })
+  });
+  assert.match(out.reply.text, new RegExp(`^assign ${msg.id} rerouted`));
+  assert.match(out.reply.text, /harness: cursor/);
+});
+
+test("exit 0 without outcome is refuse unparsed-outcome", () => {
+  isolateStateRoot();
+  registerPeer({ name: "main", harness: "grok" });
+  registerPeer({ name: "old-orch", harness: "grok", sessionId: "s", computer: "2017 MacBook Pro" });
+  heartbeatPeer({ name: "old-orch", turnState: "idle" });
+  sendMessage({ to: "old-orch", from: "main", text: "hi" });
+  const out = handleAssignedWork({
+    name: "old-orch",
+    runWake: () => ({ status: 0, stdout: "ok\n" })
+  });
+  assert.match(out.reply.text, /refuse: unparsed-outcome/);
 });
 
 test("dead presence pid makes the computer unavailable without a manual heartbeat", () => {
@@ -652,4 +749,5 @@ test("companion peers presence --once and consume drive the shipped CLI", () => 
   const box = JSON.parse(inbox.stdout);
   assert.equal(box.messages[0].from, "mini-orch");
   assert.equal(box.messages[0].isConsent, false);
+  assert.match(box.messages[0].text, /refuse: unparsed-outcome/);
 });

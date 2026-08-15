@@ -267,20 +267,22 @@ function tryDeliverInner({ peer, message, runWake, resumeProbe, claimed = false 
     });
     const exitOk = !result?.error && result?.status === 0;
     const stdout = String(result?.stdout || "");
+    const io = { stdout };
+    if (result?.stderr != null) io.stderr = result.stderr;
     const ackRe = new RegExp(`^\\s*PEER_ACK\\s+${escapeRegExp(messageId)}\\s*$`, "m");
     if (!exitOk || !ackRe.test(stdout)) {
       return queued(
         exitOk
           ? "wake-unconfirmed:missing-PEER_ACK"
           : `wake-failed:${result?.error?.message || result?.stderr || `exit ${result?.status}`}`,
-        { exitCode: result?.status ?? null, stdout: stdout.slice(0, 2000) }
+        { exitCode: result?.status ?? null, ...io }
       );
     }
 
     // delivered:true only after mailbox ack of this exact id
     const ack = ackInbox({ name: live.name, ids: [messageId] });
     if (!ack || Number(ack.acked) < 1) {
-      return queued("ack-failed", { exitCode: 0, stdout: stdout.slice(0, 2000) });
+      return queued("ack-failed", { exitCode: 0, ...io });
     }
     return {
       delivered: true,
@@ -289,7 +291,8 @@ function tryDeliverInner({ peer, message, runWake, resumeProbe, claimed = false 
       status: "injected",
       deliveryMode: "ask-framed-new-turn",
       messageId,
-      asOfMs: Date.now()
+      asOfMs: Date.now(),
+      ...io
     };
   });
 }
