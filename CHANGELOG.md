@@ -23,7 +23,9 @@
   `--session` — never Cursor `--mode ask --trust`. After accept the heartbeat
   is `busy`; finish/refuse sends the same peer-session reply to the main name
   and returns `idle`. 2017 / M4 Max need not be awake; remote assign may stay
-  HTTP-enqueue.
+  HTTP-enqueue. Reply to an HTTP-registered orchestrator enqueues on the
+  receiving mailbox (`allowCrossMachine`); a failed reply no longer crashes
+  presence.
 
 ## 0.12.1 - 2026-08-13
 

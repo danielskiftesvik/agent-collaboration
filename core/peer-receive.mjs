@@ -229,7 +229,13 @@ export function handleAssignedWork({ name, runWake, resumeProbe, refuse } = {}) 
     ? `assign ${message.id} done`
     : `assign ${message.id} refuse: ${result.reason || "undelivered"}`;
   leftoverAck(name, message.id);
-  const reply = replyToAssign({ from: name, to: message.from, text: replyText });
+  let reply = null;
+  let replyError = null;
+  try {
+    reply = replyToAssign({ from: name, to: message.from, text: replyText });
+  } catch (e) {
+    replyError = e?.message || String(e);
+  }
   const idle = heartbeatPeer({
     name,
     turnState: "idle",
@@ -242,6 +248,7 @@ export function handleAssignedWork({ name, runWake, resumeProbe, refuse } = {}) 
     message,
     result,
     reply,
+    replyError,
     peer: idle,
     turnState: idle.turnState
   };

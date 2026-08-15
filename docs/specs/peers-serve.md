@@ -48,7 +48,9 @@ This is the roster. Assign is the policy layer on top:
   when every computer is asleep or busy. After accept, presence publishes
   `busy` so a second assign skips that machine. On finish or refuse the
   machine `peers reply`s to the orchestrator name (peer-session text, not
-  consent) and returns to `idle`.
+  consent) and returns to `idle`. Reply enqueues on this mailbox even when
+  the sender was registered over HTTP as `reach: cross-machine`. Plain
+  `peers send` to a cross-machine dest still fail-closes.
 
 The 2017 MacBook Pro and MacBook Pro M4 Max need not be awake for assign on
 this Mini. Record their serve URLs with `peers machine --computer … --url …`;

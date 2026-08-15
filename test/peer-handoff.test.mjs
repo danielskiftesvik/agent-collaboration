@@ -124,6 +124,52 @@ test("assignTask prefer-idle: idle beats an available unknown session", async ()
   assert.equal(pickMachine(listMachines()).session.name, "idle-orch");
 });
 
+test("replyToAssign enqueues to a cross-machine sender on this mailbox", () => {
+  isolateStateRoot();
+  registerPeer({ name: "main", harness: "grok", reach: "cross-machine" });
+  registerPeer({ name: "old-orch", harness: "cursor" });
+  assert.throws(
+    () => sendMessage({ to: "main", from: "old-orch", text: "plain-send-must-fail-close" }),
+    (err) => err.code === "PEER_CROSS_MACHINE"
+  );
+  const reply = replyToAssign({ from: "old-orch", to: "main", text: "assign remote-1 done" });
+  assert.equal(reply.to, "main");
+  assert.equal(reply.from, "old-orch");
+  assert.equal(reply.origin, "peer-session");
+  assert.equal(reply.isConsent, false);
+  assert.equal(readInbox({ name: "main" })[0].text, "assign remote-1 done");
+});
+
+test("handleAssignedWork replies to a cross-machine main and stays idle if reply fails", async () => {
+  isolateStateRoot();
+  registerPeer({ name: "main", harness: "grok", reach: "cross-machine" });
+  registerPeer({
+    name: "old-orch",
+    harness: "grok",
+    computer: "2017 MacBook Pro",
+    sessionId: "sess-old"
+  });
+  heartbeatPeer({ name: "old-orch", turnState: "idle" });
+  sendMessage({
+    to: "old-orch",
+    from: "main",
+    text: "cross-mac-assign",
+    allowCrossMachine: true
+  });
+  const out = handleAssignedWork({
+    name: "old-orch",
+    runWake: () => ({ status: 0, stdout: "ok" })
+  });
+  assert.equal(out.consumed, true);
+  assert.equal(out.peer.turnState, "idle");
+  assert.equal(out.reply.from, "old-orch");
+  assert.equal(out.reply.to, "main");
+  assert.equal(out.reply.isConsent, false);
+  assert.match(out.reply.text, /assign /);
+  assert.equal(readInbox({ name: "main" })[0].from, "old-orch");
+  assert.equal(readInbox({ name: "old-orch" }).length, 0);
+});
+
 test("replyToAssign writes the same peer-session shape to main, not consent", () => {
   isolateStateRoot();
   registerPeer({ name: "main", harness: "grok" });

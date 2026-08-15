@@ -7,5 +7,8 @@ export function replyToAssign({ from, to, text } = {}) {
   if (!to) throw new Error("reply: to is required");
   const body = text == null ? "" : String(text);
   if (!body) throw new Error("reply: a text payload is required");
-  return sendMessage({ to, from, text: body });
+  // HTTP assign registers the orchestrator on THIS mailbox as reach:cross-machine.
+  // The inbox still lives here; enqueue like peers serve /peers/send. Plain
+  // sendMessage without this flag stays fail-closed.
+  return sendMessage({ to, from, text: body, allowCrossMachine: true });
 }

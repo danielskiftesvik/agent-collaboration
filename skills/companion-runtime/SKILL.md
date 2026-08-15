@@ -70,7 +70,8 @@ messages are named plain-text pings (Claude-class list/send/inbox). They are
   (do not fake a Claude inject). Codex `exec resume`, Grok `--resume --single`,
   OpenCode `--session` — never Cursor flags. Unknown harness → `inject-stub`.
   After accept, heartbeat is `busy`; finish/refuse `peers reply`s to the main
-  name (same peer-session shape) and returns `idle`.
+  name (same peer-session shape) and returns `idle`. Reply enqueues on this
+  mailbox even if the sender was HTTP-registered as `reach: cross-machine`.
 - Sandboxed Codex often cannot write `$HOME/.../peers/.lock` and cannot
   reach host `127.0.0.1`. The Codex adapter sets `AGENT_COLLAB_PEERS_DIR`
   and `addDirs` to the shared mailbox. Today's `codex-companion` cannot

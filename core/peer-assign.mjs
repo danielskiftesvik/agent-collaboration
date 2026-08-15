@@ -31,6 +31,8 @@ export async function assignTask({
 
   const to = machine.session.name;
   let message;
+  let senderToken = null;
+  let senderName = from;
   if (machine.url) {
     const sender = await peersHttp(machine.url, {
       method: "POST",
@@ -38,15 +40,17 @@ export async function assignTask({
       token: pair,
       body: { name: from, harness: harness ?? null, computer: computer ?? null }
     });
+    senderToken = sender.token ?? null;
+    senderName = sender.name ?? from;
     message = await peersHttp(machine.url, {
       method: "POST",
       path: "/peers/send",
       token: sender.token,
-      body: { to, from: sender.name, text: body }
+      body: { to, from: senderName, text: body }
     });
   } else {
     message = sendMessage({ to, from, text: body });
   }
 
-  return { machine, message, to, remote: Boolean(machine.url) };
+  return { machine, message, to, remote: Boolean(machine.url), senderName, senderToken };
 }
