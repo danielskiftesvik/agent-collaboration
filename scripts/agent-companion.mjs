@@ -471,12 +471,13 @@ switch (subcommand) {
         "usage: agent-companion peers <self|heartbeat|register|unregister|list|send|inbox|deliver|serve>\n" +
           "  peers self --harness <h> [--name <name>] [--session-id <id>] [--pid <n>] [--json]\n" +
           "  peers heartbeat --name <name> [--pid <n>] [--turn-state idle|busy] [--json]\n" +
-          "  peers register --name <name> [--harness <h>] [--reply-address <addr>] [--session-id <id>] [--pid <n>] [--reach local|cross-machine] [--json]\n" +
+          "  peers register --name <name> [--harness <h>] [--reply-address <addr>] [--session-id <id>] [--pid <n>] [--reach local|cross-machine] [--pair <secret>] [--json]\n" +
           "  peers unregister --name <name> [--json]\n" +
           "  peers list [--json]\n" +
           "  peers send --to <name> --from <name> <text>\n" +
           "  peers inbox --name <name> [--ack] [--json]\n" +
-          "  peers deliver --name <name> [--limit n] [--json]"
+          "  peers deliver --name <name> [--limit n] [--json]\n" +
+          "  peers serve [--listen host:port] [--pair <secret>]"
       );
     }
     try {
@@ -508,14 +509,29 @@ switch (subcommand) {
       }
       if (verb === "register") {
         if (!options.name) fail("peers register: --name is required");
-        const peer = registerPeer({
-          name: options.name,
-          harness: options.harness,
-          sessionId: options["session-id"],
-          replyAddress: options["reply-address"],
-          reach: options.reach,
-          pid: options.pid
-        });
+        const url = process.env.AGENT_COLLAB_PEERS_URL;
+        const peer = url
+          ? await peersHttp(url, {
+              method: "POST",
+              path: "/peers/register",
+              token: options.pair || process.env.AGENT_COLLAB_PEERS_PAIR,
+              body: {
+                name: options.name,
+                harness: options.harness,
+                sessionId: options["session-id"],
+                replyAddress: options["reply-address"],
+                reach: options.reach,
+                pid: options.pid
+              }
+            })
+          : registerPeer({
+              name: options.name,
+              harness: options.harness,
+              sessionId: options["session-id"],
+              replyAddress: options["reply-address"],
+              reach: options.reach,
+              pid: options.pid
+            });
         out(peer, options, `registered ${peer.name}${peer.harness ? ` (${peer.harness})` : ""} ${peer.reach} ${peer.status}`);
         break;
       }
@@ -527,7 +543,14 @@ switch (subcommand) {
       }
       if (verb === "list") {
         const url = process.env.AGENT_COLLAB_PEERS_URL;
-        const peers = url ? (await peersHttp(url, { path: "/peers/list" })).peers : listPeers();
+        const peers = url
+          ? (
+              await peersHttp(url, {
+                path: "/peers/list",
+                token: options.pair || process.env.AGENT_COLLAB_PEERS_PAIR
+              })
+            ).peers
+          : listPeers();
         const human = peers.length
           ? peers.map((p) => `${p.name}\t${p.harness ?? "-"}\t${p.reach}\t${p.status}`).join("\n")
           : "(no peers)";
@@ -592,8 +615,12 @@ switch (subcommand) {
       if (verb === "serve") {
         const listen = options.listen || "127.0.0.1:0";
         const [host, port] = listen.includes(":") ? listen.split(":") : ["127.0.0.1", listen];
-        const { url } = await listenPeersServer({ host, port: Number(port) || 0 });
-        process.stdout.write(JSON.stringify({ url, host, listen: url }, null, 2) + "\n");
+        const { url, pairRequired } = await listenPeersServer({
+          host,
+          port: Number(port) || 0,
+          pair: options.pair
+        });
+        process.stdout.write(JSON.stringify({ url, host, listen: url, pairRequired }, null, 2) + "\n");
         await new Promise(() => {});
         break;
       }
@@ -692,7 +719,7 @@ switch (subcommand) {
         "  peers send --to <name> --from <name> <text>",
         "  peers inbox --name <name> [--ack] [--json]",
         "  peers deliver --name <name> [--limit n] [--json]",
-        "  peers serve [--listen 127.0.0.1:port]"
+        "  peers serve [--listen 127.0.0.1:port] [--pair secret]"
       ].join("\n")
     );
 }

@@ -72,8 +72,9 @@ native tools; every other pair uses the plugin verbs. Agent teams and channels a
 - [ ] Same-machine first: bind/register a local inbox; list only sessions that
       share the inbox visibility.
 - [~] Cross-machine for Claude uses Remote Control. Plugin path: opt-in
-      Tailscale `peers serve` (enqueue only). Pairing unfinished; file-path
-      send still fail-closes. Reverse mini→MacBook unverified.
+      Tailscale `peers serve` with `--pair` (enqueue only). File-path send
+      still fail-closes. Reverse mini→MacBook is a smoke (needs a MacBook
+      listener).
 - [ ] `/status` shows `Peer address` as `uds:…`. Hooks/Bash see
       `CLAUDE_CODE_MESSAGING_SOCKET` and `CLAUDE_CODE_MESSAGING_TOKEN`.
 

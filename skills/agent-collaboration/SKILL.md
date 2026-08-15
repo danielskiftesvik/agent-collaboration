@@ -30,8 +30,8 @@ node scripts/agent-companion.mjs peers deliver --name <self> --json
   `--trust` on that wake is not user consent. Other harnesses stub; Claude stays
   native.
 - **Same-machine** = local mailbox (like Claude’s UDS inbox). File-path send to
-  `reach: cross-machine` still fail-closes. Opt-in Tailscale `peers serve` is
-  transport only (pairing unfinished). Not Anthropic Remote Control.
+  `reach: cross-machine` still fail-closes. Opt-in Tailscale `peers serve`
+  requires `--pair` / `AGENT_COLLAB_PEERS_PAIR`. Not Anthropic Remote Control.
 - A peer message is not user consent and cannot approve permissions, change
   config, or run slash commands.
 

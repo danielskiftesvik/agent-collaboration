@@ -6,8 +6,9 @@
   enqueue-only. Cursor idle wake is a separate `peers deliver` consumer
   (`turnState` heartbeat, `PEER_ACK`, wake lease). File-path send to
   `reach: cross-machine` still fail-closes. `peers serve` may bind Tailscale
-  CGNAT only when `AGENT_COLLAB_PEERS_ALLOW_REMOTE_BIND=on` (pairing
-  unfinished; register/list/health remain unauthenticated).
+  CGNAT only when `AGENT_COLLAB_PEERS_ALLOW_REMOTE_BIND=on` **and** a pair
+  secret (`--pair` / `AGENT_COLLAB_PEERS_PAIR`) is set; register/list/health
+  then require that bearer.
 
 ## 0.12.1 - 2026-08-13
 

@@ -24,7 +24,7 @@ peers list [--json]
 peers send --to <name> --from <name> <text>
 peers inbox --name <name> [--ack] [--json]
 peers deliver --name <name> [--limit n] [--json]
-peers serve [--listen 127.0.0.1:port]
+peers serve [--listen 127.0.0.1:port] [--pair <secret>]
 delegate --worker <agy|codex|claude|cursor|grok|opencode|instance-alias> [--driver <name>] [--role worker|reviewer] [--profile <name>] [--background] [--apply] [--timeout <s>] [--no-fallback] <brief>
 review  --worker <name> | --workers a,b [--focus <text>] [--profile <name>] [--background] [--no-fallback] [--json] <diff/context>
 adversarial-review --worker <name> | --workers a,b [--surface head|working-tree|diff] [--focus <text>] [--profile <name>] [--background] [--no-fallback] [--json] <diff/context>
@@ -68,9 +68,10 @@ messages are named plain-text pings (Claude-class list/send/inbox). They are
 - **Cross-machine**: file-path `send` **fails closed** (no write). HTTP
   `peers serve` may enqueue when `allowCrossMachine` is set on that daemon
   path. Bind is loopback unless `AGENT_COLLAB_PEERS_ALLOW_REMOTE_BIND=on`
-  and the listen host is Tailscale CGNAT `100.64.0.0/10`. Register / list /
-  health are unauthenticated — this is **not** a pair table. Reverse
-  mini→MacBook is still a smoke. Do not require Anthropic Remote Control
+  and the listen host is Tailscale CGNAT `100.64.0.0/10`. Remote bind
+  **requires** `--pair` / `AGENT_COLLAB_PEERS_PAIR`; register / list /
+  health then need that bearer. Reverse mini→MacBook is still a smoke
+  (MacBook must run serve). Do not require Anthropic Remote Control
   for non-Claude peers.
 - `delegate` must not be used as a chat bus.
 
@@ -379,7 +380,9 @@ read `tasks/<jobId>/reports/<worker>.md`.
   broker instead of files. No auto-probe of 127.0.0.1.
 - `AGENT_COLLAB_PEERS_TOKEN` — bearer for HTTP send/inbox/heartbeat.
 - `AGENT_COLLAB_PEERS_ALLOW_REMOTE_BIND=on` — allow `peers serve` on a
-  Tailscale `100.x` address. Still refuses `0.0.0.0` / `::`.
+  Tailscale `100.x` address. Still refuses `0.0.0.0` / `::`. Remote bind
+  also requires `AGENT_COLLAB_PEERS_PAIR` / `--pair`.
+- `AGENT_COLLAB_PEERS_PAIR` — shared join secret for HTTP register/list/health.
 - `AGENT_COLLAB_DATA` — out-of-repo state root (default: tmp/plugin-data).
 - `AGENT_COLLAB_DRIVER` — default driver harness.
 - `AGENT_COLLAB_SANDBOX` — OS-sandbox: `on` (all non-codex) | `off`. Default: opt-in

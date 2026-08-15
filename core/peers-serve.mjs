@@ -43,6 +43,13 @@ export function isLoopbackHost(host) {
   return host === "127.0.0.1" || host === "localhost" || host === "::1";
 }
 
+/** Pair secret for join/list/health. Null = not configured (loopback may omit). */
+export function resolvePairToken({ pair, env = process.env } = {}) {
+  const raw = pair ?? env.AGENT_COLLAB_PEERS_PAIR;
+  if (raw == null || String(raw) === "") return null;
+  return String(raw);
+}
+
 /**
  * Loopback always OK. Tailscale CGNAT OK when AGENT_COLLAB_PEERS_ALLOW_REMOTE_BIND=on.
  * Never 0.0.0.0 / ::.
@@ -100,19 +107,39 @@ function requirePeerToken(peer, token) {
   return tokensEqual(peer.tokenHash, hashPeerToken(token));
 }
 
-export function createPeersServer() {
+export function createPeersServer({ pairToken = null } = {}) {
+  const pairHash = pairToken ? hashPeerToken(pairToken) : null;
+  const pairOk = (req) => {
+    if (!pairHash) return true;
+    const presented = bearer(req);
+    if (!presented) return false;
+    return tokensEqual(hashPeerToken(presented), pairHash);
+  };
+
   return http.createServer(async (req, res) => {
     try {
       const url = new URL(req.url || "/", "http://127.0.0.1");
       if (req.method === "GET" && url.pathname === "/peers/health") {
+        if (!pairOk(req)) {
+          sendJson(res, 401, { error: "pair token required" });
+          return;
+        }
         sendJson(res, 200, { ok: true, peers: listPeers().length, host: os.hostname() });
         return;
       }
       if (req.method === "GET" && url.pathname === "/peers/list") {
+        if (!pairOk(req)) {
+          sendJson(res, 401, { error: "pair token required" });
+          return;
+        }
         sendJson(res, 200, { peers: listPeers() });
         return;
       }
       if (req.method === "POST" && url.pathname === "/peers/register") {
+        if (!pairOk(req)) {
+          sendJson(res, 401, { error: "pair token required" });
+          return;
+        }
         const body = JSON.parse((await readBody(req)) || "{}");
         const issued = newPeerToken();
         const peer = registerPeer({
@@ -149,8 +176,8 @@ export function createPeersServer() {
           return;
         }
         // HTTP is the dual-Mac transport: allow enqueue even if dest.reach is
-        // cross-machine. File-path send still fail-closes. Register/list/health
-        // stay unauthenticated — this is opt-in transport, not a pair table.
+        // cross-machine. File-path send still fail-closes. Join is the pair
+        // token on register/list/health when one is configured.
         sendJson(
           res,
           200,
@@ -213,14 +240,24 @@ export async function peersHttp(baseUrl, { method = "GET", path, token, body } =
   return json;
 }
 
-export function listenPeersServer({ host = "127.0.0.1", port = 0 } = {}) {
+export function listenPeersServer({ host = "127.0.0.1", port = 0, pair } = {}) {
   assertPeersBindHost(host);
-  const server = createPeersServer();
+  const pairToken = resolvePairToken({ pair });
+  if (!isLoopbackHost(host) && !pairToken) {
+    throw new Error("peers serve remote bind requires --pair or AGENT_COLLAB_PEERS_PAIR");
+  }
+  const server = createPeersServer({ pairToken });
   return new Promise((resolve, reject) => {
     server.once("error", reject);
     server.listen(Number(port) || 0, host, () => {
       const addr = server.address();
-      resolve({ server, url: `http://${host}:${addr.port}`, host, port: addr.port });
+      resolve({
+        server,
+        url: `http://${host}:${addr.port}`,
+        host,
+        port: addr.port,
+        pairRequired: Boolean(pairToken)
+      });
     });
   });
 }

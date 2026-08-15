@@ -30,6 +30,57 @@ test("assertPeersBindHost allows Tailscale CGNAT when opt-in is on", async () =>
   delete process.env.AGENT_COLLAB_PEERS_ALLOW_REMOTE_BIND;
 });
 
+test("remote bind refuses to listen without a pair token", () => {
+  isolateStateRoot();
+  process.env.AGENT_COLLAB_PEERS_ALLOW_REMOTE_BIND = "on";
+  delete process.env.AGENT_COLLAB_PEERS_PAIR;
+  assert.throws(
+    () => listenPeersServer({ host: "100.109.229.92", port: 0 }),
+    /PAIR|--pair/
+  );
+  delete process.env.AGENT_COLLAB_PEERS_ALLOW_REMOTE_BIND;
+});
+
+test("pair token gates register, list, and health; loopback without pair stays open", async () => {
+  isolateStateRoot();
+  const open = await listenPeersServer();
+  try {
+    const health = await peersHttp(open.url, { path: "/peers/health" });
+    assert.equal(health.ok, true);
+  } finally {
+    open.server.close();
+  }
+
+  const { server, url, pairRequired } = await listenPeersServer({ pair: "pair-secret" });
+  try {
+    assert.equal(pairRequired, true);
+    await assert.rejects(() => peersHttp(url, { path: "/peers/health" }), /pair token required/);
+    await assert.rejects(() => peersHttp(url, { path: "/peers/list" }), /pair token required/);
+    await assert.rejects(
+      () =>
+        peersHttp(url, {
+          method: "POST",
+          path: "/peers/register",
+          body: { name: "alice", harness: "grok" }
+        }),
+      /pair token required/
+    );
+    const alice = await peersHttp(url, {
+      method: "POST",
+      path: "/peers/register",
+      token: "pair-secret",
+      body: { name: "alice", harness: "grok" }
+    });
+    assert.ok(alice.token);
+    const listed = await peersHttp(url, { path: "/peers/list", token: "pair-secret" });
+    assert.equal(listed.peers[0].name, "alice");
+    const ok = await peersHttp(url, { path: "/peers/health", token: "pair-secret" });
+    assert.equal(ok.ok, true);
+  } finally {
+    server.close();
+  }
+});
+
 test("HTTP send requires the sender token; inbox requires the owner token", async () => {
   isolateStateRoot();
   const { server, url } = await listenPeersServer();

@@ -223,7 +223,7 @@ Two delegation paths, chosen automatically:
 | `peers send --to <name> --from <name> <text>` | Enqueue a plain-text ping (not consent; slash text stays text). Does not wake. |
 | `peers inbox --name <name> [--ack] [--json]` | Read (and optionally ack) unread peer messages |
 | `peers deliver --name <name> [--limit n] [--json]` | Consume inbox (Cursor idle wake; other harnesses stub) |
-| `peers serve [--listen 127.0.0.1:port]` | Mailbox daemon. Loopback by default; Tailscale `100.x` only with `AGENT_COLLAB_PEERS_ALLOW_REMOTE_BIND=on`. Explicit `AGENT_COLLAB_PEERS_URL`; per-peer tokens on send/inbox. |
+| `peers serve [--listen 127.0.0.1:port] [--pair secret]` | Mailbox daemon. Loopback by default; Tailscale `100.x` only with `AGENT_COLLAB_PEERS_ALLOW_REMOTE_BIND=on` **and** `--pair` / `AGENT_COLLAB_PEERS_PAIR`. |
 
 Review commands accept `--surface head|working-tree|diff`. Unified diffs are detected automatically and clean prose defaults to `head`. Dirty prose fails closed until the caller chooses `working-tree` (safely snapshotted with a temporary Git index) or `head` (dirty paths excluded). `review-followup --job <prior-id> ...` runs a focused verification tied to the earlier review.
 
