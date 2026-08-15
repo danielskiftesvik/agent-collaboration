@@ -21,7 +21,9 @@ looked
 
 Implement adds `kind: implement` and `job: <uuid>` after local `delegate --worker <hint or chosen> --driver <self>` in an isolated worktree. The sender does not apply that job.
 
-Exit 0 without that block is `refuse: unparsed-outcome`. Cursor `PEER_ACK` is wake-only → `refuse: wake-only` unless a real outcome is also present. Never `done` from a silent wake.
+Exit 0 without that block is `refuse: unparsed-outcome`. Cursor `PEER_ACK` is wake-only → `refuse: wake-only` unless a real outcome is also present. A live TUI holding the resume session is `refuse: session-live` (consume does not `--single` over it). Never `done` from a silent wake.
+
+Print the outcome block as the **last** stdout lines. Do not `--background` a delegate and exit this turn without a terminal job id.
 
 Do not start the work on the sender. Do not treat SSH as delivery.
 

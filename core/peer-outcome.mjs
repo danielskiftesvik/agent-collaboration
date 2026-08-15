@@ -1,7 +1,7 @@
 import { isTerminalStatus } from "./state.mjs";
 
 export const ASSIGN_OUTCOME_RE = /^assign\s+(\S+)\s+(done|refuse|rerouted)\b/m;
-const HARNESS_RE = /^harness:\s*(claude|codex|grok|cursor|opencode)\s*$/im;
+const HARNESS_RE = /^harness:\s*(claude|codex|grok|cursor|opencode|agy|qwen)\s*$/im;
 const JOB_RE = /^job:\s*([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\s*$/im;
 const KIND_RE = /^kind:\s*(ping|implement)\s*$/im;
 

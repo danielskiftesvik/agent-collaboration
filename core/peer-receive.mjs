@@ -1,10 +1,12 @@
 // Per-harness assign consume. Not the job plane. Cursor stays in peer-inject-cursor.
+import { spawnSync } from "node:child_process";
 import fs from "node:fs";
+import path from "node:path";
 
 import { resolveCursorBin } from "../adapters/cursor.mjs";
 import { parseAssignOutcome, finalizeAssignOutcome } from "./peer-outcome.mjs";
 import { ackInbox, getPeer, heartbeatPeer, readInbox, resolvePeersDir } from "./peers.mjs";
-import { tryDeliver as cursorTryDeliver } from "./peer-inject-cursor.mjs";
+import { resumeProcessAlive, tryDeliver as cursorTryDeliver } from "./peer-inject-cursor.mjs";
 import { replyToAssign } from "./peer-reply.mjs";
 import { run } from "./process.mjs";
 import { getJob } from "./state.mjs";
@@ -22,6 +24,72 @@ function queued(reason, extra = {}) {
 
 export function normalizeHarness(harness) {
   return String(harness || "").toLowerCase();
+}
+
+function looksLikeGrokTui(command) {
+  const c = String(command || "").replace(/^\s*\d+\s+/, "").trim();
+  return /(^|\/)grok$/.test(c);
+}
+
+/**
+ * True when a Grok TUI (not --single consume) holds this session.
+ * Spec C8 / F3: never resume a live pid. Fail-closed if we cannot tell.
+ */
+export function grokTuiHoldsSession(sessionId, { excludePid = null, env = process.env, home = null } = {}) {
+  if (!sessionId) return false;
+  if (resumeProcessAlive(sessionId, { excludePid })) return true;
+  const grokHome = home || env.GROK_HOME || path.join(env.HOME || "", ".grok");
+  const sessionsRoot = path.join(grokHome, "sessions");
+  let held = false;
+  try {
+    if (!fs.existsSync(sessionsRoot)) return false;
+    const stack = [sessionsRoot];
+    while (stack.length) {
+      const dir = stack.pop();
+      let ents = [];
+      try {
+        ents = fs.readdirSync(dir, { withFileTypes: true });
+      } catch {
+        continue;
+      }
+      for (const ent of ents) {
+        const p = path.join(dir, ent.name);
+        if (ent.isDirectory()) {
+          if (ent.name === String(sessionId)) {
+            held =
+              fs.existsSync(path.join(p, "chat_history.jsonl.lock")) ||
+              fs.existsSync(path.join(p, "updates.jsonl.lock"));
+          }
+          stack.push(p);
+        }
+      }
+    }
+  } catch {
+    return true;
+  }
+  if (!held) return false;
+  try {
+    const r = spawnSync("ps", ["-ax", "-o", "pid=,command="], { encoding: "utf8", timeout: 3000 });
+    if (r.error || r.status !== 0) return true;
+    for (const line of (r.stdout || "").split("\n")) {
+      const pid = Number(String(line).trim().split(/\s+/, 1)[0]);
+      if (excludePid != null && Number.isFinite(pid) && pid === Number(excludePid)) continue;
+      if (looksLikeGrokTui(line)) return true;
+    }
+    return false;
+  } catch {
+    return true;
+  }
+}
+
+export function sessionResumeBlocked(sessionId, { harness, excludePid, resumeProbe } = {}) {
+  if (!sessionId) return false;
+  const probe = resumeProbe || resumeProcessAlive;
+  if (probe(sessionId, { excludePid, harness })) return true;
+  if (normalizeHarness(harness) === "grok" && resumeProbe == null) {
+    return grokTuiHoldsSession(sessionId, { excludePid });
+  }
+  return false;
 }
 
 export function claudeNativeInboxPresent({ env = process.env, exists = fs.existsSync } = {}) {
@@ -182,6 +250,16 @@ export function tryReceive({
     if (turn !== "idle") return queued("busy:turn-state");
   }
 
+  if (
+    sessionResumeBlocked(peer.sessionId, {
+      harness,
+      excludePid: process.pid,
+      resumeProbe
+    })
+  ) {
+    return queued("busy:session-live", { consumed: false, spawned: false });
+  }
+
   const spec = buildIdleResume({
     harness,
     sessionId: peer.sessionId,
@@ -269,6 +347,18 @@ export function handleAssignedWork({ name, runWake, resumeProbe, refuse, cwd } =
 
   const stdout = result.stdout || "";
   let parsed = parseAssignOutcome(stdout, message.id);
+  const sessionLive = /session-live/.test(String(result.reason || ""));
+  if (sessionLive && !parsed) {
+    parsed = {
+      assignId: message.id,
+      status: "refuse",
+      reason: "session-live",
+      harness: peer.harness || null,
+      jobId: null,
+      kind: null,
+      body: ""
+    };
+  }
   const peerAckOnly =
     !parsed && (/PEER_ACK/.test(stdout) || result.reason === "acked-after-PEER_ACK");
   if (peerAckOnly) {
@@ -289,9 +379,11 @@ export function handleAssignedWork({ name, runWake, resumeProbe, refuse, cwd } =
   const outcome = finalizeAssignOutcome(parsed, { job });
   const replyText = refuse
     ? `assign ${message.id} refuse: ${result.reason || "undelivered"}`
-    : peerAckOnly
-      ? `assign ${message.id} refuse: wake-only`
-      : outcome.text || `assign ${message.id} refuse: ${outcome.reason}`;
+    : sessionLive
+      ? `assign ${message.id} refuse: session-live`
+      : peerAckOnly
+        ? `assign ${message.id} refuse: wake-only`
+        : outcome.text || `assign ${message.id} refuse: ${outcome.reason}`;
   leftoverAck(name, message.id);
   let reply = null;
   let replyError = null;
@@ -309,7 +401,9 @@ export function handleAssignedWork({ name, runWake, resumeProbe, refuse, cwd } =
   try {
     const decided = refuse
       ? { status: "refuse", reason: result.reason || "undelivered", kind: null, harness: peer.harness, jobId: null }
-      : peerAckOnly
+      : sessionLive
+        ? { status: "refuse", reason: "session-live", kind: null, harness: peer.harness, jobId: null }
+        : peerAckOnly
         ? { status: "refuse", reason: "wake-only", kind: null, harness: "cursor", jobId: null }
         : {
             status: outcome.status,

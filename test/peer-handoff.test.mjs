@@ -1,6 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -26,6 +27,7 @@ import { tryDeliver } from "../core/peer-deliver.mjs";
 import {
   buildIdleResume,
   claudeNativeInboxPresent,
+  grokTuiHoldsSession,
   handleAssignedWork
 } from "../core/peer-receive.mjs";
 import { replyToAssign } from "../core/peer-reply.mjs";
@@ -92,6 +94,12 @@ test("parseAssignOutcome binds id and rejects PEER_ACK-only stdout", () => {
   assert.equal(done.status, "done");
   assert.equal(done.jobId, "11111111-2222-3333-4444-555555555555");
   assert.equal(parseAssignOutcome(`assign other-id done\n`, id), null);
+  const agy = parseAssignOutcome(
+    `assign ${id} done\nkind: implement\nharness: agy\njob: 11111111-2222-3333-4444-555555555555\n`,
+    id
+  );
+  assert.equal(agy.harness, "agy");
+  assert.equal(agy.kind, "implement");
 });
 
 test("finalizeAssignOutcome refuses done when implement job is not terminal", () => {
@@ -194,6 +202,8 @@ test("sendMessage round-trips hintHarness", () => {
   const sent = sendMessage({ to: "old-orch", from: "main", text: "look at CI", hintHarness: "grok" });
   assert.equal(sent.hintHarness, "grok");
   assert.equal(readInbox({ name: "old-orch" })[0].hintHarness, "grok");
+  const agy = sendMessage({ to: "old-orch", from: "main", text: "again", hintHarness: "agy" });
+  assert.equal(agy.hintHarness, "agy");
 });
 
 test("pickMachine skips session main even when main is the primary heartbeat", () => {
@@ -699,6 +709,37 @@ test("hint ignored replies rerouted with harness used", () => {
   });
   assert.match(out.reply.text, new RegExp(`^assign ${msg.id} rerouted`));
   assert.match(out.reply.text, /harness: cursor/);
+});
+
+test("grokTuiHoldsSession is false when GROK_HOME has no session dir", () => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), "ac-grok-home-"));
+  assert.equal(grokTuiHoldsSession("no-such-session", { home: path.join(home, ".grok"), env: { HOME: home } }), false);
+});
+
+test("grok consume refuses session-live instead of spawning --single", () => {
+  isolateStateRoot();
+  registerPeer({ name: "main", harness: "grok" });
+  registerPeer({
+    name: "old-orch",
+    harness: "grok",
+    sessionId: "01live-session",
+    computer: "2017 MacBook Pro"
+  });
+  heartbeatPeer({ name: "old-orch", turnState: "idle" });
+  const msg = sendMessage({ to: "old-orch", from: "main", text: "ping: label" });
+  let woke = 0;
+  const out = handleAssignedWork({
+    name: "old-orch",
+    resumeProbe: () => true,
+    runWake: () => {
+      woke += 1;
+      return { status: 0, stdout: "should-not-run\n" };
+    }
+  });
+  assert.equal(woke, 0);
+  assert.match(out.reply.text, new RegExp(`^assign ${msg.id} refuse: session-live`));
+  assert.equal(out.peer.turnState, "idle");
+  assert.notEqual(out.reply.text.includes("unparsed-outcome"), true);
 });
 
 test("exit 0 without outcome is refuse unparsed-outcome", () => {

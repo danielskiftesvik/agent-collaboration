@@ -5,7 +5,7 @@ description: Use when standing up this plugin on a new machine, joining the Tail
 
 # Setting up collaboration
 
-Two planes. Both required. This is the stand-up checklist, not a second spec:
+Two planes. Stand-up checklist, not a second spec:
 
 | Plane | What | Authority |
 |---|---|---|
@@ -14,7 +14,7 @@ Two planes. Both required. This is the stand-up checklist, not a second spec:
 
 Install: `README.md` (Install + After installing). Extras: `docs/README.grok.md`, `docs/README.opencode.md`, `examples/CURSOR.md`.
 
-`C` = `scripts/agent-companion.mjs` in this checkout or the plugin root.
+`C` = `scripts/agent-companion.mjs`.
 
 ## A — Cross-machine (Tailscale `100.x` only)
 
@@ -33,11 +33,13 @@ Install: `README.md` (Install + After installing). Extras: `docs/README.grok.md`
 
 5. **Prove.** `peers machines` shows dest `available` + `idle`. Then `peers assign --from main --to-computer "2017 MacBook Pro" --wait-seconds 90 "…"`. Cursor `PEER_ACK` is wake-only, not `done`.
 
-**REQUIRED SUB-SKILL after stand-up:** `peer-fleet`.
+**REQUIRED SUB-SKILL after stand-up:** `peer-fleet`. Other computer is `peers assign`, not `delegate`.
+
+Grok: a live TUI on that session → `refuse: session-live` (no `--single` over it).
 
 ## B — Cross-harness (same computer)
 
-1. **Install** the plugin once per harness — commands in `README.md`. Or drive `node "$C"` over the shell.
+1. **Install** once per harness — `README.md`. Or drive `node "$C"` over the shell.
 
 2. **Detect workers.**
 
@@ -56,7 +58,7 @@ Install: `README.md` (Install + After installing). Extras: `docs/README.grok.md`
    node "$C" apply <jobId>
    ```
 
-   Always pass `--driver`. Inspect, then apply. Keep the exact `jobId`.
+   Pass `--driver`. Inspect, then apply. Keep the exact `jobId`.
 
 ## End-state
 

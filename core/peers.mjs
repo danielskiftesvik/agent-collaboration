@@ -403,7 +403,7 @@ function writeInboxRecords(name, records) {
   chmodPrivateFile(file);
 }
 
-const HINT_HARNESSES = new Set(["claude", "codex", "grok", "cursor", "opencode"]);
+const HINT_HARNESSES = new Set(["claude", "codex", "grok", "cursor", "opencode", "agy", "qwen"]);
 
 function normalizeHintHarness(hintHarness) {
   if (hintHarness == null || hintHarness === "") return null;
