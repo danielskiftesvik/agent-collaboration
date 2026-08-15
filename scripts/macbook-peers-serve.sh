@@ -11,5 +11,10 @@ export AGENT_COLLAB_PEERS_ALLOW_REMOTE_BIND=on
 export AGENT_COLLAB_PEERS_DIR="${AGENT_COLLAB_PEERS_DIR:-$HOME/.agent-collaboration/peers-macbook-serve}"
 export AGENT_COLLAB_PEERS_PAIR="$PAIR"
 mkdir -p "$AGENT_COLLAB_PEERS_DIR"
-echo "MacBook serve http://${HOST}:${PORT} (pair required, dir=$AGENT_COLLAB_PEERS_DIR)"
-exec node "$ROOT/scripts/agent-companion.mjs" peers serve --listen "${HOST}:${PORT}" --pair "$PAIR"
+COMPUTER="${AGENT_COLLAB_PEERS_COMPUTER:-}"
+ARGS=(peers serve --listen "${HOST}:${PORT}" --pair "$PAIR")
+if [[ -n "$COMPUTER" ]]; then
+  ARGS+=(--computer "$COMPUTER")
+fi
+echo "MacBook serve http://${HOST}:${PORT} computer=${COMPUTER:-unset} (pair required, dir=$AGENT_COLLAB_PEERS_DIR)"
+exec node "$ROOT/scripts/agent-companion.mjs" "${ARGS[@]}"

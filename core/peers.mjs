@@ -8,6 +8,7 @@ import { resolveDataRoot } from "./state.mjs";
 
 const PEERS_VERSION = 1;
 const NAME_RE = /^[A-Za-z0-9._-]{1,64}$/;
+const COMPUTER_RE = /^[A-Za-z0-9][A-Za-z0-9 .'_-]{0,63}$/;
 export const PEER_LIVE_TTL_MS = 10 * 60 * 1000;
 
 export function resolvePeersDir() {
@@ -158,6 +159,21 @@ function normalizeTurnState(turnState) {
   return v;
 }
 
+/** Operator-chosen computer label (spaces ok). Not os.hostname() and not Tailscale. */
+export function normalizeComputer(computer) {
+  if (computer == null || computer === "") return null;
+  const v = String(computer).trim();
+  if (!v) return null;
+  if (!COMPUTER_RE.test(v)) {
+    throw new Error(`invalid computer name: ${JSON.stringify(computer)} (use 1-64 letters/digits/spaces)`);
+  }
+  return v;
+}
+
+export function resolveComputer({ computer, env = process.env } = {}) {
+  return normalizeComputer(computer ?? env.AGENT_COLLAB_PEERS_COMPUTER);
+}
+
 function publicPeer(peer, nowMs = Date.now()) {
   return {
     name: peer.name,
@@ -166,6 +182,7 @@ function publicPeer(peer, nowMs = Date.now()) {
     pid: peer.pid ?? null,
     replyAddress: peer.replyAddress ?? peer.name,
     reach: peer.reach ?? "local",
+    computer: peer.computer ?? null,
     turnState: peer.turnState ?? null,
     status: peerStatus(peer, nowMs),
     registeredAt: peer.registeredAt,
@@ -188,7 +205,7 @@ function normalizePid(pid) {
   return n;
 }
 
-function buildPeer({ name, harness, sessionId, replyAddress, reach, pid, tokenHash }) {
+function buildPeer({ name, harness, sessionId, replyAddress, reach, pid, tokenHash, computer }) {
   if (reach != null && reach !== "local" && reach !== "cross-machine") {
     throw new Error(`invalid reach: ${JSON.stringify(reach)} (use local|cross-machine)`);
   }
@@ -201,6 +218,7 @@ function buildPeer({ name, harness, sessionId, replyAddress, reach, pid, tokenHa
     tokenHash: tokenHash ?? null,
     replyAddress: replyAddress ?? name,
     reach: reach ?? "local",
+    computer: normalizeComputer(computer),
     registeredAt: now,
     lastSeenAt: now
   };
@@ -214,7 +232,16 @@ function removeInboxFile(name) {
   }
 }
 
-export function registerPeer({ name, harness, sessionId, replyAddress, reach, pid, tokenHash } = {}) {
+export function registerPeer({
+  name,
+  harness,
+  sessionId,
+  replyAddress,
+  reach,
+  pid,
+  tokenHash,
+  computer
+} = {}) {
   assertName(name);
   return withPeersLock(() => {
     const reg = loadRegistry();
@@ -231,6 +258,7 @@ export function registerPeer({ name, harness, sessionId, replyAddress, reach, pi
         if (reach !== undefined) existing.reach = reach;
         if (pid !== undefined) existing.pid = normalizePid(pid);
         if (tokenHash !== undefined) existing.tokenHash = tokenHash;
+        if (computer !== undefined) existing.computer = normalizeComputer(computer);
         saveRegistry(reg);
         return { ...publicPeer(existing), collided: false };
       }
@@ -241,7 +269,16 @@ export function registerPeer({ name, harness, sessionId, replyAddress, reach, pi
         removeInboxFile(name);
       }
     }
-    const peer = buildPeer({ name: finalName, harness, sessionId, replyAddress, reach, pid, tokenHash });
+    const peer = buildPeer({
+      name: finalName,
+      harness,
+      sessionId,
+      replyAddress,
+      reach,
+      pid,
+      tokenHash,
+      computer
+    });
     reg.peers[finalName] = peer;
     saveRegistry(reg);
     return { ...publicPeer(peer), collided };
@@ -249,7 +286,7 @@ export function registerPeer({ name, harness, sessionId, replyAddress, reach, pi
 }
 
 /** Register this process as a live peer (Claude-class presence). Default name is the harness. */
-export function registerSelf({ harness, name, sessionId, replyAddress, pid } = {}) {
+export function registerSelf({ harness, name, sessionId, replyAddress, pid, computer } = {}) {
   if (!harness || typeof harness !== "string") throw new Error("registerSelf: harness is required");
   const base = name || harness;
   return registerPeer({
@@ -258,11 +295,12 @@ export function registerSelf({ harness, name, sessionId, replyAddress, pid } = {
     sessionId,
     replyAddress: replyAddress ?? base,
     pid: pid ?? process.pid,
-    reach: "local"
+    reach: "local",
+    computer: resolveComputer({ computer })
   });
 }
 
-export function heartbeatPeer({ name, pid, turnState } = {}) {
+export function heartbeatPeer({ name, pid, turnState, computer } = {}) {
   assertName(name);
   return withPeersLock(() => {
     const reg = loadRegistry();
@@ -271,6 +309,7 @@ export function heartbeatPeer({ name, pid, turnState } = {}) {
     existing.lastSeenAt = nowIso();
     if (pid !== undefined) existing.pid = normalizePid(pid);
     if (turnState !== undefined) existing.turnState = normalizeTurnState(turnState);
+    if (computer !== undefined) existing.computer = normalizeComputer(computer);
     saveRegistry(reg);
     return publicPeer(existing);
   });

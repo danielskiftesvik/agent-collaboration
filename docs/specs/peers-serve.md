@@ -3,6 +3,19 @@
 Mailbox daemon. Owns the peers files so clients that cannot write `$HOME`
 can talk over HTTP. File mailbox remains the default.
 
+## Computer names
+
+Operator-chosen label on the machine, not `os.hostname()` and not Tailscale.
+`--computer` / `AGENT_COLLAB_PEERS_COMPUTER`. Spaces allowed (`Mac Mini M4`).
+
+- `peers serve --computer "2017 MacBook Pro"` — health reports it; HTTP
+  register inherits it unless the body sets `computer`.
+- `peers register|self --computer "Mac Mini M4"` — stored on the peer and
+  shown by `peers list`.
+
+Suggested labels for this fleet: `Mac Mini M4`, `2017 MacBook Pro`,
+`MacBook Pro M4 Max`.
+
 ## Bind
 
 - Default: loopback only (`127.0.0.1` / `localhost` / `::1`).

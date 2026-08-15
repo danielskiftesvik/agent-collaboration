@@ -12,7 +12,8 @@ import {
   getPeer,
   sendMessage,
   readInbox,
-  ackInbox
+  ackInbox,
+  resolveComputer
 } from "./peers.mjs";
 
 export function hashPeerToken(token) {
@@ -107,7 +108,8 @@ function requirePeerToken(peer, token) {
   return tokensEqual(peer.tokenHash, hashPeerToken(token));
 }
 
-export function createPeersServer({ pairToken = null } = {}) {
+export function createPeersServer({ pairToken = null, computer = null } = {}) {
+  const serveComputer = resolveComputer({ computer });
   const pairHash = pairToken ? hashPeerToken(pairToken) : null;
   const pairOk = (req) => {
     if (!pairHash) return true;
@@ -124,7 +126,12 @@ export function createPeersServer({ pairToken = null } = {}) {
           sendJson(res, 401, { error: "pair token required" });
           return;
         }
-        sendJson(res, 200, { ok: true, peers: listPeers().length, host: os.hostname() });
+        sendJson(res, 200, {
+          ok: true,
+          peers: listPeers().length,
+          host: os.hostname(),
+          computer: serveComputer
+        });
         return;
       }
       if (req.method === "GET" && url.pathname === "/peers/list") {
@@ -149,7 +156,8 @@ export function createPeersServer({ pairToken = null } = {}) {
           replyAddress: body.replyAddress,
           reach: body.reach ?? "local",
           pid: body.pid,
-          tokenHash: hashPeerToken(issued)
+          tokenHash: hashPeerToken(issued),
+          computer: body.computer ?? serveComputer
         });
         sendJson(res, 200, { ...peer, token: issued });
         return;
@@ -164,7 +172,12 @@ export function createPeersServer({ pairToken = null } = {}) {
         sendJson(
           res,
           200,
-          heartbeatPeer({ name: body.name, pid: body.pid, turnState: body.turnState })
+          heartbeatPeer({
+            name: body.name,
+            pid: body.pid,
+            turnState: body.turnState,
+            computer: body.computer
+          })
         );
         return;
       }
@@ -240,13 +253,14 @@ export async function peersHttp(baseUrl, { method = "GET", path, token, body } =
   return json;
 }
 
-export function listenPeersServer({ host = "127.0.0.1", port = 0, pair } = {}) {
+export function listenPeersServer({ host = "127.0.0.1", port = 0, pair, computer } = {}) {
   assertPeersBindHost(host);
   const pairToken = resolvePairToken({ pair });
   if (!isLoopbackHost(host) && !pairToken) {
     throw new Error("peers serve remote bind requires --pair or AGENT_COLLAB_PEERS_PAIR");
   }
-  const server = createPeersServer({ pairToken });
+  const serveComputer = resolveComputer({ computer });
+  const server = createPeersServer({ pairToken, computer: serveComputer });
   return new Promise((resolve, reject) => {
     server.once("error", reject);
     server.listen(Number(port) || 0, host, () => {
@@ -256,7 +270,8 @@ export function listenPeersServer({ host = "127.0.0.1", port = 0, pair } = {}) {
         url: `http://${host}:${addr.port}`,
         host,
         port: addr.port,
-        pairRequired: Boolean(pairToken)
+        pairRequired: Boolean(pairToken),
+        computer: serveComputer
       });
     });
   });

@@ -160,6 +160,30 @@ test("HTTP send enqueues to a cross-machine dest (daemon path only)", async () =
   }
 });
 
+test("serve computer label is on health and inherited by register", async () => {
+  isolateStateRoot();
+  const { server, url, computer } = await listenPeersServer({ computer: "MacBook Pro M4 Max" });
+  try {
+    assert.equal(computer, "MacBook Pro M4 Max");
+    const health = await peersHttp(url, { path: "/peers/health" });
+    assert.equal(health.computer, "MacBook Pro M4 Max");
+    const inherited = await peersHttp(url, {
+      method: "POST",
+      path: "/peers/register",
+      body: { name: "alice", harness: "grok" }
+    });
+    assert.equal(inherited.computer, "MacBook Pro M4 Max");
+    const override = await peersHttp(url, {
+      method: "POST",
+      path: "/peers/register",
+      body: { name: "bob", harness: "cursor", computer: "2017 MacBook Pro" }
+    });
+    assert.equal(override.computer, "2017 MacBook Pro");
+  } finally {
+    server.close();
+  }
+});
+
 test("file-path send still works when PEERS_URL is unset", () => {
   isolateStateRoot();
   delete process.env.AGENT_COLLAB_PEERS_URL;

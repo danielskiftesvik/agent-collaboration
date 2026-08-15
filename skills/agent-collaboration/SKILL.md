@@ -15,7 +15,7 @@ landed”, “hold verify”) the way Claude uses `ListAgents` / `SendMessage`.
 ```bash
 node scripts/agent-companion.mjs peers self --harness <self>
 node scripts/agent-companion.mjs peers list --json
-node scripts/agent-companion.mjs peers register --name <stable-name> --harness <self> --reply-address <stable-name>
+node scripts/agent-companion.mjs peers register --name <stable-name> --harness <self> --reply-address <stable-name> --computer "Mac Mini M4"
 node scripts/agent-companion.mjs peers heartbeat --name <self> --turn-state idle
 node scripts/agent-companion.mjs peers send --to <name> --from <self> "schema landed"
 node scripts/agent-companion.mjs peers inbox --name <self> --json

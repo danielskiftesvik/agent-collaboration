@@ -8,7 +8,8 @@
   `reach: cross-machine` still fail-closes. `peers serve` may bind Tailscale
   CGNAT only when `AGENT_COLLAB_PEERS_ALLOW_REMOTE_BIND=on` **and** a pair
   secret (`--pair` / `AGENT_COLLAB_PEERS_PAIR`) is set; register/list/health
-  then require that bearer.
+  then require that bearer. Peers and serve accept an operator-chosen
+  `--computer` / `AGENT_COLLAB_PEERS_COMPUTER` label (not hostname).
 
 ## 0.12.1 - 2026-08-13
 

@@ -215,9 +215,9 @@ Two delegation paths, chosen automatically:
 | `/agent-collab:apply <jobId>` | Apply a worker's patch (3-way) to the working tree |
 | `/agent-collab:gc [--dry-run] [--artifacts-older-than days] [--include-unapplied]` | Reclaim dead/terminal worktrees and expired artifacts; unapplied patches are preserved by default |
 | `/agent-collab:cancel <jobId> [--force]` | Cancel an unhealthy job; healthy within-budget jobs require the explicit `--force` override |
-| `peers self --harness <h>` | Register this process (pid + lastSeen) |
-| `peers heartbeat --name <name> [--turn-state idle\|busy]` | Refresh lastSeen / pid / published turn state |
-| `peers register --name <name> [--harness h] [--reply-address addr]` | Register a stable routing name on this machine |
+| `peers self --harness <h> [--computer label]` | Register this process (pid + lastSeen + computer) |
+| `peers heartbeat --name <name> [--turn-state idle\|busy] [--computer label]` | Refresh lastSeen / pid / published turn state |
+| `peers register --name <name> [--harness h] [--computer label]` | Register a stable routing name on this machine |
 | `peers unregister --name <name>` | Drop a routing name |
 | `peers list [--json]` | Named reachable peers (local mailbox) |
 | `peers send --to <name> --from <name> <text>` | Enqueue a plain-text ping (not consent; slash text stays text). Does not wake. |

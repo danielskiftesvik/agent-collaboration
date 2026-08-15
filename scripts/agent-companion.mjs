@@ -7,7 +7,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { decideRoute, resolveDriver, isAuthoritativeDriver, runSetup, runWorkerSync, runWithFallback, resolveFallbackKinds, launchBackground, runJob, waitForJob, refreshJobStatus, applyResult, recommendWorker, cleanupWorkerRuntime } from "../core/dispatch.mjs";
-import { registerPeer, registerSelf, heartbeatPeer, unregisterPeer, listPeers, sendMessage, readInbox, ackInbox } from "../core/peers.mjs";
+import { registerPeer, registerSelf, heartbeatPeer, unregisterPeer, listPeers, sendMessage, readInbox, ackInbox, resolveComputer } from "../core/peers.mjs";
 import { listenPeersServer, peersHttp } from "../core/peers-serve.mjs";
 import { deliverInbox } from "../core/peer-deliver.mjs";
 import { runDoctor } from "../core/doctor.mjs";
@@ -20,8 +20,16 @@ import { MODEL_PROFILES } from "../core/model-profiles.mjs";
 import { cleanupJobWorktree, collectGarbage, waitForPidExit } from "../core/gc.mjs";
 import { resolveWorkerRef } from "../core/instances.mjs";
 
-const VALUE_FLAGS = new Set(["worker", "workers", "role", "driver", "base", "timeout", "gate", "sandbox", "focus", "surface", "task", "job", "recent", "retention-days", "artifacts-older-than", "name", "to", "from", "harness", "reply-address", "session-id", "reach", "pid", "listen", "token", "pair", "limit", "turn-state"]);
+const VALUE_FLAGS = new Set(["worker", "workers", "role", "driver", "base", "timeout", "gate", "sandbox", "focus", "surface", "task", "job", "recent", "retention-days", "artifacts-older-than", "name", "to", "from", "harness", "reply-address", "session-id", "reach", "pid", "listen", "token", "pair", "limit", "turn-state", "computer"]);
 const BOOL_FLAGS = new Set(["json", "apply", "wait", "background", "profiles", "no-fallback", "live", "active", "latest", "refresh", "artifact-only", "force", "dry-run", "include-unapplied", "ack"]);
+
+function optionalComputer(options) {
+  if (options.computer != null && options.computer !== "") {
+    return resolveComputer({ computer: options.computer });
+  }
+  if (process.env.AGENT_COLLAB_PEERS_COMPUTER) return resolveComputer({});
+  return undefined;
+}
 
 function parseArgs(tokens) {
   const options = {};
@@ -469,15 +477,15 @@ switch (subcommand) {
     if (!verb) {
       fail(
         "usage: agent-companion peers <self|heartbeat|register|unregister|list|send|inbox|deliver|serve>\n" +
-          "  peers self --harness <h> [--name <name>] [--session-id <id>] [--pid <n>] [--json]\n" +
-          "  peers heartbeat --name <name> [--pid <n>] [--turn-state idle|busy] [--json]\n" +
-          "  peers register --name <name> [--harness <h>] [--reply-address <addr>] [--session-id <id>] [--pid <n>] [--reach local|cross-machine] [--pair <secret>] [--json]\n" +
+          "  peers self --harness <h> [--name <name>] [--session-id <id>] [--pid <n>] [--computer <label>] [--json]\n" +
+          "  peers heartbeat --name <name> [--pid <n>] [--turn-state idle|busy] [--computer <label>] [--json]\n" +
+          "  peers register --name <name> [--harness <h>] [--reply-address <addr>] [--session-id <id>] [--pid <n>] [--reach local|cross-machine] [--computer <label>] [--pair <secret>] [--json]\n" +
           "  peers unregister --name <name> [--json]\n" +
           "  peers list [--json]\n" +
           "  peers send --to <name> --from <name> <text>\n" +
           "  peers inbox --name <name> [--ack] [--json]\n" +
           "  peers deliver --name <name> [--limit n] [--json]\n" +
-          "  peers serve [--listen host:port] [--pair <secret>]"
+          "  peers serve [--listen host:port] [--pair <secret>] [--computer <label>]"
       );
     }
     try {
@@ -488,9 +496,14 @@ switch (subcommand) {
           name: options.name,
           sessionId: options["session-id"],
           replyAddress: options["reply-address"],
-          pid: options.pid
+          pid: options.pid,
+          computer: optionalComputer(options)
         });
-        out(peer, options, `self ${peer.name} (${peer.harness}) pid=${peer.pid ?? "-"} ${peer.status}`);
+        out(
+          peer,
+          options,
+          `self ${peer.name} (${peer.harness}) ${peer.computer ?? "-"} pid=${peer.pid ?? "-"} ${peer.status}`
+        );
         break;
       }
       if (verb === "heartbeat") {
@@ -498,12 +511,13 @@ switch (subcommand) {
         const peer = heartbeatPeer({
           name: options.name,
           pid: options.pid,
-          turnState: options["turn-state"]
+          turnState: options["turn-state"],
+          computer: optionalComputer(options)
         });
         out(
           peer,
           options,
-          `heartbeat ${peer.name} ${peer.status} turnState=${peer.turnState ?? "-"}`
+          `heartbeat ${peer.name} ${peer.status} turnState=${peer.turnState ?? "-"} computer=${peer.computer ?? "-"}`
         );
         break;
       }
@@ -521,7 +535,8 @@ switch (subcommand) {
                 sessionId: options["session-id"],
                 replyAddress: options["reply-address"],
                 reach: options.reach,
-                pid: options.pid
+                pid: options.pid,
+                computer: optionalComputer(options)
               }
             })
           : registerPeer({
@@ -530,9 +545,14 @@ switch (subcommand) {
               sessionId: options["session-id"],
               replyAddress: options["reply-address"],
               reach: options.reach,
-              pid: options.pid
+              pid: options.pid,
+              computer: optionalComputer(options)
             });
-        out(peer, options, `registered ${peer.name}${peer.harness ? ` (${peer.harness})` : ""} ${peer.reach} ${peer.status}`);
+        out(
+          peer,
+          options,
+          `registered ${peer.name}${peer.harness ? ` (${peer.harness})` : ""} ${peer.computer ?? "-"} ${peer.reach} ${peer.status}`
+        );
         break;
       }
       if (verb === "unregister") {
@@ -552,7 +572,9 @@ switch (subcommand) {
             ).peers
           : listPeers();
         const human = peers.length
-          ? peers.map((p) => `${p.name}\t${p.harness ?? "-"}\t${p.reach}\t${p.status}`).join("\n")
+          ? peers
+              .map((p) => `${p.name}\t${p.harness ?? "-"}\t${p.computer ?? "-"}\t${p.reach}\t${p.status}`)
+              .join("\n")
           : "(no peers)";
         out(peers, options, human);
         break;
@@ -615,12 +637,15 @@ switch (subcommand) {
       if (verb === "serve") {
         const listen = options.listen || "127.0.0.1:0";
         const [host, port] = listen.includes(":") ? listen.split(":") : ["127.0.0.1", listen];
-        const { url, pairRequired } = await listenPeersServer({
+        const { url, pairRequired, computer } = await listenPeersServer({
           host,
           port: Number(port) || 0,
-          pair: options.pair
+          pair: options.pair,
+          computer: optionalComputer(options)
         });
-        process.stdout.write(JSON.stringify({ url, host, listen: url, pairRequired }, null, 2) + "\n");
+        process.stdout.write(
+          JSON.stringify({ url, host, listen: url, pairRequired, computer }, null, 2) + "\n"
+        );
         await new Promise(() => {});
         break;
       }
@@ -711,15 +736,15 @@ switch (subcommand) {
         "  apply  <jobId>",
         "  gc [--dry-run] [--artifacts-older-than days] [--include-unapplied] [--json]",
         "  cancel <jobId> [--force]",
-        "  peers self --harness <h> [--name n] [--session-id id] [--pid n]",
-        "  peers heartbeat --name <name> [--pid n] [--turn-state idle|busy]",
-        "  peers register --name <name> [--harness h] [--reply-address addr] [--session-id id] [--pid n] [--reach local|cross-machine]",
+        "  peers self --harness <h> [--name n] [--session-id id] [--pid n] [--computer label]",
+        "  peers heartbeat --name <name> [--pid n] [--turn-state idle|busy] [--computer label]",
+        "  peers register --name <name> [--harness h] [--reply-address addr] [--session-id id] [--pid n] [--reach local|cross-machine] [--computer label]",
         "  peers unregister --name <name>",
         "  peers list [--json]",
         "  peers send --to <name> --from <name> <text>",
         "  peers inbox --name <name> [--ack] [--json]",
         "  peers deliver --name <name> [--limit n] [--json]",
-        "  peers serve [--listen 127.0.0.1:port] [--pair secret]"
+        "  peers serve [--listen 127.0.0.1:port] [--pair secret] [--computer label]"
       ].join("\n")
     );
 }

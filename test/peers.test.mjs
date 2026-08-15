@@ -47,6 +47,16 @@ test("adapter contract does not grow inject members that dispatch would probe", 
   assert.doesNotMatch(src, /isInjectSafe|buildInjectCommand|tryDeliver/);
 });
 
+test("register stores an operator-chosen computer label", () => {
+  isolateStateRoot();
+  registerPeer({ name: "alice", harness: "grok", computer: "Mac Mini M4" });
+  registerPeer({ name: "bob", harness: "cursor", computer: "2017 MacBook Pro" });
+  const listed = listPeers();
+  assert.equal(listed.find((p) => p.name === "alice").computer, "Mac Mini M4");
+  assert.equal(listed.find((p) => p.name === "bob").computer, "2017 MacBook Pro");
+  assert.throws(() => registerPeer({ name: "bad", computer: "no\nnewline" }), /computer name/);
+});
+
 test("register then list shows the stable name", () => {
   isolateStateRoot();
   const alice = registerPeer({ name: "alice", harness: "grok", replyAddress: "alice" });

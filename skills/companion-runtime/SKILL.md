@@ -16,15 +16,15 @@ generalization of codex-plugin-cc's `codex-cli-runtime` skill.
 ```
 setup [--json] [--gate on|off] [--sandbox on|off] [--retention-days <n>]
 doctor [--live] [--workers a,b] [--json]
-peers self --harness <h> [--name <name>] [--session-id <id>] [--pid <n>] [--json]
-peers heartbeat --name <name> [--pid <n>] [--turn-state idle|busy] [--json]
-peers register --name <name> [--harness <h>] [--reply-address <addr>] [--session-id <id>] [--pid <n>] [--reach local|cross-machine] [--json]
+peers self --harness <h> [--name <name>] [--session-id <id>] [--pid <n>] [--computer <label>] [--json]
+peers heartbeat --name <name> [--pid <n>] [--turn-state idle|busy] [--computer <label>] [--json]
+peers register --name <name> [--harness <h>] [--reply-address <addr>] [--session-id <id>] [--pid <n>] [--reach local|cross-machine] [--computer <label>] [--json]
 peers unregister --name <name> [--json]
 peers list [--json]
 peers send --to <name> --from <name> <text>
 peers inbox --name <name> [--ack] [--json]
 peers deliver --name <name> [--limit n] [--json]
-peers serve [--listen 127.0.0.1:port] [--pair <secret>]
+peers serve [--listen 127.0.0.1:port] [--pair <secret>] [--computer <label>]
 delegate --worker <agy|codex|claude|cursor|grok|opencode|instance-alias> [--driver <name>] [--role worker|reviewer] [--profile <name>] [--background] [--apply] [--timeout <s>] [--no-fallback] <brief>
 review  --worker <name> | --workers a,b [--focus <text>] [--profile <name>] [--background] [--no-fallback] [--json] <diff/context>
 adversarial-review --worker <name> | --workers a,b [--surface head|working-tree|diff] [--focus <text>] [--profile <name>] [--background] [--no-fallback] [--json] <diff/context>
@@ -383,6 +383,8 @@ read `tasks/<jobId>/reports/<worker>.md`.
   Tailscale `100.x` address. Still refuses `0.0.0.0` / `::`. Remote bind
   also requires `AGENT_COLLAB_PEERS_PAIR` / `--pair`.
 - `AGENT_COLLAB_PEERS_PAIR` — shared join secret for HTTP register/list/health.
+- `AGENT_COLLAB_PEERS_COMPUTER` — operator-chosen computer label (e.g.
+  `Mac Mini M4`, `2017 MacBook Pro`, `MacBook Pro M4 Max`). Not hostname.
 - `AGENT_COLLAB_DATA` — out-of-repo state root (default: tmp/plugin-data).
 - `AGENT_COLLAB_DRIVER` — default driver harness.
 - `AGENT_COLLAB_SANDBOX` — OS-sandbox: `on` (all non-codex) | `off`. Default: opt-in
