@@ -11,7 +11,7 @@ import { fileURLToPath } from "node:url";
 import { getAdapter, listAdapters } from "../adapters/index.mjs";
 import { resolveStateDir, appendJob, updateJob, getJob, loadState, isTerminalStatus } from "./state.mjs";
 import { createWorktree, removeWorktree, resolveWorkspaceRoot, canonical, listWorktrees } from "./workspace.mjs";
-import { headRef, captureWorkingDiff, captureWorkingTreeSnapshot, applyPatch, checkPatchApplies, workingTreeStatus, workingTreeDigest, newStatusPaths, stageDiffIntoWorktree, diffPaths, looksLikeDiff, extractUnifiedDiff } from "./git.mjs";
+import { headRef, upstreamRef, isAncestorOf, captureWorkingDiff, captureWorkingTreeSnapshot, applyPatch, checkPatchApplies, workingTreeStatus, workingTreeDigest, newStatusPaths, stageDiffIntoWorktree, diffPaths, looksLikeDiff, extractUnifiedDiff } from "./git.mjs";
 import { run } from "./process.mjs";
 import { isPidAlive, isStalled, touchHeartbeat } from "./heartbeat.mjs";
 import { coerceArtifact, normalizeReviewArtifact } from "./schema.mjs";
@@ -1062,12 +1062,20 @@ export function runWorkerSync(cwd, opts) {
     }
     if (warningPaths.length) breachWarning = { escapedPaths: warningPaths, headMoved };
   } else if (headMoved) {
-    // Clean tree, but HEAD moved: the worker committed directly onto the live
-    // checkout instead of leaving dirty files. No corresponding legitimate driver-
-    // side action explains a moved HEAD here, so this is always a hard breach —
-    // never eligible for the warnConcurrent downgrade (that path exists for merely-
-    // dirty files, a much weaker signal than a moved HEAD with nothing to show for it).
-    escapedPaths = [`HEAD moved ${breachHeadBefore} -> ${headAfter} with a clean working tree (worker likely committed directly)`];
+    // Clean tree, but HEAD moved. Two cases (#821 vs #1044):
+    // - Worker committed onto the live checkout → headAfter is NOT an ancestor of
+    //   the tracked remote. Still a hard breach; never warnConcurrent-downgradable.
+    // - A sibling lane fast-forwarded the tracked branch and this checkout followed
+    //   → headAfter IS an ancestor of origin/<branch>. Not a breach. Do not put a
+    //   string in escapedPaths (non-empty still forces status=breach).
+    const upstream = worktree ? upstreamRef(cwd) : null;
+    if (upstream && isAncestorOf(headAfter, upstream, cwd)) {
+      escapedPaths = [];
+    } else {
+      escapedPaths = [
+        `HEAD moved ${breachHeadBefore} -> ${headAfter} (not ancestor of ${upstream || "upstream"}; worker likely committed directly)`
+      ];
+    }
   }
 
   let reportText = answerText;

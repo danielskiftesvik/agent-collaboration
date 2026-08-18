@@ -1477,6 +1477,10 @@ test("a worker that commits directly onto the live checkout (clean tree, HEAD mo
   assert.equal(res.status, "breach", "a clean-tree commit onto the live checkout must still override 'completed'");
   assert.equal(res.breach, true);
   assert.match(res.errors.join(" "), /HEAD moved|breach/i);
+  assert.match(
+    res.escapedPaths.join(" "),
+    /not ancestor of upstream; worker likely committed directly/
+  );
 
   delete process.env.AGENT_COLLAB_AGY_BIN;
   delete process.env.AC_ESCAPE;
@@ -1502,6 +1506,45 @@ test("a worker that commits directly onto the live checkout is a hard breach eve
 
   delete process.env.AGENT_COLLAB_AGY_BIN;
   delete process.env.AGENT_COLLAB_BREACH_WARN_CONCURRENT;
+  delete process.env.AC_ESCAPE;
+});
+
+function makeRepoWithUpstream() {
+  const repo = makeRepo();
+  const bare = fs.mkdtempSync(path.join(os.tmpdir(), "ac-bare-"));
+  git(["clone", "--bare", "-q", repo, bare]);
+  git(["-C", repo, "remote", "add", "origin", bare]);
+  git(["-C", repo, "push", "-q", "-u", "origin", "HEAD:main"]);
+  return { repo, bare };
+}
+
+test("a sibling fast-forward of the tracked remote is not a headMoved breach (#1044)", () => {
+  isolateStateRoot();
+  const { repo, bare } = makeRepoWithUpstream();
+  const sibling = fs.mkdtempSync(path.join(os.tmpdir(), "ac-sib-"));
+  git(["clone", "-q", bare, sibling]);
+  git(["-C", sibling, "config", "user.email", "t@example.com"]);
+  git(["-C", sibling, "config", "user.name", "Test"]);
+  fs.writeFileSync(path.join(sibling, "sibling.txt"), "ff\n");
+  git(["-C", sibling, "add", "-A"]);
+  git(["-C", sibling, "commit", "-q", "-m", "sibling merge"]);
+  git(["-C", sibling, "push", "-q", "origin", "HEAD:main"]);
+
+  process.env.AC_ESCAPE = repo;
+  process.env.AGENT_COLLAB_AGY_BIN = stubBin(`
+    import { execFileSync } from 'node:child_process';
+    if (process.argv.includes('models')) { process.exit(0); }
+    execFileSync('git', ['-C', process.env.AC_ESCAPE, 'pull', '-q', '--ff-only'], { stdio: 'ignore' });
+    process.stdout.write('\`\`\`json\\n{"status":"completed","summary":"ok","changed":false}\\n\`\`\`');
+  `);
+
+  const res = runWorkerSync(repo, { driver: "claude", worker: "agy", role: "worker", brief: "x", maxAttempts: 1 });
+
+  assert.equal(res.breach, false, "picking up origin/main via FF must not be a containment breach");
+  assert.notEqual(res.status, "breach");
+  assert.deepEqual(res.escapedPaths || [], []);
+
+  delete process.env.AGENT_COLLAB_AGY_BIN;
   delete process.env.AC_ESCAPE;
 });
 

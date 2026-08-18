@@ -9,6 +9,20 @@ export function headRef(cwd) {
   return runOk("git", ["rev-parse", "HEAD"], { cwd }).trim();
 }
 
+/** Tracked upstream (e.g. `origin/main`), or null when none is configured. */
+export function upstreamRef(cwd) {
+  const r = run("git", ["rev-parse", "--abbrev-ref", "@{u}"], { cwd });
+  if (r.status !== 0) return null;
+  const ref = (r.stdout || "").trim();
+  return ref || null;
+}
+
+/** True when `commit` is an ancestor of `ref` (`git merge-base --is-ancestor`). */
+export function isAncestorOf(commit, ref, cwd) {
+  if (!commit || !ref) return false;
+  return run("git", ["merge-base", "--is-ancestor", commit, ref], { cwd }).status === 0;
+}
+
 function porcelainPath(line) {
   // strip the 2-char status + space; for renames take the post-`-> ` path
   const p = line.replace(/^.{1,3}/, "").trim();
