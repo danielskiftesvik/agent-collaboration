@@ -1572,6 +1572,73 @@ test("a live-checkout commit is still a breach when origin exists but does not c
   delete process.env.AC_ESCAPE;
 });
 
+test("a live-checkout commit is still a hard breach when only AGENT_COLLAB_BREACH_EXEMPT_PATHS files are dirty (#1044 review)", () => {
+  isolateStateRoot();
+  const { repo } = makeRepoWithUpstream();
+  process.env.AC_ESCAPE = repo;
+  process.env.AGENT_COLLAB_BREACH_EXEMPT_PATHS = "reports/";
+  process.env.AGENT_COLLAB_AGY_BIN = stubBin(`
+    import fs from 'node:fs';
+    import path from 'node:path';
+    import { execFileSync } from 'node:child_process';
+    if (process.argv.includes('models')) { process.exit(0); }
+    execFileSync('git', ['-C', process.env.AC_ESCAPE, 'commit', '--allow-empty', '-q', '-m', 'escaped commit'], { stdio: 'ignore' });
+    fs.mkdirSync(path.join(process.env.AC_ESCAPE, 'reports'), { recursive: true });
+    fs.writeFileSync(path.join(process.env.AC_ESCAPE, 'reports', 'worker.md'), 'exempt dirty\\n');
+    process.stdout.write('\`\`\`json\\n{"status":"completed","summary":"x","changed":false}\\n\`\`\`');
+  `);
+
+  const res = runWorkerSync(repo, { driver: "claude", worker: "agy", role: "worker", brief: "x", maxAttempts: 1 });
+
+  assert.equal(res.status, "breach", "exempt dirty files must not swallow a non-ancestor HEAD move");
+  assert.equal(res.breach, true);
+  assert.match(
+    res.escapedPaths.join(" "),
+    /not ancestor of origin\/main; worker likely committed directly/
+  );
+
+  delete process.env.AGENT_COLLAB_AGY_BIN;
+  delete process.env.AGENT_COLLAB_BREACH_EXEMPT_PATHS;
+  delete process.env.AC_ESCAPE;
+});
+
+test("sibling FF plus a disjoint concurrent dirty file is a breachWarning under AGENT_COLLAB_BREACH_WARN_CONCURRENT=on (#1044 review)", () => {
+  isolateStateRoot();
+  const { repo, bare } = makeRepoWithUpstream();
+  const sibling = fs.mkdtempSync(path.join(os.tmpdir(), "ac-sib-"));
+  git(["clone", "-q", bare, sibling]);
+  git(["-C", sibling, "config", "user.email", "t@example.com"]);
+  git(["-C", sibling, "config", "user.name", "Test"]);
+  fs.writeFileSync(path.join(sibling, "sibling.txt"), "ff\n");
+  git(["-C", sibling, "add", "-A"]);
+  git(["-C", sibling, "commit", "-q", "-m", "sibling merge"]);
+  git(["-C", sibling, "push", "-q", "origin", "HEAD:main"]);
+
+  process.env.AC_ESCAPE = repo;
+  process.env.AGENT_COLLAB_BREACH_WARN_CONCURRENT = "on";
+  process.env.AGENT_COLLAB_AGY_BIN = stubBin(`
+    import fs from 'node:fs';
+    import path from 'node:path';
+    import { execFileSync } from 'node:child_process';
+    if (process.argv.includes('models')) { process.exit(0); }
+    execFileSync('git', ['-C', process.env.AC_ESCAPE, 'pull', '-q', '--ff-only'], { stdio: 'ignore' });
+    fs.writeFileSync(path.join(process.env.AC_ESCAPE, 'unrelated-dirty.txt'), 'concurrent\\n');
+    fs.writeFileSync('worker.txt', 'patch\\n');
+    process.stdout.write('\`\`\`json\\n{"status":"completed","summary":"ok","changed":true}\\n\`\`\`');
+  `);
+
+  const res = runWorkerSync(repo, { driver: "claude", worker: "agy", role: "worker", brief: "x", maxAttempts: 1 });
+
+  assert.notEqual(res.status, "breach", "benign FF must not disqualify the concurrent-edit downgrade");
+  assert.equal(res.breach, false);
+  assert.ok(res.breachWarning?.escapedPaths?.some((p) => /unrelated-dirty\.txt/.test(p)));
+  assert.equal((res.escapedPaths || []).length, 0);
+
+  delete process.env.AGENT_COLLAB_AGY_BIN;
+  delete process.env.AGENT_COLLAB_BREACH_WARN_CONCURRENT;
+  delete process.env.AC_ESCAPE;
+});
+
 test("a worker that commits AND leaves a disjoint dirty file is still a hard breach under AGENT_COLLAB_BREACH_WARN_CONCURRENT=on (#821 review finding)", () => {
   isolateStateRoot();
   const repo = makeRepo();

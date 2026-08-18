@@ -1037,6 +1037,16 @@ export function runWorkerSync(cwd, opts) {
   // (#821).
   const headAfter = worktree ? headRef(cwd) : null;
   const headMoved = !!(breachHeadBefore && headAfter && breachHeadBefore !== headAfter);
+  // #1044: classify once. Sibling FF of @{u} is not a containment breach; a
+  // live-checkout commit (headAfter not an ancestor of upstream) still is.
+  // Fail closed when there is no tracked upstream. Apply this on BOTH the
+  // dirty-path and clean-tree branches — otherwise exempt-only dirt swallows
+  // #821, and a benign FF still blocks WARN_CONCURRENT.
+  const upstream = worktree && headMoved ? upstreamRef(cwd) : null;
+  const headMovedBreach = !!(headMoved && !(upstream && isAncestorOf(headAfter, upstream, cwd)));
+  const headMovedEvidence = headMovedBreach
+    ? `HEAD moved ${breachHeadBefore} -> ${headAfter} (not ancestor of ${upstream || "upstream"}; worker likely committed directly)`
+    : null;
   if (rawEscapedPaths.length) {
     const exemptions = splitPathList([process.env.AGENT_COLLAB_BREACH_EXEMPT_PATHS, opts.breachExemptPaths]);
     const exempted = rawEscapedPaths.filter((p) => isExemptPath(p, exemptions));
@@ -1049,33 +1059,20 @@ export function runWorkerSync(cwd, opts) {
         : !timedOut && !frozen && exitCode === 0 && answerText.trim().length > 0;
     const warnConcurrent = process.env.AGENT_COLLAB_BREACH_WARN_CONCURRENT === "on" || opts.breachWarnConcurrent === true;
     const warningPaths = [...exempted];
-    // headMoved must DISQUALIFY the downgrade, never qualify it. Before this guard, a
-    // worker that both committed AND left an unrelated dirty file could still hit this
-    // branch (rawEscapedPaths.length > 0) and have headMoved's true value satisfy
-    // `(headMoved || disjointFromPatch)`, downgrading a genuine commit-based containment
-    // escape to a mere breachWarning whenever AGENT_COLLAB_BREACH_WARN_CONCURRENT=on
-    // (#821 follow-up finding). The downgrade exists for the dirty-file-only case; a
-    // moved HEAD is unconditionally the stronger, non-downgradable signal.
-    if (escapedPaths.length && warnConcurrent && cleanArtifact && !headMoved && disjointFromPatch) {
+    // headMovedBreach must DISQUALIFY the downgrade, never qualify it. Before
+    // this guard, a worker that both committed AND left an unrelated dirty file
+    // could still hit this branch and have raw headMoved satisfy
+    // `(headMoved || disjointFromPatch)`, downgrading a genuine commit-based
+    // containment escape whenever AGENT_COLLAB_BREACH_WARN_CONCURRENT=on
+    // (#821 follow-up). Benign sibling FF is not that signal (#1044).
+    if (escapedPaths.length && warnConcurrent && cleanArtifact && !headMovedBreach && disjointFromPatch) {
       warningPaths.push(...escapedPaths);
       escapedPaths = [];
     }
-    if (warningPaths.length) breachWarning = { escapedPaths: warningPaths, headMoved };
+    if (headMovedEvidence) escapedPaths = [...escapedPaths, headMovedEvidence];
+    if (warningPaths.length) breachWarning = { escapedPaths: warningPaths, headMoved: headMovedBreach };
   } else if (headMoved) {
-    // Clean tree, but HEAD moved. Two cases (#821 vs #1044):
-    // - Worker committed onto the live checkout → headAfter is NOT an ancestor of
-    //   the tracked remote. Still a hard breach; never warnConcurrent-downgradable.
-    // - A sibling lane fast-forwarded the tracked branch and this checkout followed
-    //   → headAfter IS an ancestor of origin/<branch>. Not a breach. Do not put a
-    //   string in escapedPaths (non-empty still forces status=breach).
-    const upstream = worktree ? upstreamRef(cwd) : null;
-    if (upstream && isAncestorOf(headAfter, upstream, cwd)) {
-      escapedPaths = [];
-    } else {
-      escapedPaths = [
-        `HEAD moved ${breachHeadBefore} -> ${headAfter} (not ancestor of ${upstream || "upstream"}; worker likely committed directly)`
-      ];
-    }
+    escapedPaths = headMovedEvidence ? [headMovedEvidence] : [];
   }
 
   let reportText = answerText;
