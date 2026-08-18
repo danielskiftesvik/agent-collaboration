@@ -4,7 +4,7 @@ import fs from "node:fs";
 import path from "node:path";
 
 import { makeRepo, git } from "./helpers.mjs";
-import { headRef, upstreamRef, isAncestorOf, isBenignRemoteFastForward, captureWorkingDiff, captureWorkingTreeSnapshot, applyPatch, diffPaths, stageDiffIntoWorktree, workingTreeStatus, workingTreeDigest, newStatusPaths, extractUnifiedDiff } from "../core/git.mjs";
+import { headRef, upstreamRef, isAncestorOf, isBenignRemoteFastForward, reflogCount, captureWorkingDiff, captureWorkingTreeSnapshot, applyPatch, diffPaths, stageDiffIntoWorktree, workingTreeStatus, workingTreeDigest, newStatusPaths, extractUnifiedDiff } from "../core/git.mjs";
 
 test("extractUnifiedDiff removes Markdown fences and surrounding prose", () => {
   const input = "Review this:\n```diff\n--- a/a.js\n+++ b/a.js\n@@ -1 +1 @@\n-old\n+new\n```\nextra";
@@ -43,12 +43,12 @@ test("upstreamRef is null without a remote; isAncestorOf is fail-closed", () => 
 
 test("isBenignRemoteFastForward is true only for pull/FF reflog walks", () => {
   const repo = makeRepo();
-  const from = headRef(repo);
+  const before = reflogCount(repo);
   git(["commit", "--allow-empty", "-q", "-m", "escaped"], repo);
-  const afterCommit = headRef(repo);
-  assert.equal(isBenignRemoteFastForward(repo, from, afterCommit), false);
-  git(["reset", "--hard", "-q", from], repo);
-  assert.equal(isBenignRemoteFastForward(repo, afterCommit, from), false);
+  assert.equal(isBenignRemoteFastForward(repo, before), false);
+  const afterCommit = reflogCount(repo);
+  git(["reset", "--hard", "-q", "HEAD~1"], repo);
+  assert.equal(isBenignRemoteFastForward(repo, afterCommit), false);
 });
 
 test("captureWorkingDiff + applyPatch reproduces an edit on a clean checkout", () => {

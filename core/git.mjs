@@ -26,40 +26,37 @@ export function isAncestorOf(commit, ref, cwd) {
 const LOCAL_HEAD_MUTATION = /\b(commit|reset|checkout|rebase|cherry-pick|revert)\b/i;
 const REMOTE_FAST_FORWARD = /pull|fast-forward|\bfetch\b/i;
 
-/**
- * Reflog subjects that moved HEAD from `fromSha` to `toSha` (newest first).
- * Null when the walk cannot be reconstructed (fail closed).
- */
-export function reflogSubjectsFromTo(cwd, fromSha, toSha) {
-  if (!fromSha || !toSha) return null;
-  if (fromSha === toSha) return [];
-  const r = run("git", ["reflog", "HEAD", "--format=%H%x09%gs"], { cwd });
+/** Number of HEAD reflog entries, or null if unavailable. */
+export function reflogCount(cwd) {
+  const r = run("git", ["rev-list", "--walk-reflogs", "--count", "HEAD"], { cwd });
   if (r.status !== 0) return null;
-  const msgs = [];
-  let seenTo = false;
-  for (const line of (r.stdout || "").split(/\r?\n/)) {
-    if (!line.trim()) continue;
-    const tab = line.indexOf("\t");
-    if (tab < 0) continue;
-    const sha = line.slice(0, tab).trim();
-    const gs = line.slice(tab + 1);
-    if (!seenTo) {
-      if (sha !== toSha) continue;
-      seenTo = true;
-    }
-    if (sha === fromSha) return msgs;
-    msgs.push(gs);
-  }
-  return null;
+  const n = Number.parseInt(String(r.stdout || "").trim(), 10);
+  return Number.isFinite(n) ? n : null;
 }
 
 /**
- * True only when HEAD advanced from `fromSha` to `toSha` via pull/fetch/FF.
- * Local commit/reset/checkout/rebase is not benign even if the result is an
- * ancestor of @{u} (commit+push, reset to an older origin SHA).
+ * HEAD reflog subjects added after `beforeCount` (newest first).
+ * Null when the window cannot be reconstructed (fail closed).
  */
-export function isBenignRemoteFastForward(cwd, fromSha, toSha) {
-  const msgs = reflogSubjectsFromTo(cwd, fromSha, toSha);
+export function reflogSubjectsSinceCount(cwd, beforeCount) {
+  if (beforeCount == null) return null;
+  const afterCount = reflogCount(cwd);
+  if (afterCount == null || afterCount < beforeCount) return null;
+  const added = afterCount - beforeCount;
+  if (added === 0) return [];
+  const r = run("git", ["reflog", "HEAD", "-n", String(added), "--format=%gs"], { cwd });
+  if (r.status !== 0) return null;
+  return (r.stdout || "").split(/\r?\n/).map((s) => s.trim()).filter(Boolean);
+}
+
+/**
+ * True only when every new HEAD reflog subject in the worker window is
+ * pull/fetch/FF. Local commit/reset/checkout/rebase in that window is not
+ * benign even if the final SHA is an ancestor of @{u} (commit+push, reset,
+ * or commit+reset+pull concealment).
+ */
+export function isBenignRemoteFastForward(cwd, beforeCount) {
+  const msgs = reflogSubjectsSinceCount(cwd, beforeCount);
   if (!msgs || msgs.length === 0) return false;
   return msgs.every((gs) => REMOTE_FAST_FORWARD.test(gs) && !LOCAL_HEAD_MUTATION.test(gs));
 }

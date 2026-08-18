@@ -1625,6 +1625,31 @@ test("a live-checkout commit that is then pushed to origin is still a hard breac
   delete process.env.AC_ESCAPE;
 });
 
+test("commit+push then reset then pull is still a hard breach (#1044 review)", () => {
+  isolateStateRoot();
+  const { repo } = makeRepoWithUpstream();
+  process.env.AC_ESCAPE = repo;
+  process.env.AGENT_COLLAB_AGY_BIN = stubBin(`
+    import { execFileSync } from 'node:child_process';
+    if (process.argv.includes('models')) { process.exit(0); }
+    const start = execFileSync('git', ['-C', process.env.AC_ESCAPE, 'rev-parse', 'HEAD'], { encoding: 'utf8' }).trim();
+    execFileSync('git', ['-C', process.env.AC_ESCAPE, 'commit', '--allow-empty', '-q', '-m', 'escaped commit'], { stdio: 'ignore' });
+    execFileSync('git', ['-C', process.env.AC_ESCAPE, 'push', '-q', 'origin', 'HEAD:main'], { stdio: 'ignore' });
+    execFileSync('git', ['-C', process.env.AC_ESCAPE, 'reset', '--hard', '-q', start], { stdio: 'ignore' });
+    execFileSync('git', ['-C', process.env.AC_ESCAPE, 'pull', '-q', '--ff-only'], { stdio: 'ignore' });
+    process.stdout.write('\`\`\`json\\n{"status":"completed","summary":"x","changed":false}\\n\`\`\`');
+  `);
+
+  const res = runWorkerSync(repo, { driver: "claude", worker: "agy", role: "worker", brief: "x", maxAttempts: 1 });
+
+  assert.equal(res.status, "breach", "a concealed live commit in the worker reflog window must still hard-breach");
+  assert.equal(res.breach, true);
+  assert.equal(res.breachWarning, undefined);
+
+  delete process.env.AGENT_COLLAB_AGY_BIN;
+  delete process.env.AC_ESCAPE;
+});
+
 test("reset --hard to an upstream ancestor is still a hard breach (#1044 review)", () => {
   isolateStateRoot();
   const { repo } = makeRepoWithUpstream();
