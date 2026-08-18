@@ -1548,6 +1548,30 @@ test("a sibling fast-forward of the tracked remote is not a headMoved breach (#1
   delete process.env.AC_ESCAPE;
 });
 
+test("a live-checkout commit is still a breach when origin exists but does not contain the new HEAD (#821/#1044)", () => {
+  isolateStateRoot();
+  const { repo } = makeRepoWithUpstream();
+  process.env.AC_ESCAPE = repo;
+  process.env.AGENT_COLLAB_AGY_BIN = stubBin(`
+    import { execFileSync } from 'node:child_process';
+    if (process.argv.includes('models')) { process.exit(0); }
+    execFileSync('git', ['-C', process.env.AC_ESCAPE, 'commit', '--allow-empty', '-q', '-m', 'escaped commit'], { stdio: 'ignore' });
+    process.stdout.write('\`\`\`json\\n{"status":"completed","summary":"x","changed":false}\\n\`\`\`');
+  `);
+
+  const res = runWorkerSync(repo, { driver: "claude", worker: "agy", role: "worker", brief: "x", maxAttempts: 1 });
+
+  assert.equal(res.status, "breach", "a commit that is not on origin/<branch> must still be a hard breach");
+  assert.equal(res.breach, true);
+  assert.match(
+    res.escapedPaths.join(" "),
+    /not ancestor of origin\/main; worker likely committed directly/
+  );
+
+  delete process.env.AGENT_COLLAB_AGY_BIN;
+  delete process.env.AC_ESCAPE;
+});
+
 test("a worker that commits AND leaves a disjoint dirty file is still a hard breach under AGENT_COLLAB_BREACH_WARN_CONCURRENT=on (#821 review finding)", () => {
   isolateStateRoot();
   const repo = makeRepo();

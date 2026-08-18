@@ -4,7 +4,7 @@ import fs from "node:fs";
 import path from "node:path";
 
 import { makeRepo, git } from "./helpers.mjs";
-import { headRef, captureWorkingDiff, captureWorkingTreeSnapshot, applyPatch, diffPaths, stageDiffIntoWorktree, workingTreeStatus, workingTreeDigest, newStatusPaths, extractUnifiedDiff } from "../core/git.mjs";
+import { headRef, upstreamRef, isAncestorOf, captureWorkingDiff, captureWorkingTreeSnapshot, applyPatch, diffPaths, stageDiffIntoWorktree, workingTreeStatus, workingTreeDigest, newStatusPaths, extractUnifiedDiff } from "../core/git.mjs";
 
 test("extractUnifiedDiff removes Markdown fences and surrounding prose", () => {
   const input = "Review this:\n```diff\n--- a/a.js\n+++ b/a.js\n@@ -1 +1 @@\n-old\n+new\n```\nextra";
@@ -33,6 +33,12 @@ test("headRef returns the current commit sha", () => {
   const repo = makeRepo();
   const sha = headRef(repo);
   assert.match(sha, /^[0-9a-f]{40}$/);
+});
+
+test("upstreamRef is null without a remote; isAncestorOf is fail-closed", () => {
+  const repo = makeRepo();
+  assert.equal(upstreamRef(repo), null);
+  assert.equal(isAncestorOf(headRef(repo), "origin/main", repo), false);
 });
 
 test("captureWorkingDiff + applyPatch reproduces an edit on a clean checkout", () => {
