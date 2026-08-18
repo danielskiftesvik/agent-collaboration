@@ -11,7 +11,7 @@ import { fileURLToPath } from "node:url";
 import { getAdapter, listAdapters } from "../adapters/index.mjs";
 import { resolveStateDir, appendJob, updateJob, getJob, loadState, isTerminalStatus } from "./state.mjs";
 import { createWorktree, removeWorktree, resolveWorkspaceRoot, canonical, listWorktrees } from "./workspace.mjs";
-import { headRef, upstreamRef, isAncestorOf, captureWorkingDiff, captureWorkingTreeSnapshot, applyPatch, checkPatchApplies, workingTreeStatus, workingTreeDigest, newStatusPaths, stageDiffIntoWorktree, diffPaths, looksLikeDiff, extractUnifiedDiff } from "./git.mjs";
+import { headRef, upstreamRef, isAncestorOf, isBenignRemoteFastForward, captureWorkingDiff, captureWorkingTreeSnapshot, applyPatch, checkPatchApplies, workingTreeStatus, workingTreeDigest, newStatusPaths, stageDiffIntoWorktree, diffPaths, looksLikeDiff, extractUnifiedDiff } from "./git.mjs";
 import { run } from "./process.mjs";
 import { isPidAlive, isStalled, touchHeartbeat } from "./heartbeat.mjs";
 import { coerceArtifact, normalizeReviewArtifact } from "./schema.mjs";
@@ -1038,14 +1038,17 @@ export function runWorkerSync(cwd, opts) {
   const headAfter = worktree ? headRef(cwd) : null;
   const headMoved = !!(breachHeadBefore && headAfter && breachHeadBefore !== headAfter);
   // #1044: classify once. Sibling FF of @{u} is not a containment breach; a
-  // live-checkout commit (headAfter not an ancestor of upstream) still is.
-  // Fail closed when there is no tracked upstream. Apply this on BOTH the
-  // dirty-path and clean-tree branches — otherwise exempt-only dirt swallows
-  // #821, and a benign FF still blocks WARN_CONCURRENT.
+  // live-checkout commit still is. End-state ancestry alone is not enough
+  // (commit+push and reset-to-ancestor are also ancestors of @{u}) — require
+  // reflog proof of pull/fetch/FF. Fail closed with no upstream or no reflog.
   const upstream = worktree && headMoved ? upstreamRef(cwd) : null;
-  const headMovedBreach = !!(headMoved && !(upstream && isAncestorOf(headAfter, upstream, cwd)));
+  const ancestorOfUpstream = !!(upstream && isAncestorOf(headAfter, upstream, cwd));
+  const benignFf = ancestorOfUpstream && isBenignRemoteFastForward(cwd, breachHeadBefore, headAfter);
+  const headMovedBreach = !!(headMoved && !benignFf);
   const headMovedEvidence = headMovedBreach
-    ? `HEAD moved ${breachHeadBefore} -> ${headAfter} (not ancestor of ${upstream || "upstream"}; worker likely committed directly)`
+    ? (ancestorOfUpstream
+      ? `HEAD moved ${breachHeadBefore} -> ${headAfter} (live checkout mutation; not a remote fast-forward of ${upstream || "upstream"})`
+      : `HEAD moved ${breachHeadBefore} -> ${headAfter} (not ancestor of ${upstream || "upstream"}; worker likely committed directly)`)
     : null;
   if (rawEscapedPaths.length) {
     const exemptions = splitPathList([process.env.AGENT_COLLAB_BREACH_EXEMPT_PATHS, opts.breachExemptPaths]);
@@ -1070,7 +1073,9 @@ export function runWorkerSync(cwd, opts) {
       escapedPaths = [];
     }
     if (headMovedEvidence) escapedPaths = [...escapedPaths, headMovedEvidence];
-    if (warningPaths.length) breachWarning = { escapedPaths: warningPaths, headMoved: headMovedBreach };
+    if (warningPaths.length && !headMovedEvidence) {
+      breachWarning = { escapedPaths: warningPaths, headMoved: false };
+    }
   } else if (headMoved) {
     escapedPaths = headMovedEvidence ? [headMovedEvidence] : [];
   }
@@ -1191,7 +1196,7 @@ export function runWorkerSync(cwd, opts) {
     note = (note ? note + " " : "") +
       "Reviewer returned prose but invalid JSON; report was saved. Read the prose report instead of discarding the review.";
   }
-  if (breachWarning) {
+  if (breachWarning && status !== "breach") {
     note = (note ? note + " " : "") +
       `Real checkout changed during the worker run (${breachWarning.escapedPaths.join(", ")}); recorded as breachWarning, not a hard breach.`;
   }

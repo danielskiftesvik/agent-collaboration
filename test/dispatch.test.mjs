@@ -1592,6 +1592,8 @@ test("a live-checkout commit is still a hard breach when only AGENT_COLLAB_BREAC
 
   assert.equal(res.status, "breach", "exempt dirty files must not swallow a non-ancestor HEAD move");
   assert.equal(res.breach, true);
+  assert.equal(res.breachWarning, undefined, "hard breach must not also emit a soft-only warning/note");
+  assert.equal(/not a hard breach/.test(res.note || ""), false);
   assert.match(
     res.escapedPaths.join(" "),
     /not ancestor of origin\/main; worker likely committed directly/
@@ -1600,6 +1602,54 @@ test("a live-checkout commit is still a hard breach when only AGENT_COLLAB_BREAC
   delete process.env.AGENT_COLLAB_AGY_BIN;
   delete process.env.AGENT_COLLAB_BREACH_EXEMPT_PATHS;
   delete process.env.AC_ESCAPE;
+});
+
+test("a live-checkout commit that is then pushed to origin is still a hard breach (#1044 review)", () => {
+  isolateStateRoot();
+  const { repo } = makeRepoWithUpstream();
+  process.env.AC_ESCAPE = repo;
+  process.env.AGENT_COLLAB_AGY_BIN = stubBin(`
+    import { execFileSync } from 'node:child_process';
+    if (process.argv.includes('models')) { process.exit(0); }
+    execFileSync('git', ['-C', process.env.AC_ESCAPE, 'commit', '--allow-empty', '-q', '-m', 'escaped commit'], { stdio: 'ignore' });
+    execFileSync('git', ['-C', process.env.AC_ESCAPE, 'push', '-q', 'origin', 'HEAD:main'], { stdio: 'ignore' });
+    process.stdout.write('\`\`\`json\\n{"status":"completed","summary":"x","changed":false}\\n\`\`\`');
+  `);
+
+  const res = runWorkerSync(repo, { driver: "claude", worker: "agy", role: "worker", brief: "x", maxAttempts: 1 });
+
+  assert.equal(res.status, "breach", "pushing a live-checkout commit to @{u} must not look like a sibling FF");
+  assert.equal(res.breach, true);
+
+  delete process.env.AGENT_COLLAB_AGY_BIN;
+  delete process.env.AC_ESCAPE;
+});
+
+test("reset --hard to an upstream ancestor is still a hard breach (#1044 review)", () => {
+  isolateStateRoot();
+  const { repo } = makeRepoWithUpstream();
+  const older = git(["rev-parse", "HEAD"], repo).trim();
+  fs.writeFileSync(path.join(repo, "later.txt"), "on origin\n");
+  git(["add", "-A"], repo);
+  git(["commit", "-q", "-m", "later on origin"], repo);
+  git(["push", "-q", "origin", "HEAD:main"], repo);
+  process.env.AC_ESCAPE = repo;
+  process.env.AC_RESET_TO = older;
+  process.env.AGENT_COLLAB_AGY_BIN = stubBin(`
+    import { execFileSync } from 'node:child_process';
+    if (process.argv.includes('models')) { process.exit(0); }
+    execFileSync('git', ['-C', process.env.AC_ESCAPE, 'reset', '--hard', '-q', process.env.AC_RESET_TO], { stdio: 'ignore' });
+    process.stdout.write('\`\`\`json\\n{"status":"completed","summary":"x","changed":false}\\n\`\`\`');
+  `);
+
+  const res = runWorkerSync(repo, { driver: "claude", worker: "agy", role: "worker", brief: "x", maxAttempts: 1 });
+
+  assert.equal(res.status, "breach", "rewinding HEAD onto an upstream ancestor is not a sibling FF");
+  assert.equal(res.breach, true);
+
+  delete process.env.AGENT_COLLAB_AGY_BIN;
+  delete process.env.AC_ESCAPE;
+  delete process.env.AC_RESET_TO;
 });
 
 test("sibling FF plus a disjoint concurrent dirty file is a breachWarning under AGENT_COLLAB_BREACH_WARN_CONCURRENT=on (#1044 review)", () => {

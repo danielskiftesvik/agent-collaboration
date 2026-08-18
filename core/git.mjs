@@ -23,6 +23,47 @@ export function isAncestorOf(commit, ref, cwd) {
   return run("git", ["merge-base", "--is-ancestor", commit, ref], { cwd }).status === 0;
 }
 
+const LOCAL_HEAD_MUTATION = /\b(commit|reset|checkout|rebase|cherry-pick|revert)\b/i;
+const REMOTE_FAST_FORWARD = /pull|fast-forward|\bfetch\b/i;
+
+/**
+ * Reflog subjects that moved HEAD from `fromSha` to `toSha` (newest first).
+ * Null when the walk cannot be reconstructed (fail closed).
+ */
+export function reflogSubjectsFromTo(cwd, fromSha, toSha) {
+  if (!fromSha || !toSha) return null;
+  if (fromSha === toSha) return [];
+  const r = run("git", ["reflog", "HEAD", "--format=%H%x09%gs"], { cwd });
+  if (r.status !== 0) return null;
+  const msgs = [];
+  let seenTo = false;
+  for (const line of (r.stdout || "").split(/\r?\n/)) {
+    if (!line.trim()) continue;
+    const tab = line.indexOf("\t");
+    if (tab < 0) continue;
+    const sha = line.slice(0, tab).trim();
+    const gs = line.slice(tab + 1);
+    if (!seenTo) {
+      if (sha !== toSha) continue;
+      seenTo = true;
+    }
+    if (sha === fromSha) return msgs;
+    msgs.push(gs);
+  }
+  return null;
+}
+
+/**
+ * True only when HEAD advanced from `fromSha` to `toSha` via pull/fetch/FF.
+ * Local commit/reset/checkout/rebase is not benign even if the result is an
+ * ancestor of @{u} (commit+push, reset to an older origin SHA).
+ */
+export function isBenignRemoteFastForward(cwd, fromSha, toSha) {
+  const msgs = reflogSubjectsFromTo(cwd, fromSha, toSha);
+  if (!msgs || msgs.length === 0) return false;
+  return msgs.every((gs) => REMOTE_FAST_FORWARD.test(gs) && !LOCAL_HEAD_MUTATION.test(gs));
+}
+
 function porcelainPath(line) {
   // strip the 2-char status + space; for renames take the post-`-> ` path
   const p = line.replace(/^.{1,3}/, "").trim();
