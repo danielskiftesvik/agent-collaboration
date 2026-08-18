@@ -11,7 +11,7 @@ import { fileURLToPath } from "node:url";
 import { getAdapter, listAdapters } from "../adapters/index.mjs";
 import { resolveStateDir, appendJob, updateJob, getJob, loadState, isTerminalStatus } from "./state.mjs";
 import { createWorktree, removeWorktree, resolveWorkspaceRoot, canonical, listWorktrees } from "./workspace.mjs";
-import { headRef, captureWorkingDiff, captureWorkingTreeSnapshot, applyPatch, checkPatchApplies, workingTreeStatus, workingTreeDigest, newStatusPaths, stageDiffIntoWorktree, diffPaths, looksLikeDiff, extractUnifiedDiff } from "./git.mjs";
+import { headRef, upstreamRef, isAncestorOf, isBenignRemoteFastForward, reflogCount, captureWorkingDiff, captureWorkingTreeSnapshot, applyPatch, checkPatchApplies, workingTreeStatus, workingTreeDigest, newStatusPaths, stageDiffIntoWorktree, diffPaths, looksLikeDiff, extractUnifiedDiff } from "./git.mjs";
 import { run } from "./process.mjs";
 import { isPidAlive, isStalled, touchHeartbeat } from "./heartbeat.mjs";
 import { coerceArtifact, normalizeReviewArtifact } from "./schema.mjs";
@@ -741,6 +741,7 @@ export function runWorkerSync(cwd, opts) {
   // --dangerously-skip-permissions). Only meaningful when we actually isolated;
   // in the run-in-place fallback the worker is supposed to write to cwd.
   const breachHeadBefore = worktree ? (opts.breachHeadBefore ?? baseRef) : null;
+  const breachReflogCount = worktree ? (opts.breachReflogCount ?? reflogCount(cwd)) : null;
   const breachBefore = worktree ? launchStatus : null;
   const startedAt = new Date().toISOString();
 
@@ -1037,6 +1038,19 @@ export function runWorkerSync(cwd, opts) {
   // (#821).
   const headAfter = worktree ? headRef(cwd) : null;
   const headMoved = !!(breachHeadBefore && headAfter && breachHeadBefore !== headAfter);
+  // #1044: classify once. Sibling FF of @{u} is not a containment breach; a
+  // live-checkout commit still is. End-state ancestry alone is not enough
+  // (commit+push and reset-to-ancestor are also ancestors of @{u}) — require
+  // reflog proof of pull/fetch/FF. Fail closed with no upstream or no reflog.
+  const upstream = worktree && headMoved ? upstreamRef(cwd) : null;
+  const ancestorOfUpstream = !!(upstream && isAncestorOf(headAfter, upstream, cwd));
+  const benignFf = ancestorOfUpstream && isBenignRemoteFastForward(cwd, breachReflogCount);
+  const headMovedBreach = !!(headMoved && !benignFf);
+  const headMovedEvidence = headMovedBreach
+    ? (ancestorOfUpstream
+      ? `HEAD moved ${breachHeadBefore} -> ${headAfter} (live checkout mutation; not a remote fast-forward of ${upstream || "upstream"})`
+      : `HEAD moved ${breachHeadBefore} -> ${headAfter} (not ancestor of ${upstream || "upstream"}; worker likely committed directly)`)
+    : null;
   if (rawEscapedPaths.length) {
     const exemptions = splitPathList([process.env.AGENT_COLLAB_BREACH_EXEMPT_PATHS, opts.breachExemptPaths]);
     const exempted = rawEscapedPaths.filter((p) => isExemptPath(p, exemptions));
@@ -1049,25 +1063,22 @@ export function runWorkerSync(cwd, opts) {
         : !timedOut && !frozen && exitCode === 0 && answerText.trim().length > 0;
     const warnConcurrent = process.env.AGENT_COLLAB_BREACH_WARN_CONCURRENT === "on" || opts.breachWarnConcurrent === true;
     const warningPaths = [...exempted];
-    // headMoved must DISQUALIFY the downgrade, never qualify it. Before this guard, a
-    // worker that both committed AND left an unrelated dirty file could still hit this
-    // branch (rawEscapedPaths.length > 0) and have headMoved's true value satisfy
-    // `(headMoved || disjointFromPatch)`, downgrading a genuine commit-based containment
-    // escape to a mere breachWarning whenever AGENT_COLLAB_BREACH_WARN_CONCURRENT=on
-    // (#821 follow-up finding). The downgrade exists for the dirty-file-only case; a
-    // moved HEAD is unconditionally the stronger, non-downgradable signal.
-    if (escapedPaths.length && warnConcurrent && cleanArtifact && !headMoved && disjointFromPatch) {
+    // headMovedBreach must DISQUALIFY the downgrade, never qualify it. Before
+    // this guard, a worker that both committed AND left an unrelated dirty file
+    // could still hit this branch and have raw headMoved satisfy
+    // `(headMoved || disjointFromPatch)`, downgrading a genuine commit-based
+    // containment escape whenever AGENT_COLLAB_BREACH_WARN_CONCURRENT=on
+    // (#821 follow-up). Benign sibling FF is not that signal (#1044).
+    if (escapedPaths.length && warnConcurrent && cleanArtifact && !headMovedBreach && disjointFromPatch) {
       warningPaths.push(...escapedPaths);
       escapedPaths = [];
     }
-    if (warningPaths.length) breachWarning = { escapedPaths: warningPaths, headMoved };
+    if (headMovedEvidence) escapedPaths = [...escapedPaths, headMovedEvidence];
+    if (warningPaths.length && !headMovedEvidence) {
+      breachWarning = { escapedPaths: warningPaths, headMoved: false };
+    }
   } else if (headMoved) {
-    // Clean tree, but HEAD moved: the worker committed directly onto the live
-    // checkout instead of leaving dirty files. No corresponding legitimate driver-
-    // side action explains a moved HEAD here, so this is always a hard breach —
-    // never eligible for the warnConcurrent downgrade (that path exists for merely-
-    // dirty files, a much weaker signal than a moved HEAD with nothing to show for it).
-    escapedPaths = [`HEAD moved ${breachHeadBefore} -> ${headAfter} with a clean working tree (worker likely committed directly)`];
+    escapedPaths = headMovedEvidence ? [headMovedEvidence] : [];
   }
 
   let reportText = answerText;
@@ -1186,7 +1197,7 @@ export function runWorkerSync(cwd, opts) {
     note = (note ? note + " " : "") +
       "Reviewer returned prose but invalid JSON; report was saved. Read the prose report instead of discarding the review.";
   }
-  if (breachWarning) {
+  if (breachWarning && status !== "breach") {
     note = (note ? note + " " : "") +
       `Real checkout changed during the worker run (${breachWarning.escapedPaths.join(", ")}); recorded as breachWarning, not a hard breach.`;
   }
@@ -1430,9 +1441,11 @@ export function launchBackground(cwd, opts) {
   ensureDirs(artifactDir, role);
   fs.writeFileSync(path.join(artifactDir, "brief.md"), brief ?? "");
   let breachHeadBefore = null;
+  let breachReflogCount = null;
   let breachBefore = null;
   try {
     breachHeadBefore = headRef(cwd);
+    breachReflogCount = reflogCount(cwd);
     const s = workingTreeStatus(cwd);
     breachBefore = s ? [...s] : null;
   } catch {
@@ -1464,7 +1477,7 @@ export function launchBackground(cwd, opts) {
     request: {
       driver, worker, workerRef, role, brief, kind, focus, targetLabel, profile, surface,
       timeoutMs: resolvedTimeoutMs, idleMs: resolvedIdleMs, maxAttempts,
-      breachHeadBefore, breachBefore
+      breachHeadBefore, breachReflogCount, breachBefore
     },
     timeoutMs: resolvedTimeoutMs,
     idleMs: resolvedIdleMs,
@@ -1589,9 +1602,11 @@ export function runJob(cwd, jobId) {
   // unrelated activity (#821 follow-up finding: a queued background job could report an
   // innocent worker as a hard breach and instruct the user to revert a legitimate commit).
   let breachHeadBefore = job.request.breachHeadBefore;
+  let breachReflogCount = job.request.breachReflogCount;
   let breachBefore = job.request.breachBefore;
   try {
     breachHeadBefore = headRef(cwd);
+    breachReflogCount = reflogCount(cwd);
     const s = workingTreeStatus(cwd);
     breachBefore = s ? [...s] : null;
   } catch {
@@ -1600,7 +1615,7 @@ export function runJob(cwd, jobId) {
   try {
   // Background runs are concurrency-prone → disable codex thread-resume (would risk
   // resuming another job's --resume-last thread).
-  return runWorkerSync(cwd, { ...job.request, breachHeadBefore, breachBefore, jobId, noResume: true });
+  return runWorkerSync(cwd, { ...job.request, breachHeadBefore, breachReflogCount, breachBefore, jobId, noResume: true });
   } finally {
     if (slot) { try { fs.rmSync(slot, { recursive: true, force: true }); } catch { /* slot dir already gone */ } }
   }

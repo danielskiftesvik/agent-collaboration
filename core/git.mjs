@@ -9,6 +9,58 @@ export function headRef(cwd) {
   return runOk("git", ["rev-parse", "HEAD"], { cwd }).trim();
 }
 
+/** Tracked upstream (e.g. `origin/main`), or null when none is configured. */
+export function upstreamRef(cwd) {
+  const r = run("git", ["rev-parse", "--abbrev-ref", "@{u}"], { cwd });
+  if (r.status !== 0) return null;
+  const ref = (r.stdout || "").trim();
+  return ref || null;
+}
+
+/** True when `commit` is an ancestor of `ref` (`git merge-base --is-ancestor`). */
+export function isAncestorOf(commit, ref, cwd) {
+  if (!commit || !ref) return false;
+  return run("git", ["merge-base", "--is-ancestor", commit, ref], { cwd }).status === 0;
+}
+
+const LOCAL_HEAD_MUTATION = /\b(commit|reset|checkout|rebase|cherry-pick|revert)\b/i;
+const REMOTE_FAST_FORWARD = /pull|fast-forward|\bfetch\b/i;
+
+/** Number of HEAD reflog entries, or null if unavailable. */
+export function reflogCount(cwd) {
+  const r = run("git", ["rev-list", "--walk-reflogs", "--count", "HEAD"], { cwd });
+  if (r.status !== 0) return null;
+  const n = Number.parseInt(String(r.stdout || "").trim(), 10);
+  return Number.isFinite(n) ? n : null;
+}
+
+/**
+ * HEAD reflog subjects added after `beforeCount` (newest first).
+ * Null when the window cannot be reconstructed (fail closed).
+ */
+export function reflogSubjectsSinceCount(cwd, beforeCount) {
+  if (beforeCount == null) return null;
+  const afterCount = reflogCount(cwd);
+  if (afterCount == null || afterCount < beforeCount) return null;
+  const added = afterCount - beforeCount;
+  if (added === 0) return [];
+  const r = run("git", ["reflog", "HEAD", "-n", String(added), "--format=%gs"], { cwd });
+  if (r.status !== 0) return null;
+  return (r.stdout || "").split(/\r?\n/).map((s) => s.trim()).filter(Boolean);
+}
+
+/**
+ * True only when every new HEAD reflog subject in the worker window is
+ * pull/fetch/FF. Local commit/reset/checkout/rebase in that window is not
+ * benign even if the final SHA is an ancestor of @{u} (commit+push, reset,
+ * or commit+reset+pull concealment).
+ */
+export function isBenignRemoteFastForward(cwd, beforeCount) {
+  const msgs = reflogSubjectsSinceCount(cwd, beforeCount);
+  if (!msgs || msgs.length === 0) return false;
+  return msgs.every((gs) => REMOTE_FAST_FORWARD.test(gs) && !LOCAL_HEAD_MUTATION.test(gs));
+}
+
 function porcelainPath(line) {
   // strip the 2-char status + space; for renames take the post-`-> ` path
   const p = line.replace(/^.{1,3}/, "").trim();
