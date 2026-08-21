@@ -30,10 +30,13 @@ from a review is forbidden, even when the fix looks obvious.
 - Report the `status` (`completed` / `no-changes` / `conflicted` / `breach` /
   `failed`), whether it `changed` files, and whether the patch `patchApplies`
   cleanly.
-- **`breach` — STOP and surface loudly.** The worker wrote *outside* its worktree,
-  into the driver's real checkout (`escapedPaths` lists what). The driver did **not**
-  apply these; tell the user to inspect/revert them, and do not trust that worker as
-  an implementer here.
+- **`breach` — STOP and surface loudly.** Real-checkout status changed during the job
+  window (`escapedPaths` lists what). That detector diffs the **shared** checkout over
+  wall-clock time — not the worker cwd / touchedFiles — so concurrent sessions can be
+  misattributed. The driver did **not** apply these. Do **not** auto-revert: first
+  attribute each path against the job worktree, captured patch, and other live sessions;
+  only revert what you can attribute to this worker. Do not trust that worker as an
+  implementer until the escape is confirmed.
 - **`no-changes`** — the worker reported done but captured **no patch**. Don't read
   that as success; say it produced nothing and ask how to proceed.
 - The worker's deliverable is the **patch**, not the metadata JSON. A

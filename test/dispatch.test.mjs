@@ -1402,6 +1402,11 @@ test("a disjoint real-checkout write is still a breach even when the patch is cl
   assert.equal(res.status, "breach");
   assert.equal(res.breach, true);
   assert.ok(res.escapedPaths.some((p) => /leaked\.txt/.test(p)));
+  // #1098: keep hard breach, but never lead with "inspect and revert them" when the
+  // flagged paths are disjoint from the job's captured patch (concurrent writers).
+  const err = res.errors.join(" ");
+  assert.match(err, /do not auto-revert|attribute each path/i);
+  assert.equal(/inspect and revert them/i.test(err), false);
 
   delete process.env.AGENT_COLLAB_AGY_BIN;
   delete process.env.AC_ESCAPE;
