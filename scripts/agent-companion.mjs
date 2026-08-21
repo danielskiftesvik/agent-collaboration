@@ -15,7 +15,7 @@ import { isPidAlive, projectJobHealth } from "../core/heartbeat.mjs";
 import { renderSetup, renderJob, renderJobList, renderRecommendation, renderProfiles } from "../core/render.mjs";
 import { MODEL_PROFILES } from "../core/model-profiles.mjs";
 import { cleanupJobWorktree, collectGarbage, waitForPidExit } from "../core/gc.mjs";
-import { resolveWorkerRef } from "../core/instances.mjs";
+import { resolveWorkerRef, seatEnvFromWorkerRef } from "../core/instances.mjs";
 
 const VALUE_FLAGS = new Set(["worker", "workers", "role", "driver", "base", "timeout", "gate", "sandbox", "focus", "surface", "task", "job", "recent", "retention-days", "artifacts-older-than"]);
 const BOOL_FLAGS = new Set(["json", "apply", "wait", "background", "profiles", "no-fallback", "live", "active", "latest", "refresh", "artifact-only", "force", "dry-run", "include-unapplied"]);
@@ -75,10 +75,15 @@ function withHealth(job) {
 }
 
 function resultJobMetadata(job) {
+  const workerRef = job.workerRef || job.request?.workerRef || null;
+  const seatEnv = seatEnvFromWorkerRef(workerRef);
   return {
     id: job.id,
     driver: job.driver,
     worker: job.worker,
+    harness: job.harness ?? workerRef?.harness ?? null,
+    instance: job.instance ?? workerRef?.instance ?? null,
+    seatEnv: Object.keys(seatEnv).length ? seatEnv : {},
     role: job.role,
     status: job.status,
     resultValid: job.resultValid,
@@ -502,8 +507,18 @@ switch (subcommand) {
         }
       }
     }
+    let cancelRef = job.workerRef || job.request?.workerRef || null;
+    if (!cancelRef?.hasOverlay && (job.worker || job.instance)) {
+      try {
+        cancelRef = resolveWorkerRef(job.worker || job.instance, {
+          workspace: job.workspace ?? cwd
+        });
+      } catch {
+        /* keep partial ref */
+      }
+    }
     const runtimeCleanup = cleanupWorkerRuntime(job.worker, job.workspace ?? cwd, job.artifactDir, {
-      workerRef: job.harness
+      workerRef: cancelRef || (job.harness
         ? {
             label: job.worker,
             harness: job.harness,
@@ -511,7 +526,7 @@ switch (subcommand) {
             overlay: {},
             hasOverlay: false
           }
-        : undefined
+        : undefined)
     });
     const processExited = waitForPidExit(job.pid);
     let updated = updateJob(cwd, id, { status: "cancelled", runtimeCleanup });

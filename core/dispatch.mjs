@@ -23,6 +23,7 @@ import { checkPreflight } from "./preflight.mjs";
 import { cleanupJobWorktree } from "./gc.mjs";
 import {
   resolveWorkerRef,
+  snapshotWorkerRef,
   withEnvOverlay,
   sandboxDirsFromOverlay,
   listConfiguredInstances
@@ -614,8 +615,9 @@ export function runWorkerSync(cwd, opts) {
   // discarded with the worktree.
   const blocked = (reason, failureKind = "isolation") => {
     const errors = [reason];
+    const workerRef = snapshotWorkerRef(ref);
     writeInitial({
-      id: jobId, driver, worker, harness, instance: ref.instance, role, status: "blocked", pid: process.pid,
+      id: jobId, driver, worker, harness, instance: ref.instance, workerRef, role, status: "blocked", pid: process.pid,
       baseRef: null, workspace: cwd, artifactDir, logs, heartbeatAt: new Date().toISOString()
     });
     updateJob(cwd, jobId, { errors, failureKind });
@@ -772,6 +774,7 @@ export function runWorkerSync(cwd, opts) {
   const breachReflogCount = worktree ? (opts.breachReflogCount ?? reflogCount(cwd)) : null;
   const breachBefore = worktree ? launchStatus : null;
   const startedAt = new Date().toISOString();
+  const workerRef = snapshotWorkerRef(ref);
 
   writeInitial({
     id: jobId,
@@ -779,6 +782,7 @@ export function runWorkerSync(cwd, opts) {
     worker,
     harness,
     instance: ref.instance,
+    workerRef,
     role,
     status: "running",
     pid: process.pid,
@@ -1482,16 +1486,9 @@ export function launchBackground(cwd, opts) {
   }
 
   // Persist the resolved identity so run-job re-applies the same overlay without
-  // depending on ambient process env (background child starts clean).
-  const workerRef = {
-    label: ref.label,
-    harness: ref.harness,
-    instance: ref.instance,
-    env: ref.env,
-    bin: ref.bin,
-    overlay: ref.overlay,
-    hasOverlay: ref.hasOverlay
-  };
+  // depending on ambient process env (background child starts clean). Include
+  // ambient CODEX_HOME when no instance overlay set (#754 seat audit).
+  const workerRef = snapshotWorkerRef(ref);
 
   appendJob(cwd, {
     id: jobId,
@@ -1499,6 +1496,7 @@ export function launchBackground(cwd, opts) {
     worker,
     harness,
     instance: ref.instance,
+    workerRef,
     role,
     status: "queued",
     background: true,
