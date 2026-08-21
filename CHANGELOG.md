@@ -1,5 +1,28 @@
 # Changelog
 
+## 0.12.4 - 2026-08-21
+
+- **OpenCode same-session continue after null turn.** On a detected null turn,
+  dispatch makes one `run --session <id>` nudge (session id from telemetry;
+  never bare `--continue`) before failing as `empty-output`.
+- **Soft quiet warn (~45s).** `status`/`health` report `quiet: true` /
+  `state: "quiet"` when a live worker has no progress for
+  `AGENT_COLLAB_QUIET_AFTER` seconds (default 45). Idle kill stays at 10 min.
+  Drivers should poll `status <jobId> --json` and treat quiet as an early wedge.
+
+## 0.12.3 - 2026-08-21
+
+- **OpenCode null-turn detection.** A terminal `step_finish` with no answer text
+  (e.g. `x-preview-f` `reason=unknown` + zero tokens after real tool calls) is
+  now an adapter error with `workerTelemetry.nullTurn`, classified as
+  `failureKind: empty-output` (fallback-eligible). OpenCode remains
+  `explicitOnly`, so `runWithFallback` still will not auto-cascade away from it
+  — use `--no-fallback` for locked seats, or an explicit multi-worker chain /
+  driver-level retry for recovery. Previously these runs were `failed`/`other`
+  and dumped raw NDJSON into the report (reviewers could look "completed").
+  Raw-stdout fallback only applies when no NDJSON events parsed; mid-step text
+  is salvaged.
+
 ## 0.12.2 - 2026-08-21
 
 - **Soften breach remediation when shared-checkout dirt is disjoint from the job

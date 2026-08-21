@@ -6,6 +6,15 @@ import { updateJob } from "./state.mjs";
 
 const RUNNING_STATES = new Set(["queued", "running"]);
 const DEFAULT_STALE_MS = 2 * 60 * 1000;
+/** Soft "quiet" warn for drivers — process still live; idle kill unchanged. */
+const DEFAULT_QUIET_AFTER_MS = 45 * 1000;
+
+function quietAfterMs(opts = {}) {
+  if (opts.quietAfterMs != null) return Number(opts.quietAfterMs);
+  const fromEnv = Number(process.env.AGENT_COLLAB_QUIET_AFTER);
+  if (Number.isFinite(fromEnv) && fromEnv >= 0) return fromEnv * 1000;
+  return DEFAULT_QUIET_AFTER_MS;
+}
 
 export function isPidAlive(pid) {
   if (!pid) return false;
@@ -82,17 +91,28 @@ export function projectJobHealth(job, opts = {}) {
   const withinHardBudget = !active || hardMs <= 0 || startedMs == null || now - startedMs <= hardMs;
   const stalled = job.status === "running" && !live;
   const healthy = active && (job.status === "queued" || live) && withinIdleBudget && withinHardBudget;
+  const quietMs = quietAfterMs(opts);
+  const quiet =
+    job.status === "running" &&
+    live &&
+    withinIdleBudget &&
+    withinHardBudget &&
+    quietMs > 0 &&
+    lastProgressMs != null &&
+    now - lastProgressMs >= quietMs;
   let state = "terminal";
   if (job.status === "queued") state = withinHardBudget ? "queued" : "hard-timeout-exceeded";
   else if (job.status === "running" && !live) state = "process-exited";
   else if (job.status === "running" && !withinHardBudget) state = "hard-timeout-exceeded";
   else if (job.status === "running" && !withinIdleBudget) state = "idle-timeout-exceeded";
+  else if (quiet) state = "quiet";
   else if (job.status === "running") state = "running";
 
   return {
     state,
     live,
     healthy,
+    quiet,
     withinIdleBudget,
     withinHardBudget,
     stalled,

@@ -188,6 +188,7 @@ Watch **outcome signals**, not process liveness:
 | **Commits** | `git -C <worktree> log --oneline <base>..HEAD` | The only artifact that survives a kill. Real progress. |
 | **Job status** | `status <jobId> --json` → `.status` | Authoritative; `breach`/`failed` are terminal. |
 | **Progress heartbeat** | `artifactDir/logs/progress.json` `.at` | Frozen `.at` + alive process = wedged, *before* the idle guard fires. |
+| **Quiet (soft)** | `status <jobId> --json` → `health.quiet` / `state:"quiet"` | Live process with no progress for ~45s (`AGENT_COLLAB_QUIET_AFTER`). Does **not** kill — driver should notice and nudge/wait. |
 | **Job's own pids** | `pgrep -f "run-job --job <jobId>"` | See below — this one is a trap. |
 
 **Trap: never test liveness by matching the worker CLI's name.** `pgrep -f "grok --single"`
@@ -306,14 +307,20 @@ was the hard timeout. Check `logs/*.stderr.log` for `[idle-guard] hard timeout` 
 *different* concurrent agent writing into the shared checkout — that is not evidence this
 worker misbehaved.
 
-## Repair by resume (codex)
+## Repair by resume (codex / opencode)
 
 When a worker's first reply isn't valid (non-timeout), the repair attempt
 **continues the worker's existing thread** rather than re-running the task cold —
-for codex that's `task --resume-last` with a short "emit clean JSON" ask, so the
-loaded diff/context isn't paid for twice. If the thread can't be resumed it
+for codex that's `task --resume-last` with a short "emit clean JSON" ask; for
+opencode a **null turn** nudges via `run --session <id>` (session id from
+telemetry — never bare `--continue`). If the thread/session can't be resumed it
 automatically falls back to a fresh full re-send (so resume can never regress).
-Disable with `AGENT_COLLAB_CODEX_RESUME=off`.
+Disable codex resume with `AGENT_COLLAB_CODEX_RESUME=off`.
+
+Soft quiet: `status <jobId> --json` → `health.quiet` / `state:"quiet"` when a live
+worker has produced no progress for ~45s (`AGENT_COLLAB_QUIET_AFTER`, seconds).
+This does **not** kill the job (idle kill stays at `AGENT_COLLAB_IDLE_TIMEOUT`);
+it exists so the driver notices a wedge early.
 
 ## Review-output normalization
 

@@ -924,6 +924,11 @@ export function runWorkerSync(cwd, opts) {
   const resumeRepair =
     "Your previous reply was not valid for the required schema. Re-send ONLY a " +
     "single JSON object matching that schema — no prose, nothing else.";
+  // OpenCode (and similar) null-turn: same session, short nudge — do not restart.
+  const continueNudge =
+    "Your previous turn produced no usable answer (null turn / empty completion). " +
+    "Continue the same task from where you left off — do not restart from scratch. " +
+    "When finished, emit ONLY a single JSON object matching the required schema — no prose.";
 
   const buildCmd = (fn) => {
     const cmd = withEnvOverlay(overlay, fn);
@@ -933,6 +938,8 @@ export function runWorkerSync(cwd, opts) {
   };
 
   let attempts = 0;
+  let resumeSessionId = null;
+  let pendingNullTurnNudge = false;
   while (attempts < maxAttempts) {
     attempts += 1;
     touchHeartbeat(cwd, jobId);
@@ -944,17 +951,26 @@ export function runWorkerSync(cwd, opts) {
       );
       proc = execGuarded(cmd);
     } else {
-      // Repair attempt: prefer RESUMING the worker's thread (cheap continuation,
-      // faithful to the reference) when the adapter supports it; if the thread
-      // can't be resumed, fall back to a fresh full re-send so resume never regresses.
-      // Skip thread-resume when noResume (background runs): `--resume-last` resolves
-      // the latest thread for the repo, which under concurrency could be a DIFFERENT
-      // job's thread. Fall back to a fresh re-send instead.
+      // Repair / continue: prefer RESUMING the worker's thread when the adapter
+      // supports it (codex --resume-last, opencode --session <id>). Fall back to
+      // a fresh full re-send so resume can never regress.
+      // Skip thread-resume when noResume (background runs): `--resume-last` /
+      // bare `--continue` can resolve a DIFFERENT job's thread under concurrency.
+      const repairBrief = pendingNullTurnNudge ? continueNudge : resumeRepair;
       const retryCmd = (!noResume && adapter.buildRetryCommand)
         ? buildCmd(() =>
-            adapter.buildRetryCommand({ role, repairBrief: resumeRepair, workspace, artifactDir, timeoutMs })
+            adapter.buildRetryCommand({
+              role,
+              repairBrief,
+              workspace,
+              artifactDir,
+              timeoutMs,
+              profile,
+              sessionId: resumeSessionId
+            })
           )
         : null;
+      pendingNullTurnNudge = false;
       if (retryCmd) {
         cmd = retryCmd;
         proc = execGuarded(cmd);
@@ -1001,6 +1017,7 @@ export function runWorkerSync(cwd, opts) {
       workspace
     });
     workerTelemetry = parsed.telemetry ?? workerTelemetry;
+    if (parsed.telemetry?.sessionId) resumeSessionId = parsed.telemetry.sessionId;
     resolvedModel = parsed.telemetry?.resolvedModel ??
       (parsed.telemetry?.resolvedModels?.length === 1 ? parsed.telemetry.resolvedModels[0] : resolvedModel);
     answerText = parsed.answerText ?? "";
@@ -1008,10 +1025,24 @@ export function runWorkerSync(cwd, opts) {
     coerce = coerceArtifact(schema, candidate, normalize);
     if (parsed.error) {
       adapterError = parsed.error;
-      break;
+      // Null turn with a known session: one same-session continue before failing.
+      const canSessionNudge =
+        parsed.telemetry?.nullTurn &&
+        resumeSessionId &&
+        !noResume &&
+        attempts < maxAttempts &&
+        typeof adapter.buildRetryCommand === "function";
+      if (canSessionNudge) {
+        pendingNullTurnNudge = true;
+      } else {
+        break;
+      }
+    } else {
+      adapterError = null;
     }
     if (coerce.ok) break;
     if (timedOut || frozen) break;
+    if (pendingNullTurnNudge) continue;
   }
 
   // Capture the worker's patch, then tear down the worktree (the diff is the artifact).
@@ -1203,6 +1234,12 @@ export function runWorkerSync(cwd, opts) {
         `worker exceeded the ${Math.round(timeoutMs / 1000)}s hard timeout and was killed mid-run. ` +
           `Raise the budget with --timeout / AGENT_COLLAB_TIMEOUT, or let it auto-fall-back to a faster worker.`
       ];
+    } else if (workerTelemetry?.nullTurn) {
+      // Adapter saw a terminal step with no usable answer (e.g. opencode
+      // reason=unknown + empty text). Stdout is full of NDJSON, so
+      // classifyFailure would return "other" and skip auto-fallback —
+      // map to empty-output so FALLBACK_KINDS applies.
+      failureKind = "empty-output";
     } else {
       const cls = classifyFailure({ stdout: lastStdout, stderr: lastStderr, exitCode, worker: harness });
       failureKind = cls.kind;

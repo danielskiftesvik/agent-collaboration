@@ -27,8 +27,33 @@ test("name and structured output support", () => {
   assert.equal(opencode.supportsStructuredOutput, false);
 });
 
-test("background is false (no session-ID-based resume mechanism)", () => {
+test("background is false (concurrency: bare --continue is unsafe)", () => {
   assert.equal(opencode.background, false);
+});
+
+test("buildRetryCommand continues an explicit session id (never bare --continue)", () => {
+  clearEnv();
+  process.env.AGENT_COLLAB_OPENCODE_MODEL = "opencode/x-preview-f-free";
+  const retry = opencode.buildRetryCommand({
+    role: "worker",
+    repairBrief: "Continue the task.",
+    workspace: "/tmp/wt",
+    sessionId: "ses_abc123"
+  });
+  assert.ok(retry, "retry command required when sessionId is present");
+  assert.ok(retry.args.includes("--session"));
+  assert.equal(retry.args[retry.args.indexOf("--session") + 1], "ses_abc123");
+  assert.ok(!retry.args.includes("--continue"), "bare --continue is concurrency-unsafe");
+  assert.ok(retry.args.includes("--auto"));
+  assert.ok(retry.args.includes("--format") && retry.args.includes("json"));
+  assert.equal(retry.args[retry.args.length - 1], "Continue the task.");
+  clearEnv();
+});
+
+test("buildRetryCommand returns null without a session id", () => {
+  clearEnv();
+  assert.equal(opencode.buildRetryCommand({ role: "worker", repairBrief: "x" }), null);
+  assert.equal(opencode.buildRetryCommand({ role: "worker", repairBrief: "x", sessionId: "" }), null);
 });
 
 test("buildCommand runs headless, auto-approved, scoped to workspace, JSON NDJSON output", () => {
@@ -217,6 +242,47 @@ test("parseOutput aggregates telemetry across steps, using only the final step's
   assert.equal(r.telemetry.cacheRead, 100);
   assert.equal(r.telemetry.costUsd, 0.015);
   assert.equal(r.telemetry.sessionId, "s1");
+});
+
+// Production shape from x-preview-f null-turns (jobs 69b1fb90 / 58c3096a):
+// tool-calls steps, then a terminal step_finish with reason=unknown, zero
+// input/output tokens, no text events, and tokens.total absent.
+test("parseOutput flags a null turn (terminal step, no text) as an error", () => {
+  const ndjson = [
+    '{"type":"step_start","timestamp":1,"sessionID":"s1","part":{"id":"p1","type":"step-start"}}',
+    '{"type":"tool_use","timestamp":2,"sessionID":"s1","part":{"type":"tool","tool":"read"}}',
+    '{"type":"step_finish","timestamp":3,"sessionID":"s1","part":{"id":"p3","reason":"tool-calls","tokens":{"total":55996,"input":3083,"output":113,"reasoning":0,"cache":{"write":0,"read":52800}},"cost":0}}',
+    '{"type":"step_start","timestamp":4,"sessionID":"s1","part":{"id":"p4","type":"step-start"}}',
+    '{"type":"step_finish","timestamp":5,"sessionID":"s1","part":{"id":"p5","reason":"unknown","tokens":{"input":0,"output":0,"reasoning":0,"cache":{"write":0,"read":0}},"cost":0}}',
+  ].join("\n");
+  const r = opencode.parseOutput({ stdout: ndjson });
+  assert.equal(r.telemetry.nullTurn, true);
+  assert.match(r.error, /null turn/i);
+  assert.match(r.error, /unknown/);
+  assert.match(r.answerText, /⚠️ INCOMPLETE RUN/);
+  assert.doesNotMatch(r.answerText, /"type":"step_start"/, "must not dump raw NDJSON as the answer");
+});
+
+test("parseOutput flags an empty terminal step even when reason is not unknown", () => {
+  const ndjson = [
+    '{"type":"step_start","timestamp":1,"sessionID":"s1","part":{"id":"p1","type":"step-start"}}',
+    '{"type":"step_finish","timestamp":2,"sessionID":"s1","part":{"id":"p2","reason":"aborted","tokens":{"input":10,"output":0}}}',
+  ].join("\n");
+  const r = opencode.parseOutput({ stdout: ndjson });
+  assert.equal(r.telemetry.nullTurn, true);
+  assert.match(r.error, /null turn/i);
+  assert.match(r.error, /aborted/);
+});
+
+test("parseOutput keeps unterminated step text instead of dumping NDJSON", () => {
+  const ndjson = [
+    '{"type":"step_start","timestamp":1,"sessionID":"s1","part":{"id":"p1","type":"step-start"}}',
+    '{"type":"text","timestamp":2,"sessionID":"s1","part":{"id":"p2","type":"text","text":"still working"}}',
+  ].join("\n");
+  const r = opencode.parseOutput({ stdout: ndjson });
+  assert.equal(r.answerText, "still working");
+  assert.equal(r.error, undefined);
+  assert.notEqual(r.telemetry?.nullTurn, true);
 });
 
 test("outputContract gives a structured contract per role", () => {

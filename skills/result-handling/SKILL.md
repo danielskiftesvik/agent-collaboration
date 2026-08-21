@@ -113,9 +113,11 @@ A failed result is **classified** so you don't have to guess. Read these fields:
   *config*) — point the user at `/agent-collab:setup` or the harness's own `login`.
 - `failureKind: "stalled"` — a background job's process died without writing a
   terminal result. Surface it and inspect `run.log` / artifacts; retry as a fresh job.
-- `failureKind: "empty-output"` — the worker exited without stdout/stderr and no
-  artifact could be parsed. Auto-falls-back by default; inspect `logs/run.jsonl`
-  plus `<worker>.stdout.log` / `<worker>.stderr.log` before blaming auth or Claude.
+- `failureKind: "empty-output"` — no usable answer: either the worker exited
+  without stdout/stderr, or the adapter detected a **null turn** (terminal step
+  with no text — e.g. OpenCode `reason=unknown` with zero tokens). Auto-falls-back
+  by default; inspect `logs/run.jsonl` plus `<worker>.stdout.log` /
+  `<worker>.stderr.log` (and `workerTelemetry.nullTurn`) before blaming auth.
 - `failureKind: "other"` — an ordinary task failure. Surface it; do **not** treat
   it as a limit.
 

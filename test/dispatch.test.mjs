@@ -627,6 +627,140 @@ test("runWithFallback falls back when a worker exits 0 with empty output", () =>
   delete process.env.AGENT_COLLAB_CLAUDE_BIN;
 });
 
+// opencode x-preview-f null-turn: exit 0, full NDJSON stdout, terminal step with
+ // no text. Must be failed/empty-output (fallback-eligible), never completed or other.
+const OPENCODE_NULL_TURN_STUB = `
+if (process.argv.includes('--version')) { console.log('1.0.0'); process.exit(0); }
+const lines = [
+  '{"type":"step_start","timestamp":1,"sessionID":"s1","part":{"id":"p1","type":"step-start"}}',
+  '{"type":"tool_use","timestamp":2,"sessionID":"s1","part":{"type":"tool","tool":"read"}}',
+  '{"type":"step_finish","timestamp":3,"sessionID":"s1","part":{"id":"p3","reason":"tool-calls","tokens":{"total":100,"input":50,"output":10,"reasoning":0,"cache":{"write":0,"read":0}},"cost":0}}',
+  '{"type":"step_start","timestamp":4,"sessionID":"s1","part":{"id":"p4","type":"step-start"}}',
+  '{"type":"step_finish","timestamp":5,"sessionID":"s1","part":{"id":"p5","reason":"unknown","tokens":{"input":0,"output":0,"reasoning":0,"cache":{"write":0,"read":0}},"cost":0}}'
+];
+process.stdout.write(lines.join('\\n') + '\\n');
+process.exit(0);
+`;
+
+// First invocation: null turn with a session id. Session-continue nudge: write a
+// file and emit a valid worker JSON result.
+const OPENCODE_NULL_THEN_CONTINUE_STUB = `
+import fs from 'node:fs';
+if (process.argv.includes('--version')) { console.log('1.0.0'); process.exit(0); }
+if (process.argv.includes('--session')) {
+  fs.writeFileSync('done.txt', 'nudged\\n');
+  const text = JSON.stringify({ status: 'completed', summary: 'continued after null turn', changed: true });
+  process.stdout.write([
+    '{"type":"step_start","timestamp":1,"sessionID":"ses_live","part":{"id":"p1","type":"step-start"}}',
+    JSON.stringify({ type: 'text', timestamp: 2, sessionID: 'ses_live', part: { id: 'p2', type: 'text', text: text } }),
+    '{"type":"step_finish","timestamp":3,"sessionID":"ses_live","part":{"id":"p3","reason":"stop","tokens":{"input":10,"output":5,"total":15},"cost":0}}'
+  ].join('\\n') + '\\n');
+  process.exit(0);
+}
+process.stdout.write([
+  '{"type":"step_start","timestamp":1,"sessionID":"ses_live","part":{"id":"p1","type":"step-start"}}',
+  '{"type":"tool_use","timestamp":2,"sessionID":"ses_live","part":{"type":"tool","tool":"read"}}',
+  '{"type":"step_finish","timestamp":3,"sessionID":"ses_live","part":{"id":"p3","reason":"tool-calls","tokens":{"total":100,"input":50,"output":10,"reasoning":0,"cache":{"write":0,"read":0}},"cost":0}}',
+  '{"type":"step_start","timestamp":4,"sessionID":"ses_live","part":{"id":"p4","type":"step-start"}}',
+  '{"type":"step_finish","timestamp":5,"sessionID":"ses_live","part":{"id":"p5","reason":"unknown","tokens":{"input":0,"output":0,"reasoning":0,"cache":{"write":0,"read":0}},"cost":0}}'
+].join('\\n') + '\\n');
+process.exit(0);
+`;
+
+test("opencode null-turn worker is failed with failureKind=empty-output", () => {
+  isolateStateRoot();
+  const repo = makeRepo();
+  process.env.AGENT_COLLAB_OPENCODE_BIN = stubBin(OPENCODE_NULL_TURN_STUB);
+
+  const res = runWorkerSync(repo, {
+    driver: "claude",
+    worker: "opencode",
+    role: "worker",
+    brief: "x",
+    maxAttempts: 2
+  });
+
+  assert.equal(res.status, "failed");
+  assert.equal(res.failureKind, "empty-output");
+  assert.equal(res.attempts, 2, "null-turn should attempt one same-session continue before failing");
+  assert.match(res.errors.join(" "), /null turn/i);
+  assert.equal(res.workerTelemetry?.nullTurn, true);
+  const report = fs.readFileSync(path.join(res.artifactDir, "reports", "opencode.md"), "utf8");
+  assert.match(report, /⚠️ INCOMPLETE RUN/);
+  assert.doesNotMatch(report, /"type":"step_start"/);
+
+  delete process.env.AGENT_COLLAB_OPENCODE_BIN;
+});
+
+test("opencode null-turn continues the same session and can recover", () => {
+  isolateStateRoot();
+  const repo = makeRepo();
+  process.env.AGENT_COLLAB_OPENCODE_BIN = stubBin(OPENCODE_NULL_THEN_CONTINUE_STUB);
+
+  const res = runWorkerSync(repo, {
+    driver: "claude",
+    worker: "opencode",
+    role: "worker",
+    brief: "x",
+    maxAttempts: 2
+  });
+
+  assert.equal(res.status, "completed", JSON.stringify({ status: res.status, errors: res.errors, attempts: res.attempts }));
+  assert.equal(res.attempts, 2);
+  assert.equal(res.changed, true);
+  const diff = fs.readFileSync(path.join(res.artifactDir, "patches", "opencode.diff"), "utf8");
+  assert.match(diff, /done\.txt/);
+
+  delete process.env.AGENT_COLLAB_OPENCODE_BIN;
+});
+
+test("opencode null-turn reviewer is failed with empty-output, not completed-with-prose", () => {
+  isolateStateRoot();
+  const repo = makeRepo();
+  process.env.AGENT_COLLAB_OPENCODE_BIN = stubBin(OPENCODE_NULL_TURN_STUB);
+
+  const res = runWorkerSync(repo, {
+    driver: "claude",
+    worker: "opencode",
+    role: "reviewer",
+    brief: "review",
+    maxAttempts: 2
+  });
+
+  assert.equal(res.status, "failed");
+  assert.equal(res.failureKind, "empty-output");
+  assert.match(res.errors.join(" "), /null turn/i);
+
+  delete process.env.AGENT_COLLAB_OPENCODE_BIN;
+});
+
+test("opencode null-turn is empty-output; explicitOnly still blocks cascade to other harnesses", () => {
+  isolateStateRoot();
+  const repo = makeRepo();
+  process.env.AGENT_COLLAB_OPENCODE_BIN = stubBin(OPENCODE_NULL_TURN_STUB);
+  process.env.AGENT_COLLAB_CLAUDE_BIN = stubBin(CLAUDE_SUCCESS_STUB);
+
+  const res = runWithFallback(repo, {
+    driver: "codex",
+    worker: "opencode",
+    role: "worker",
+    brief: "x",
+    available: ["opencode", "claude"],
+    maxAttempts: 1
+  });
+
+  assert.equal(res.status, "failed");
+  assert.equal(res.worker, "opencode");
+  assert.equal(res.failureKind, "empty-output");
+  assert.equal(resolveFallbackKinds().has("empty-output"), true);
+  assert.equal(res.allWorkersLimited, true);
+  assert.equal(res.fellBackFrom.length, 1, "only opencode was tried — claude not appended (explicitOnly)");
+  assert.equal(res.fellBackFrom[0].failureKind, "empty-output");
+
+  delete process.env.AGENT_COLLAB_OPENCODE_BIN;
+  delete process.env.AGENT_COLLAB_CLAUDE_BIN;
+});
+
 test("runWithFallback skips non-writer fallback candidates for write roles", () => {
   isolateStateRoot();
   const repo = makeRepo();

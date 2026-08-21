@@ -22,9 +22,9 @@
 // Telemetry (finding #8): step_finish events carry tokens (input/output/reasoning)
 // and cost, aggregated into workerTelemetry.
 //
-// No buildRetryCommand (finding #5): opencode has no atomic thread-resume primitive
-// analogous to codex's --resume-last. The shared dispatcher's fresh re-send path
-// repeats side effects; this is documented as a known limitation.
+// No atomic --resume-last analogue: continue uses explicit --session from
+// telemetry (never bare --continue, which resolves the LAST session under
+// concurrency). Fresh re-send remains the fallback when no session id exists.
 import { defineAdapter } from "./contract.mjs";
 import { run } from "../core/process.mjs";
 import { resolvePin } from "../core/pins.mjs";
@@ -66,31 +66,46 @@ function parseNdjson(stdout) {
   return events;
 }
 
+function buildRunArgs({ role, brief, workspace, profile, sessionId }) {
+  const args = ["run", "--format", "json", "--auto"];
+  if (sessionId) {
+    args.push("--session", sessionId);
+  }
+  const m = model(role, workspace, profile);
+  if (m) args.push("--model", m);
+  const v = variant(role, workspace, profile);
+  if (v) args.push("--variant", v);
+  if (workspace) args.push(`--dir=${workspace}`);
+  args.push(brief);
+  return args;
+}
+
 export default defineAdapter({
   name: "opencode",
   supportsStructuredOutput: false,
-  // Background runs are inherently concurrency-prone: opencode's --continue
-  // resolves the LAST session, which under concurrency could be a different
-  // job's session. Disable background for now; can be re-enabled with explicit
-  // session ID tracking.
+  // Background runs are inherently concurrency-prone: opencode's bare
+  // --continue resolves the LAST session, which under concurrency could be a
+  // different job's session. Session-continue uses explicit --session instead.
+  // Keep background off until job-scoped session tracking is solid end-to-end.
   background: false,
   buildCommand({ role, brief, workspace, profile }) {
-    const args = ["run", "--format", "json", "--auto"];
     // NOTE: opencode has no --exclude-tools flag, so --auto applies to ALL roles.
     // Reviewer write-safety relies on worktree isolation + breach detection, not
     // tool-level gating (codex adversarial review — acknowledged limitation).
-    // Removing --auto for reviewers would NOT restrict tools (opencode defaults
-    // most permissions to allow); it would only suppress auto-approval of prompts
-    // that can't be answered in headless mode.
-    // Model selection: opencode requires provider/model format (finding #6)
-    // e.g. anthropic/claude-sonnet-4-20250514
-    const m = model(role, workspace, profile);
-    if (m) args.push("--model", m);
-    const v = variant(role, workspace, profile);
-    if (v) args.push("--variant", v);
-    if (workspace) args.push(`--dir=${workspace}`);
-    args.push(brief);
-    return { command: bin(), args };
+    return { command: bin(), args: buildRunArgs({ role, brief, workspace, profile }) };
+  },
+  // Same-session nudge after a null turn (or other resume). Requires an
+  // explicit session id from a prior parseOutput — never bare --continue.
+  buildRetryCommand({ role, repairBrief, workspace, profile, sessionId }) {
+    if (!sessionId) return null;
+    return {
+      command: bin(),
+      args: buildRunArgs({ role, brief: repairBrief, workspace, profile, sessionId })
+    };
+  },
+  isResumeMiss({ stdout, stderr }) {
+    const t = `${stdout ?? ""}\n${stderr ?? ""}`;
+    return /session not found|unknown session|no such session|invalid session/i.test(t);
   },
   // Reviewer gets read-only tools; worker gets write tools but not network fetch.
   outputContract(role) {
@@ -116,6 +131,10 @@ export default defineAdapter({
   // - Text events within the final step carry the answer (finding #7).
   // - Error events set a terminal failure (finding #3).
   // - step_finish provides token/cost telemetry (finding #8).
+  // - A terminal step with no text (e.g. x-preview-f reason=unknown + 0
+  //   tokens) is a null turn: return error so dispatch can fail as
+  //   empty-output / auto-fallback, and never dump the raw NDJSON stream
+  //   as a fake report.
   parseOutput({ stdout }) {
     const events = parseNdjson(stdout);
     let answerText = "";
@@ -127,6 +146,8 @@ export default defineAdapter({
     let stepText = "";
     let stepTokens = null;
     let stepCost = null;
+    let finalReason = null;
+    let toolCallSteps = 0;
     for (const ev of events) {
       if (ev.type === "step_start") {
         if (inStep) {
@@ -151,9 +172,12 @@ export default defineAdapter({
           // Accept text from any terminal step (stop, length, etc.)
           // and mark truncation when the model hit length limits.
           // Only skip intermediate tool-calling steps.
-          if (reason !== "tool-calls") {
+          if (reason === "tool-calls") {
+            toolCallSteps += 1;
+          } else {
             foundFinalStep = true;
             truncated = reason === "length";
+            finalReason = reason ?? null;
             answerText = stepText;
             telemetry = {
               sessionId: ev.sessionID ?? null,
@@ -163,19 +187,56 @@ export default defineAdapter({
               totalTokens: stepTokens?.total ?? null,
               cacheWrite: stepTokens?.cache?.write ?? null,
               cacheRead: stepTokens?.cache?.read ?? null,
-              costUsd: stepCost ?? null
+              costUsd: stepCost ?? null,
+              finishReason: finalReason
             };
           }
         }
       }
     }
+    // Trailing text with no step_finish (killed mid-step) is still the
+    // freshest thing the worker said — don't drop it for an NDJSON dump.
+    if (inStep && stepText && !answerText) answerText = stepText;
+
     if (error) {
       return { answerText, structured: null, error, telemetry };
     }
-    if (!answerText && !error) {
+
+    // Null turn: a real terminal step produced no answer text. Do not fall
+    // back to raw stdout (that made reviewers look "completed" with a prose
+    // dump of the event stream).
+    if (foundFinalStep && !String(answerText).trim()) {
+      const inTok = telemetry?.inputTokens ?? 0;
+      const outTok = telemetry?.outputTokens ?? 0;
+      const reasonLabel = finalReason ?? "unknown";
+      const detail =
+        `opencode returned a null turn (reason=${reasonLabel}, ` +
+        `${inTok} input/${outTok} output tokens` +
+        (toolCallSteps ? ` after ${toolCallSteps} tool-call step(s)` : "") +
+        ")";
+      const marker =
+        `⚠️ INCOMPLETE RUN — ${detail}. No usable answer was produced; ` +
+        `treat this as empty-output, not a successful no-op.`;
+      return {
+        answerText: marker,
+        structured: null,
+        error: detail,
+        telemetry: { ...(telemetry ?? {}), nullTurn: true },
+        truncated: truncated || undefined
+      };
+    }
+
+    // Three-way salvage: terminal/unterminated text already in answerText;
+    // raw stdout only when nothing parsed as NDJSON.
+    if (!answerText && events.length === 0) {
       answerText = (stdout ?? "").trim();
     }
-    return { answerText: answerText || (stdout ?? "").trim(), structured: null, telemetry, truncated: truncated || undefined };
+    return {
+      answerText: answerText || (events.length === 0 ? (stdout ?? "").trim() : ""),
+      structured: null,
+      telemetry,
+      truncated: truncated || undefined
+    };
   },
   probe() {
     const r = run(bin(), ["--version"]);

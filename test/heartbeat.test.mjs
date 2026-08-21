@@ -74,3 +74,32 @@ test("live jobs beyond idle or hard budgets are unhealthy without being mislabel
   assert.equal(idleExpired.stalled, false);
   assert.equal(idleExpired.state, "idle-timeout-exceeded");
 });
+
+test("a live job quiet for 45s+ is marked quiet but still healthy (soft warn only)", () => {
+  const now = Date.parse("2026-06-26T12:00:00.000Z");
+  const quiet = projectJobHealth({
+    status: "running",
+    pid: process.pid,
+    startedAt: "2026-06-26T11:50:00.000Z",
+    lastProgressAt: "2026-06-26T11:59:00.000Z", // 60s ago
+    idleMs: 600_000,
+    timeoutMs: 1_200_000
+  }, { now });
+  assert.equal(quiet.live, true);
+  assert.equal(quiet.healthy, true);
+  assert.equal(quiet.quiet, true);
+  assert.equal(quiet.state, "quiet");
+  assert.equal(quiet.secondsSinceProgress, 60);
+  assert.ok(quiet.idleSecondsRemaining > 0);
+
+  const fresh = projectJobHealth({
+    status: "running",
+    pid: process.pid,
+    startedAt: "2026-06-26T11:50:00.000Z",
+    lastProgressAt: "2026-06-26T11:59:50.000Z", // 10s ago
+    idleMs: 600_000,
+    timeoutMs: 1_200_000
+  }, { now });
+  assert.equal(fresh.quiet, false);
+  assert.equal(fresh.state, "running");
+});

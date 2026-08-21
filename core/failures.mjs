@@ -52,6 +52,10 @@ function extractResetAt(text) {
 /**
  * Classify a failed run from its captured output.
  * @returns {{kind: "rate-limit"|"auth"|"empty-output"|"other", resetAt: string|null, worker?: string}}
+ *
+ * `empty-output` covers both a truly empty process (no stdout/stderr) and
+ * adapter-detected null turns (terminal step, no usable answer) that dispatch
+ * maps onto this kind so auto-fallback still fires — see workerTelemetry.nullTurn.
  */
 export function classifyFailure({ stdout = "", stderr = "", exitCode, worker } = {}) {
   const text = `${stdout}\n${stderr}`;

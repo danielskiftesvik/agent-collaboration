@@ -76,7 +76,7 @@ export const MODEL_PROFILES = {
     weakerAt: [
       "model capability varies entirely by user config — not deterministic",
       "explicitOnly: true — never auto-selected; requires --worker opencode or a dedicated routing entry",
-      "no thread-resume mechanism (buildRetryCommand); retry is always a full re-send that repeats side effects",
+      "session continue uses explicit --session (null-turn nudge); bare --continue is concurrency-unsafe",
       "--auto permission model is broader than other harnesses' per-role permission scoping"
     ]
   },

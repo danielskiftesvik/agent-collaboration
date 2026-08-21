@@ -9,9 +9,9 @@ follows clear structured instructions well; the same
   with a concise `<output_contract>` block.
 - **Reviewer gets `--auto`** — no per-role tool exclusion on the CLI. Write safety
   is via worktree isolation + breach detection.
-- **No thread-resume mechanism** — retry is always a full re-send (side effects
-  may repeat). Use `--background` when the driver shell can't hold a long
-  synchronous command.
+- **Same-session continue on null turn** — after an empty terminal step, one
+  `run --session <id>` nudge (never bare `--continue`). Other repairs without a
+  session id still re-send fresh.
 - **Always explicit.** OpenCode is never auto-selected by `recommend`; you must
   name it explicitly (`--worker opencode`).
 
