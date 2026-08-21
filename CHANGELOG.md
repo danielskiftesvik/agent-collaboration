@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.12.2 - 2026-08-21
+
+- **Soften breach remediation when shared-checkout dirt is disjoint from the job
+  patch (#1098).** Containment still diffs the driver's shared checkout status over
+  the job wall-clock window (not worker cwd / touchedFiles), so concurrent writers
+  remain a hard `breach` by default. The error text and `result-handling` skill no
+  longer lead with "inspect and revert them"; they require path attribution first.
+  Process/writer attribution after exit is not cheap — this is the safer default
+  message, not a full scoping rewrite. Opt-in `AGENT_COLLAB_BREACH_WARN_CONCURRENT=on`
+  still downgrades ambiguous concurrent dirt to `breachWarning`.
+
 ## 0.12.1 - 2026-08-13
 
 - **Fix grok false-positive `INCOMPLETE RUN` banner**: normalize `stopReason`

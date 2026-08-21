@@ -177,6 +177,34 @@ function pathSet(paths) {
   return new Set(paths.map((p) => p.replace(/^\/+/, "")));
 }
 
+/**
+ * Breach remediation copy (#1098). The detector diffs the *shared* checkout's
+ * dirty/untracked set over the job wall-clock window — not the worker cwd or
+ * touchedFiles — so concurrent writers on the same machine are routinely
+ * misattributed. Process/writer attribution after exit is not cheap or reliable,
+ * so keep hard `breach` (fail closed) but never lead with "revert them".
+ */
+function containmentBreachError(escapedPaths, { disjointFromPatch = false } = {}) {
+  const listed = escapedPaths.join(", ");
+  const fileEscapes = escapedPaths.filter((p) => !/^HEAD moved /.test(p));
+  const suspectConcurrent = disjointFromPatch && fileEscapes.length > 0;
+  if (suspectConcurrent) {
+    return (
+      `containment breach (or concurrent shared-checkout write): real-checkout status changed during the job window ` +
+        `(${listed}). Flagged paths are disjoint from this job's captured patch, so they may belong to another session. ` +
+        `The driver did NOT apply these. Do not auto-revert — first attribute each path against the job worktree, ` +
+        `run logs, and other live sessions; only revert paths you can attribute to this worker. ` +
+        `Do not treat this worker as a safe implementer until the escape is confirmed.`
+    );
+  }
+  return (
+    `containment breach: the worker wrote OUTSIDE its worktree, into the driver's real checkout ` +
+      `(${listed}). The driver did NOT apply these. Inspect the flagged paths and revert only what you can ` +
+      `attribute to this worker (concurrent shared-checkout writers can also trip this detector). ` +
+      `Do not treat this worker as a safe implementer until the escape is confirmed.`
+  );
+}
+
 function stalledUpdate() {
   return {
     status: "failed",
@@ -1028,9 +1056,13 @@ export function runWorkerSync(cwd, opts) {
   }
 
   // Did the worker write OUTSIDE its worktree, into the driver's real tree?
+  // Mechanism (#1098): snapshot `cwd` (the driver's shared checkout) before the
+  // run, then `newStatusPaths(before, after)` — wall-clock overlap, not scoped
+  // to the worker process / worktree / touchedFiles.
   const rawEscapedPaths = worktree ? newStatusPaths(breachBefore, workingTreeStatus(cwd)) : [];
   let escapedPaths = rawEscapedPaths;
   let breachWarning;
+  let breachDisjointFromPatch = false;
   // headAfter/headMoved are read unconditionally, not just when rawEscapedPaths is
   // non-empty: a worker that commits directly onto the live checkout leaves the tree
   // CLEAN (nothing dirty for newStatusPaths to see), so gating this on
@@ -1057,6 +1089,7 @@ export function runWorkerSync(cwd, opts) {
     escapedPaths = rawEscapedPaths.filter((p) => !isExemptPath(p, exemptions));
     const patched = pathSet(patchPaths);
     const disjointFromPatch = escapedPaths.length > 0 && escapedPaths.every((p) => !patched.has(p));
+    breachDisjointFromPatch = disjointFromPatch;
     const cleanArtifact =
       role === "worker"
         ? changed && patchApplies
@@ -1177,11 +1210,7 @@ export function runWorkerSync(cwd, opts) {
     }
   }
   if (status === "breach") {
-    errors = [
-      `containment breach: the worker wrote OUTSIDE its worktree, into the driver's real checkout ` +
-        `(${escapedPaths.join(", ")}). The driver did NOT apply these — inspect and revert them, and ` +
-        `do not treat this worker as a safe implementer here.`
-    ];
+    errors = [containmentBreachError(escapedPaths, { disjointFromPatch: breachDisjointFromPatch })];
   }
 
   if (status === "no-changes" && coerce.ok && coerce.value.changed === true) {
