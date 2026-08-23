@@ -42,6 +42,12 @@ test("macOS profile allows writes under .grok (Grok Build auth/sessions/logs)", 
   assert.match(p, new RegExp(`allow file-write\\* \\(subpath "${home}/\\.grok"`));
 });
 
+test("macOS profile allows writes under .dsh (DeepSeek Harness auth/sessions)", () => {
+  const home = process.env.HOME || os.homedir();
+  const p = generateMacSandboxProfile("/work/ws", "/work/art");
+  assert.match(p, new RegExp(`allow file-write\\* \\(subpath "${home}/\\.dsh"`));
+});
+
 test("profile interpolation escapes quotes in paths (no profile injection)", () => {
   const p = generateMacSandboxProfile('/work/a"b', "/work/art");
   assert.match(p, /subpath "\/work\/a\\"b"/, "a quote in the path must be escaped");

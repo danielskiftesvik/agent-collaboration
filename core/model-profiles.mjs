@@ -97,6 +97,23 @@ export const MODEL_PROFILES = {
       "bare `agent` on PATH may be Grok Build — always pin AGENT_COLLAB_CURSOR_BIN or ~/.cursor/bin/agent"
     ]
   },
+  dsh: {
+    harness: "dsh",
+    model: "DeepSeek Harness / user-configured default (often DeepSeek V4 Flash via OpenCode Go)",
+    vendor: "DeepSeek",
+    canWrite: true,
+    explicitOnly: true,
+    strongerAt: [
+      "general software engineering inside DeepSeek Harness's own agent scaffold",
+      "explicit DeepSeek-model work without routing through OpenCode",
+      "fast iteration when dsh is already the driver's interactive environment"
+    ],
+    weakerAt: [
+      "default cloud model is typically a speed tier, not an adversarial-reasoning ceiling",
+      "headless has no read-only permission mode — reviewers rely on the brief + worktree isolation",
+      "explicitOnly: true — never auto-selected; requires --worker dsh"
+    ]
+  },
   grok: {
     harness: "grok",
     model: "Grok Build / grok-4.5 (xAI, current)",

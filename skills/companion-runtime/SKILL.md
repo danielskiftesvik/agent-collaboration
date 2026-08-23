@@ -16,7 +16,7 @@ generalization of codex-plugin-cc's `codex-cli-runtime` skill.
 ```
 setup [--json] [--gate on|off] [--sandbox on|off] [--retention-days <n>]
 doctor [--live] [--workers a,b] [--json]
-delegate --worker <agy|codex|claude|cursor|grok|opencode|instance-alias> [--driver <name>] [--role worker|reviewer] [--profile <name>] [--background] [--apply] [--timeout <s>] [--no-fallback] <brief>
+delegate --worker <agy|codex|claude|cursor|grok|opencode|dsh|instance-alias> [--driver <name>] [--role worker|reviewer] [--profile <name>] [--background] [--apply] [--timeout <s>] [--no-fallback] <brief>
 review  --worker <name> | --workers a,b [--focus <text>] [--profile <name>] [--background] [--no-fallback] [--json] <diff/context>
 adversarial-review --worker <name> | --workers a,b [--surface head|working-tree|diff] [--focus <text>] [--profile <name>] [--background] [--no-fallback] [--json] <diff/context>
 review-followup --job <prior-id> [--worker <name>] [--surface head|working-tree|diff] <focused diff/context>
@@ -59,12 +59,14 @@ auto-detect, so `--driver`/`AGENT_COLLAB_DRIVER` is only an override:
 - **agy** — `ANTIGRAVITY_AGENT` / `ANTIGRAVITY_CONVERSATION_ID` / `ANTIGRAVITY_PROJECT_ID`.
 - **Grok Build** — `GROK_SESSION_ID` / `GROK_PLUGIN_ROOT` / `GROK_PLUGIN_DATA`
   (`GROK_HOME` is install-time only and is **not** treated as a runtime signal).
+- **DeepSeek Harness** — `DSH_PLUGIN_ROOT` (set by the Cordis `/ac` plugin).
+  `$DSH_HOME` is install-time only and is **not** treated as a runtime signal.
 - **Cursor** — `CURSOR_AGENT` / `CURSOR_CONVERSATION_ID` (IDE agent sessions;
   `CURSOR_SANDBOX` alone is **not** a driver signal).
 - **OpenCode** — `OPENCODE_SESSION` / `OPENCODE_SERVER`.
 - **Claude Code** — `CLAUDECODE` / `CLAUDE_PLUGIN_ROOT` (its slash commands also pass
   `--driver claude`). Checked after Cursor so an inherited Claude env inside
-  Cursor does not win; actively-running Codex/agy/grok still beat Claude.
+  Cursor does not win; actively-running Codex/agy/grok/dsh still beat Claude.
 
 ## Roles & kinds
 
@@ -352,11 +354,12 @@ read `tasks/<jobId>/reports/<worker>.md`.
 - `AGENT_COLLAB_CODEX_RESUME=off` — repair with a fresh re-send instead of resuming the codex thread (resume is on by default).
 - `AGENT_COLLAB_CODEX_HOME` — forward into the spawned codex worker's `CODEX_HOME` (e.g. `~/.codex-business`). Ambient `CODEX_HOME` is also forwarded.
 - `AGENT_COLLAB_ALLOW_INPLACE=on` — allow an UNISOLATED in-place run when a worktree can't be created (off by default → such a job is `blocked`, never run in the real cwd).
-- `AGENT_COLLAB_<AGY|CLAUDE|CODEX|CURSOR|GROK|OPENCODE>_BIN` — override a harness binary.
+- `AGENT_COLLAB_<AGY|CLAUDE|CODEX|CURSOR|GROK|DSH|OPENCODE>_BIN` — override a harness binary.
 - `AGENT_COLLAB_CURSOR_MODEL` / `_MODEL_REVIEW` — Cursor model pin (default `composer-2.5`). Prefer `~/.cursor/bin/agent`; never bare `agent` (may be Grok).
 - `CURSOR_API_KEY` — auth for unattended Cursor Agent CLI runs (or `~/.cursor/bin/agent login`).
 - `AGENT_COLLAB_GROK_MODEL` / `_MODEL_REVIEW` — Grok Build model pin (default `grok-4.5`).
 - `AGENT_COLLAB_GROK_EFFORT` / `_EFFORT_REVIEW` — Grok Build reasoning effort (`--effort`).
+- `AGENT_COLLAB_DSH_MODEL` / `_MODEL_REVIEW` — DeepSeek Harness model pin (recorded on spawn; dsh inherits `~/.dsh/settings.yaml` until a CLI model flag exists).
 - `AGENT_COLLAB_AGY_MODEL[_PRO|_FLASH]` — explicit agy model id (default: unset).
 
 ## Instance aliases (multi-account / multi-binary)
@@ -380,7 +383,7 @@ only when driver harness matches and the worker has **no** instance overlay.
 ## Repo-level model pins (`.agent-collab.json`)
 
 A tracked file at the repo root pins standing models per worker+role, readable by EVERY
-driver harness (claude/codex/agy/grok/opencode shells) — unlike env vars, it can't drift
+driver harness (claude/codex/agy/grok/opencode/dsh shells) — unlike env vars, it can't drift
 with interactive sessions (the codex TUI rewrites `~/.codex/config.toml` with the
 last-used model) and it version-controls the pinned reviewer instrument with the repo:
 
@@ -390,6 +393,7 @@ last-used model) and it version-controls the pinned reviewer instrument with the
     "codex":  { "reviewer": { "model": "gpt-5.6-terra", "effort": "high" } },
     "claude": { "worker":   { "model": "sonnet" } },
     "grok":   { "reviewer": { "model": "grok-4.5" } },
+    "dsh":    { "reviewer": { "model": "deepseek-v4-flash" } },
     "opencode": { "reviewer": { "model": "anthropic/claude-sonnet-4-20250514" } }
   }
 }

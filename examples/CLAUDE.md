@@ -2,7 +2,7 @@
   Example wiring for a project using the agent-collaboration plugin, with CLAUDE CODE
   as the driver. Paste this section into your project's own CLAUDE.md (and replace the
   <BOUNDARY CODE> placeholder). Requires: /plugin install agent-collaboration, and the
-  worker CLIs you want on PATH (`codex`, `agy`, `grok`, `opencode`). Run /agent-collab:setup once.
+  worker CLIs you want on PATH (`codex`, `agy`, `grok`, `opencode`, `dsh`). Run /agent-collab:setup once.
 -->
 
 ## Cross-harness collaboration (autonomous)
@@ -24,6 +24,7 @@ node "${CLAUDE_PLUGIN_ROOT}/scripts/agent-collaboration/scripts/agent-companion.
 - **Fast/mechanical/bulk edits, or large-context / whole-repo scans →** `agy` (Gemini: speed + big context).
 - **Multi-provider flexibility →** `opencode` (explicit only; pin a model in `.agent-collab.json`).
 - **General-purpose / fast iteration →** `grok` (Grok Build; explicit only).
+- **DeepSeek Harness / explicit DeepSeek-model work →** `dsh` (explicit only).
 - Full matrix + model profiles: `agent-companion.mjs recommend --profiles`.
 
 ### When a worker hits a subscription / rate limit

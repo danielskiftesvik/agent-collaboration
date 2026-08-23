@@ -71,7 +71,7 @@ node <plugin-dir>/scripts/agent-companion.mjs delegate --worker claude --driver 
 node <plugin-dir>/scripts/agent-companion.mjs review --worker codex --driver grok "…"
 ```
 
-Workers: `claude`, `codex`, `agy`, `opencode`, `qwen` (explicit/local-only).  
+Workers: `claude`, `codex`, `agy`, `opencode`, `dsh` (explicit), `qwen` (explicit/local-only).  
 **Grok as worker** (from another harness): `--worker grok` — always explicit, never auto-recommended.
 
 ### Grok Build as a worker

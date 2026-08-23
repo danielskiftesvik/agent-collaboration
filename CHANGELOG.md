@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.13.0 - 2026-08-23
+
+- **DeepSeek Harness (`dsh`) is a full citizen.** Driver, worker, and reviewer.
+  Always explicit (`explicitOnly`) — `recommend` will not auto-select it.
+  Workers run `dsh --profile headless` with `DSH_PERMISSION_MODE=danger-full-access`
+  so headless cannot block on an approval prompt. Isolation is the worktree +
+  breach detection (there is no grok-style read-only `plan` mode).
+- **Native Cordis plugin.** `dsh plugin --profile web add` installs `/ac`, which
+  forwards to the companion with `--driver dsh`. Detection keys off
+  `DSH_PLUGIN_ROOT` only (`DSH_HOME` is install-time, not a driver signal).
+- Cheap live probe coverage when `dsh` is on PATH; the spendy doctor cycle is
+  opt-in via `AGENT_COLLAB_LIVE_DSH=1` (`test/dsh-live.test.mjs`).
+
 ## 0.12.4 - 2026-08-21
 
 - **OpenCode same-session continue after null turn.** On a detected null turn,

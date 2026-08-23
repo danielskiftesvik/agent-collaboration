@@ -181,3 +181,10 @@ test("qwen profile documents stronger/weaker traits and is explicitOnly + canWri
   assert.equal(MODEL_PROFILES.qwen.cleanEnv, true);
   assert.equal(MODEL_PROFILES.qwen.idleMsOverride, 1800000);
 });
+
+test("dsh profile is explicitOnly + canWrite and is never auto-picked for an unrouted task", () => {
+  assert.equal(MODEL_PROFILES.dsh.explicitOnly, true);
+  assert.equal(MODEL_PROFILES.dsh.canWrite, true);
+  const r = recommendWorker({ task: "large-context", driver: "claude", available: ["claude", "dsh"] });
+  assert.equal(r.mode, "none");
+});

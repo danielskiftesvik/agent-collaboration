@@ -20,7 +20,7 @@ function stubBin(body) {
 
 test("registry exposes all harnesses including cursor", () => {
   const names = listAdapters().map((a) => a.name).sort();
-  assert.deepEqual(names, ["agy", "claude", "codex", "cursor", "grok", "opencode", "qwen"]);
+  assert.deepEqual(names, ["agy", "claude", "codex", "cursor", "dsh", "grok", "opencode", "qwen"]);
   assert.throws(() => getAdapter("nope"), /unknown adapter/i);
 });
 

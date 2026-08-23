@@ -356,6 +356,10 @@ export function detectDriver(env = process.env) {
   // context). GROK_HOME is deliberately excluded — install path, not a runtime token.
   if (env.GROK_SESSION_ID || env.GROK_PLUGIN_ROOT || env.GROK_PLUGIN_DATA)
     return "grok";
+  // DeepSeek Harness: DSH_PLUGIN_ROOT is set by our Cordis plugin at load
+  // (and forwarded on /ac companion spawns). DSH_HOME is an install
+  // path, not a runtime token — matching GROK_HOME / OPENCODE_HOME.
+  if (env.DSH_PLUGIN_ROOT) return "dsh";
   // Cursor IDE agent: CURSOR_AGENT=1 and CURSOR_CONVERSATION_ID confirmed from a
   // live Cursor chat session. CURSOR_SANDBOX alone is not enough (seatbelt wraps
   // many child tools even when Cursor is not the driver).
@@ -406,6 +410,7 @@ const NATIVE_INSTRUCTION = {
   codex: "Use Codex's native subagent instead of a cross-harness job.",
   cursor: "Use Cursor's Task tool / native subagent instead of a cross-harness job.",
   grok: "Use Grok Build's native subagent capabilities instead of a cross-harness job.",
+  dsh: "Use DeepSeek Harness's native subagent instead of a cross-harness job.",
   opencode: "Use opencode's built-in subagent/task capabilities instead of a cross-harness job."
 };
 

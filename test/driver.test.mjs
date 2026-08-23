@@ -85,6 +85,18 @@ test("an actively-running Grok Build beats an inherited Claude env", () => {
   assert.equal(detectDriver({ CLAUDECODE: "1", GROK_SESSION_ID: "s1" }), "grok");
 });
 
+test("detectDriver recognizes dsh via DSH_PLUGIN_ROOT", () => {
+  assert.equal(detectDriver({ DSH_PLUGIN_ROOT: "/x/profiles/web/node_modules/agent-collaboration" }), "dsh");
+});
+
+test("detectDriver does NOT match on DSH_HOME alone (install-time var, not a runtime signal)", () => {
+  assert.equal(detectDriver({ DSH_HOME: "/home/user/.dsh" }), null);
+});
+
+test("an actively-running dsh beats an inherited Claude env", () => {
+  assert.equal(detectDriver({ CLAUDECODE: "1", DSH_PLUGIN_ROOT: "/x" }), "dsh");
+});
+
 test("detectDriver recognizes opencode via OPENCODE_SESSION", () => {
   assert.equal(detectDriver({ OPENCODE_SESSION: "ses_abc123" }), "opencode");
 });

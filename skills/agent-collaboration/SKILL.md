@@ -1,14 +1,14 @@
 ---
 name: agent-collaboration
-description: Use cross-harness delegation to ask other agent harnesses (Claude, Codex, Cursor, Antigravity, Grok Build, or OpenCode) to perform subtasks or code reviews.
+description: Use cross-harness delegation to ask other agent harnesses (Claude, Codex, Cursor, Antigravity, Grok Build, OpenCode, or DeepSeek Harness) to perform subtasks or code reviews.
 ---
 
 # Agent Collaboration Skill
 
-This skill allows a driving agent to delegate tasks or code reviews to a worker agent running on a different harness (such as Claude Code, Codex, Cursor, Antigravity, Grok Build, or OpenCode).
+This skill allows a driving agent to delegate tasks or code reviews to a worker agent running on a different harness (such as Claude Code, Codex, Cursor, Antigravity, Grok Build, OpenCode, or DeepSeek Harness).
 
 ## When to Delegate
-- **Cross-Harness Strengths**: Use Codex for deepest adversarial reasoning, Cursor for IDE-native Composer loops, Claude Code for general software engineering, Antigravity for Gemini speed/multimodal, Grok Build for fast general-purpose work with a lightweight CLI, or OpenCode for multi-provider flexibility (any underlying model).
+- **Cross-Harness Strengths**: Use Codex for deepest adversarial reasoning, Cursor for IDE-native Composer loops, Claude Code for general software engineering, Antigravity for Gemini speed/multimodal, Grok Build for fast general-purpose work with a lightweight CLI, OpenCode for multi-provider flexibility (any underlying model), or DeepSeek Harness for explicit DeepSeek-model work.
 - **Parallel Reviews**: Use `/review` to launch a secondary agent to audit your proposed changes before they are committed.
 - **Isolated Execution**: Workers run in isolated workspaces/worktrees, ensuring they do not pollute your main branch until you explicitly approve and apply the patch.
 
@@ -31,16 +31,17 @@ Rough guide (full matrix + model profiles: [`harness-prompting/references/model-
   `--worker cursor` but is not auto-selected for confidence gates yet.
 - **Multi-provider flexibility / specific model** → **opencode** (explicit only; pick the model that fits).
 - **General-purpose SWE / fast iteration** → **grok** (Grok Build; explicit only).
+- **DeepSeek Harness / explicit DeepSeek-model work** → **dsh** (explicit only).
 
 ## How to Delegate
 
 ### Claude Code
 Use the custom slash commands:
-- `/agent-collab:delegate --worker <agy|claude|codex|cursor|grok|opencode|instance-alias> "<task_brief>"`
-- `/agent-collab:review --worker <codex|agy|cursor|grok|opencode|instance-alias> "<review_brief>"`
+- `/agent-collab:delegate --worker <agy|claude|codex|cursor|grok|opencode|dsh|instance-alias> "<task_brief>"`
+- `/agent-collab:review --worker <codex|agy|cursor|grok|opencode|dsh|instance-alias> "<review_brief>"`
 - `/agent-collab:apply <jobId>`
 
-### Cursor / Codex / Antigravity / OpenCode / Grok
+### Cursor / Codex / Antigravity / OpenCode / Grok / DeepSeek Harness
 Run the companion CLI:
 ```bash
 node scripts/agent-companion.mjs delegate --worker <worker> --driver <self> "<task_brief>"

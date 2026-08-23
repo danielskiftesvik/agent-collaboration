@@ -1,0 +1,9 @@
+# agent-collaboration Cordis bundle for DeepSeek Harness.
+# Install with:
+#   dsh plugin --profile web add github:danielskiftesvik/agent-collaboration
+# or a local checkout:
+#   dsh plugin --profile web add /path/to/agent-collaboration
+
+- insert:
+    - id: agent-collaboration
+      name: agent-collaboration/dsh-plugin

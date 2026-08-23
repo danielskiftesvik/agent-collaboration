@@ -1,7 +1,7 @@
 {
   "name": "agent-collaboration",
-  "version": "0.12.4",
-  "description": "Cross-harness agent collaboration: Claude Code, Codex, Antigravity, Cursor, Grok Build, or OpenCode can drive workers/reviewers on the others.",
+  "version": "0.13.0",
+  "description": "Cross-harness agent collaboration: Claude Code, Codex, Antigravity, Cursor, Grok Build, OpenCode, or DeepSeek Harness can drive workers/reviewers on the others.",
   "type": "module",
   "main": ".opencode/plugins/agent-collaboration.js",
   "keywords": [
@@ -13,10 +13,19 @@
     "cursor",
     "grok",
     "grok-build",
-    "opencode"
+    "opencode",
+    "dsh",
+    "deepseek",
+    "deepseek-harness"
   ],
   "exports": {
-    "./tui": ".opencode/plugins/agent-collaboration.js"
+    "./tui": ".opencode/plugins/agent-collaboration.js",
+    "./dsh-plugin": "./.dsh-plugin/index.js"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./.dsh-plugin/cordis.patch.yml"
+    }
   },
   "bin": {
     "agent-companion": "scripts/agent-companion.mjs"

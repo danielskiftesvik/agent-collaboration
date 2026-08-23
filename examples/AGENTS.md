@@ -26,7 +26,8 @@ second opinion. Do this without asking.
 
 > **Driver auto-detects** for cloud harnesses (Codex via `CODEX_THREAD_ID`, agy via
 > `ANTIGRAVITY_*`, Cursor via `CURSOR_AGENT`/`CURSOR_CONVERSATION_ID`, Grok Build via
-> `GROK_SESSION_ID`/`GROK_PLUGIN_*`, OpenCode via `OPENCODE_SESSION`, Claude Code via
+> `GROK_SESSION_ID`/`GROK_PLUGIN_*`, OpenCode via `OPENCODE_SESSION`, DeepSeek Harness via
+> `DSH_PLUGIN_ROOT`, Claude Code via
 > `CLAUDECODE`), so no setup is normally needed.
 > `--driver <self>` / `AGENT_COLLAB_DRIVER=<self>` remains the deterministic override if
 > detection ever misses in your environment.
@@ -44,6 +45,7 @@ Then `node "$COMPANION" delegate --worker <returned> --driver <self> "<brief>"` 
 - **Fast/mechanical/bulk edits, or large-context / whole-repo scans →** `agy` (Gemini).
 - **Multi-provider flexibility →** `opencode` (explicit only; pin a model in `.agent-collab.json`).
 - **General-purpose / fast iteration →** `grok` (Grok Build; explicit only).
+- **DeepSeek Harness / explicit DeepSeek-model work →** `dsh` (explicit only).
 - Full matrix + model profiles: `node "$COMPANION" recommend --profiles`.
 
 ### When a worker hits a subscription / rate limit

@@ -9,6 +9,7 @@
     "claude":   { "worker":   { "model": "sonnet" } },
     "cursor":   { "worker":   { "model": "composer-2.5" }, "reviewer": { "model": "composer-2.5" } },
     "grok":     { "reviewer": { "model": "grok-4.5" } },
+    "dsh":      { "reviewer": { "model": "opencode-go/deepseek-v4-flash" } },
     "opencode": { "reviewer": { "model": "opencode-go/deepseek-v4-flash", "effort": "high" } }
   }
 }

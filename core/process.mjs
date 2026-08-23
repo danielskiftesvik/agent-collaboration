@@ -31,7 +31,7 @@ export function generateMacSandboxProfile(workspace, artifactDir, opts = {}) {
   // The harness's own state dirs — needed for auth, logs, conversation history.
   // extraHarnessDirs: instance overlays (e.g. CODEX_HOME=~/.codex-business).
   const harnessDirs = [
-    ...[".gemini", ".claude", ".codex", ".config/gcloud", ".qwen", ".grok", ".cursor"].map((d) =>
+    ...[".gemini", ".claude", ".codex", ".config/gcloud", ".qwen", ".grok", ".cursor", ".dsh"].map((d) =>
       path.join(home, d)
     ),
     ...(opts.extraHarnessDirs || []).filter(Boolean)

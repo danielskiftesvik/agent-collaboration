@@ -58,6 +58,11 @@ Which underlying model is strongest at what, and how that maps to worker choice.
   (`--exclude-tools`). Write safety is via worktree isolation + breach detection.
 - **Always explicit** — never auto-selected by `recommend`. You must name it explicitly.
 
+### DeepSeek Harness (`dsh` CLI — user-configured default, often DeepSeek V4 Flash)
+- **Stronger at:** general SWE inside DeepSeek Harness's own scaffold; explicit DeepSeek-model work without routing through OpenCode; fast iteration when dsh is already the interactive driver.
+- **Weaker at:** default cloud model is typically a speed tier, not an adversarial-reasoning ceiling. Headless has no read-only permission mode — reviewers rely on the brief + worktree isolation.
+- **Always explicit** — never auto-selected by `recommend`. You must name `--worker dsh`.
+
 ## Task → worker
 
 `agent-companion.mjs recommend --task <type> --driver <self>` returns the strongest *available*
@@ -73,7 +78,7 @@ worker (excluding the driver) + the model's profile + a reason. The mapping:
 | `mechanical`, `bulk-edit`, `quick-fix` | agy, claude, cursor, codex | Gemini Flash speed/cost first; Claude/cursor/codex remain available |
 | `large-context`, `broad-scan` | agy, codex, cursor | Gemini on cost — context-size advantage **unconfirmed** |
 | `visual`, `multimodal` | agy, cursor | Gemini multimodal; Cursor for IDE-native visual context |
-| general | opencode / grok (explicit) | multi-provider flexibility (opencode) or Grok Build (grok); both require explicit `--worker` |
+| general | opencode / grok / dsh (explicit) | multi-provider flexibility (opencode), Grok Build (grok), or DeepSeek Harness (dsh); all require explicit `--worker` |
 
 `recommend --profiles` prints the full matrix.
 

@@ -1,9 +1,10 @@
 # agent-collaboration
 
 Cross-harness agent collaboration. A driver harness — **Claude Code**, **Codex**,
-**Antigravity (`agy`)**, **Cursor**, **Grok Build (`grok`)**, or **opencode** — can delegate a task to a **worker** or
+**Antigravity (`agy`)**, **Cursor**, **Grok Build (`grok`)**, **opencode**, or
+**DeepSeek Harness (`dsh`)** — can delegate a task to a **worker** or
 **reviewer** running on another harness, then apply the result to the working tree.
-Any of the six can drive; any of the six can do the work. A seventh harness,
+Any of the seven can drive; any of the seven can do the work. An eighth harness,
 **`qwen`** (local, via a local LM Studio server), can also work or review — but only
 as an explicit, opt-in choice for sensitive/local-only tasks, never as a driver and
 never auto-selected.
@@ -15,7 +16,8 @@ harness-agnostic core plus per-harness adapters, prompt templates, and prompting
 ## Install
 
 The repo is a self-contained plugin marketplace (it ships `.claude-plugin/`,
-`.codex-plugin/`, `.grok-plugin/`, and `.opencode/plugins/`), so it installs natively per harness.
+`.codex-plugin/`, `.grok-plugin/`, `.opencode/plugins/`, and a Cordis bundle for
+`dsh`), so it installs natively per harness.
 
 ### Claude Code
 ```
@@ -64,6 +66,27 @@ node /path/to/agent-collaboration/scripts/agent-companion.mjs delegate --worker 
 ```
 
 Full Grok Build guide: [`docs/README.grok.md`](./docs/README.grok.md).
+
+### DeepSeek Harness (`dsh`)
+
+```bash
+# First-time plugin install into the interactive web profile
+dsh plugin --profile web add github:danielskiftesvik/agent-collaboration
+
+# Local checkout
+dsh plugin --profile web add /path/to/agent-collaboration
+```
+
+Restart the web profile so `/ac` loads (`/ac setup`, `/ac delegate --worker claude "…"`).
+
+Or drive the companion over the shell without a plugin install:
+
+```bash
+node /path/to/agent-collaboration/scripts/agent-companion.mjs setup
+node /path/to/agent-collaboration/scripts/agent-companion.mjs delegate --worker claude --driver dsh "…"
+```
+
+Full DeepSeek Harness guide: [`docs/README.dsh.md`](./docs/README.dsh.md).
 
 ### Cursor
 
@@ -166,11 +189,11 @@ node <plugin-dir>/scripts/agent-companion.mjs setup   # Codex / agy / any shell
 ### Prerequisites
 - **Node ≥ 20.**
 - The worker CLIs you want to delegate to, on your `PATH`: `codex`, `agy` (Antigravity),
-  `claude`, `grok`, and/or `opencode`.
+  `claude`, `grok`, `opencode`, and/or `dsh` (DeepSeek Harness).
 - For the local `qwen` harness specifically: the `qwen` CLI (Qwen Code) on your `PATH`,
   **and** a local LM Studio server running an OpenAI-compatible endpoint (default
   `http://127.0.0.1:1234/v1`) with a model loaded — `qwen` is the only harness with this
-  extra, separately-running-process dependency; the other five are self-contained CLIs.
+  extra, separately-running-process dependency; the other six are self-contained CLIs.
 
 ## What it does
 
@@ -178,7 +201,7 @@ Two delegation paths, chosen automatically:
 
 - **Native (same harness)** — when driver and worker are the same harness, use that
   harness's own subagent primitive (Claude Code `Agent` tool, Antigravity `invoke_subagent`,
-  Codex's native subagent, Grok Build subagents, opencode's built-in task capabilities). No worktree, no shell,
+  Codex's native subagent, Grok Build subagents, opencode's built-in task capabilities, DeepSeek Harness subagents). No worktree, no shell,
   no companion job. The companion returns `{"mode":"native", instruction}` telling the
   driver to do this.
 - **Cross-harness** — when driver ≠ worker, the `agent-companion` runtime creates an
@@ -195,7 +218,7 @@ Two delegation paths, chosen automatically:
 | `/agent-collab:setup [--gate on\|off] [--sandbox on\|off] [--retention-days n]` | Detect worker-ready harnesses; configure gates/sandbox and artifact retention (default 30 days; 0 disables) |
 | `/agent-collab:doctor [--live] [--workers a,b]` | Self-check: config + readiness, and (with `--live`) a review-cycle + worktree-isolation smoke per worker against a throwaway repo |
 | `/agent-collab:recommend --task <type> --driver <self>` (or `--profiles`) | Pick the strongest available worker for a task by underlying-model strength |
-| `/agent-collab:delegate --worker <agy\|claude\|codex\|cursor\|grok\|opencode> [--background] [--apply] <brief>` | Run a cross-harness **worker** task (produces a patch); `--background` detaches and returns a jobId |
+| `/agent-collab:delegate --worker <agy\|claude\|codex\|cursor\|grok\|opencode\|dsh> [--background] [--apply] <brief>` | Run a cross-harness **worker** task (produces a patch); `--background` detaches and returns a jobId |
 | `/agent-collab:review --worker <name> [--focus <text>] <diff>` | Read-only cross-harness **review** |
 | `/agent-collab:adversarial-review --worker <name> <diff>` | "Try to break it" review |
 | `/agent-collab:review-followup --job <prior-id> [--worker <name>] <focused diff/context>` | Recheck a focused fix against a prior review |
@@ -304,6 +327,7 @@ driver, `AGENTS.md` for Codex/agy drivers).
 | **cursor** | ✓ | ✓ | Cursor Agent CLI (`~/.cursor/bin/agent`, never bare `agent` — that may be Grok). Composer loops; use Cursor's Task / native subagent when Cursor is also the driver. Auth via `CURSOR_API_KEY` or `agent login`. Auto-routed for SWE/refactor; review/second-opinion stay explicit (`--worker cursor`) until calibrated |
 | **agy** (Gemini) | ✓ | ✓ | Fast reviewer and implementer (Flash by default; `AGENT_COLLAB_AGY_CLASS=Pro` for depth). The adapter pins model flags before the prompt and harvests patches from agy's internal worktree when needed |
 | **grok** (Grok Build / xAI) | ✓ | ✓ | [Grok Build](https://x.ai) CLI (`grok`) with default model `grok-4.5` (also `grok-build`). **Always explicit** — never auto-selected. Free-tier Grok Build usage limits apply. State under `~/.grok` |
+| **dsh** (DeepSeek Harness) | ✓ | ✓ | DeepSeek Harness CLI (`dsh`). Driver via Cordis `/ac` on the web profile; worker via `dsh --profile headless`. **Always explicit** — never auto-selected. State under `~/.dsh` |
 | **opencode** | ✓ | ✓ | Multi-provider harness (Anthropic, OpenAI, Google, DeepSeek, local, etc.). Model configured per dispatch via env var or pin. **Always explicit** — never auto-selected. No per-tool exclusion (`--exclude-tools`); write safety via worktree isolation + breach detection. Null-turn recovery uses `run --session <id>` (never bare `--continue`) |
 | **qwen** (local) | ✓ (local-only tasks) | ✓ (plan-execution only) | Local-only, via a local LM Studio server. **Always explicit** — never in `recommend`'s default rotation, never a fallback target, never falls back away from itself on failure. Two routes only: `local-only` (sensitive-data review) and `plan-execution` (implementing a pre-written plan). See [Configuration](#configuration) for the `AGENT_COLLAB_QWEN_*` env vars. Local-only means the *worker run* stays local — compose briefs as file paths, not pasted content, and see the harness-prompting qwen guide for the full privacy boundary |
 
@@ -444,7 +468,7 @@ They are checked before another isolated worktree is created.
 | Env var | Effect |
 |---|---|
 | `AGENT_COLLAB_DATA` | Out-of-repo state root (default: a per-plugin / tmp dir) |
-| `AGENT_COLLAB_DRIVER` | Override which harness is driving (`codex`/`agy`/`claude`/`cursor`/`grok`/`opencode`). Normally auto-detected (Codex `CODEX_THREAD_ID`, agy `ANTIGRAVITY_*`, Cursor `CURSOR_AGENT`/`CURSOR_CONVERSATION_ID`, Grok Build `GROK_SESSION_ID`/`GROK_PLUGIN_*`, OpenCode `OPENCODE_SESSION`, Claude Code `CLAUDECODE`); set only if detection misses |
+| `AGENT_COLLAB_DRIVER` | Override which harness is driving (`codex`/`agy`/`claude`/`cursor`/`grok`/`opencode`/`dsh`). Normally auto-detected (Codex `CODEX_THREAD_ID`, agy `ANTIGRAVITY_*`, Cursor `CURSOR_AGENT`/`CURSOR_CONVERSATION_ID`, Grok Build `GROK_SESSION_ID`/`GROK_PLUGIN_*`, OpenCode `OPENCODE_SESSION`, Claude Code `CLAUDECODE`, DeepSeek Harness `DSH_PLUGIN_ROOT`); set only if detection misses |
 | `AGENT_COLLAB_SANDBOX` | OS sandbox: `on` (all non-codex) \| `off`. Default: opt-in for non-codex workers, **never codex** (it self-sandboxes). Degrades to unsandboxed if it can't be applied |
 | `AGENT_COLLAB_SANDBOX_STRICT=on` | Tighten the macOS profile to deny file-write by default (confine writes to work area + temp + harness state; blocks /tmp & other volumes). Default profile only blocks `$HOME`; Linux bwrap is already strict |
 | `AGENT_COLLAB_FALLBACK` | Auto-fallback policy: `off` \| `on` (rate-limit+auth+timeout+frozen+empty-output) \| comma-list of kinds. Default `rate-limit,timeout,frozen,empty-output` (transient; **auth is surfaced**, not routed around) |
@@ -470,6 +494,8 @@ They are checked before another isolated worktree is created.
 | `AGENT_COLLAB_GROK_BIN` | Override the Grok Build (`grok`) binary path |
 | `AGENT_COLLAB_GROK_MODEL` | Per-dispatch Grok Build model override (default: `grok-4.5`; also `grok-build`). `_MODEL_REVIEW` variant applies to reviewers only; generic wins |
 | `AGENT_COLLAB_GROK_EFFORT` | Grok Build reasoning effort (`none`…`max` — passed as `--effort`). `_EFFORT_REVIEW` variant applies to reviewers only; generic wins |
+| `AGENT_COLLAB_DSH_BIN` | Override the DeepSeek Harness (`dsh`) binary path |
+| `AGENT_COLLAB_DSH_MODEL` | Standing model pin recorded on the spawn (dsh still inherits `~/.dsh/settings.yaml` until a CLI model flag exists). `_MODEL_REVIEW` variant applies to reviewers only; generic wins |
 | `AGENT_COLLAB_OPENCODE_BIN` | Override the `opencode` binary path |
 | `AGENT_COLLAB_OPENCODE_MODEL` | Per-dispatch opencode model override in `provider/model` format (e.g. `anthropic/claude-sonnet-4-20250514`). `_MODEL_REVIEW` variant applies to reviewers only; generic wins |
 | `AGENT_COLLAB_OPENCODE_VARIANT` | Per-dispatch reasoning-effort override (e.g. `high`, `max`, `minimal` — passed as `--variant`). `_VARIANT_REVIEW` variant applies to reviewers only; generic wins |
@@ -478,7 +504,7 @@ They are checked before another isolated worktree is created.
 | `AGENT_COLLAB_QWEN_BASE_URL` | Override the local LM Studio endpoint (default `http://127.0.0.1:1234/v1`). Must be loopback (`127.0.0.1`/`localhost`/`::1`) — a non-loopback value is refused unless `AGENT_COLLAB_QWEN_ALLOW_REMOTE=on` |
 | `AGENT_COLLAB_QWEN_API_KEY` | Override the local endpoint's API key (default `lm-studio` — LM Studio doesn't validate it, it just needs to be present) |
 | `AGENT_COLLAB_QWEN_ALLOW_REMOTE=on` | Explicitly permit a non-loopback `AGENT_COLLAB_QWEN_BASE_URL`. Off by default — qwen's entire purpose is keeping a job off the cloud, so a remote endpoint must be opt-in, never silently accepted |
-| `AGENT_COLLAB_<AGY\|CLAUDE\|CODEX\|CURSOR\|GROK\|OPENCODE\|QWEN>_BIN` | Override a harness binary path |
+| `AGENT_COLLAB_<AGY\|CLAUDE\|CODEX\|CURSOR\|GROK\|DSH\|OPENCODE\|QWEN>_BIN` | Override a harness binary path |
 
 Plus `setup --gate on|off` (opt-in stop-time review gate), `setup --sandbox on|off`, and
 `setup --retention-days <n>` (30 by default; 0 disables artifact expiry).
@@ -501,7 +527,7 @@ the amount of change (semver):
 - **major** (`x.0.0`) — a breaking change to the CLI/contract/behavior.
 
 ```
-npm run bump 0.2.1     # rewrites the version in package.json + all 3 manifests
+npm run bump 0.2.1     # rewrites the version in package.json + plugin manifests
 ```
 Then commit/push and re-run your harness's update/reload. (A test enforces that all
 manifests share one version.)
@@ -513,7 +539,7 @@ npm test        # node --test — the full suite
 ```
 
 Layout: `scripts/agent-companion.mjs` (CLI/dispatch) · `core/` (state, jobs, worktree,
-heartbeat, git, prompts, schema, dispatch) · `adapters/` (`claude`/`codex`/`agy`/`cursor`/`grok`/`opencode`/`qwen`) ·
+heartbeat, git, prompts, schema, dispatch) · `adapters/` (`claude`/`codex`/`agy`/`cursor`/`grok`/`dsh`/`opencode`/`qwen`) ·
 `prompts/` (review templates) · `schemas/` (artifact contracts) ·
 `commands/` `hooks/` `skills/` `.claude-plugin/` `.codex-plugin/` (harness surface).
 

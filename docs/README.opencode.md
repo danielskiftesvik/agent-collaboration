@@ -53,7 +53,7 @@ install agent-collaboration separately for each harness.
 | `/agent-collab:result <jobId>` | Fetch a completed artifact |
 | `/agent-collab:apply <jobId>` | Apply a worker patch |
 
-Workers: `claude`, `codex`, `agy`, `grok` (Grok Build; explicit), `opencode` (explicit), `qwen` (explicit/local-only).
+Workers: `claude`, `codex`, `agy`, `grok` (Grok Build; explicit), `opencode` (explicit), `dsh` (explicit), `qwen` (explicit/local-only).
 
 ### Shell / headless
 

@@ -1,13 +1,13 @@
 {
   "name": "agent-collaboration",
-  "version": "0.12.4",
-  "description": "Delegate work to a worker/reviewer on another harness (Codex, Antigravity, Grok Build, OpenCode, or Claude Code) and apply the result.",
+  "version": "0.13.0",
+  "description": "Delegate work to a worker/reviewer on another harness (Codex, Antigravity, Grok Build, OpenCode, DeepSeek Harness, or Claude Code) and apply the result.",
   "author": {
     "name": "Daniel Skiftesvik"
   },
   "homepage": "https://github.com/danielskiftesvik/agent-collaboration",
   "repository": "https://github.com/danielskiftesvik/agent-collaboration",
   "license": "Apache-2.0",
-  "keywords": ["codex", "antigravity", "gemini", "cursor", "grok", "grok-build", "opencode", "code-review", "delegation", "multi-agent"],
+  "keywords": ["codex", "antigravity", "gemini", "cursor", "grok", "grok-build", "opencode", "dsh", "deepseek", "code-review", "delegation", "multi-agent"],
   "skills": "./skills/"
 }
