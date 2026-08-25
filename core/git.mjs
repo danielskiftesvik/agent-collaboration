@@ -219,6 +219,36 @@ export function checkPatchApplies(cwd, diff) {
 }
 
 /**
+ * Does `diff` apply cleanly against the COMMITTED TREE at `ref`, checked via a
+ * throwaway temp index so neither the caller's index nor any working tree is
+ * touched? (#1395 codex finding: with delegate --base, the patch targets the
+ * base branch's tree — validating it against the driver's dirty HEAD, or the
+ * worker's torn-down worktree, answers the wrong question.) Pre- and
+ * post-image blobs must exist in the repo's object store; captureWorkingDiff
+ * satisfies that by staging the worker's tree once before resetting.
+ */
+export function checkPatchAppliesOnRef(repo, ref, diff) {
+  if (!diff || !diff.trim()) return true;
+  const idxDir = fs.mkdtempSync(path.join(os.tmpdir(), "ac-idx-"));
+  try {
+    const idx = path.join(idxDir, "index");
+    const env = { ...process.env, GIT_INDEX_FILE: idx };
+    const seed = run("git", ["read-tree", ref], { cwd: repo, env });
+    if (seed.status !== 0) return false;
+    const r = run("git", ["apply", "--check", "--cached", "--3way", "--whitespace=nowarn"], {
+      cwd: repo,
+      input: diff,
+      env
+    });
+    return r.status === 0;
+  } catch {
+    return false;
+  } finally {
+    fs.rmSync(idxDir, { recursive: true, force: true });
+  }
+}
+
+/**
  * Apply a unified diff to `cwd` using a 3-way merge so it still lands when the
  * base has moved underneath it. Returns { applied, conflicted, stderr }.
  *

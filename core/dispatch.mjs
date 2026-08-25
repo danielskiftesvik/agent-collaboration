@@ -11,7 +11,7 @@ import { fileURLToPath } from "node:url";
 import { getAdapter, listAdapters } from "../adapters/index.mjs";
 import { resolveStateDir, appendJob, updateJob, getJob, loadState, isTerminalStatus } from "./state.mjs";
 import { createWorktree, removeWorktree, resolveWorkspaceRoot, canonical, listWorktrees, isPrimaryCheckout } from "./workspace.mjs";
-import { headRef, upstreamRef, isAncestorOf, isBenignRemoteFastForward, reflogCount, captureWorkingDiff, captureWorkingTreeSnapshot, applyPatch, checkPatchApplies, workingTreeStatus, workingTreeDigest, newStatusPaths, stageDiffIntoWorktree, diffPaths, looksLikeDiff, extractUnifiedDiff } from "./git.mjs";
+import { headRef, upstreamRef, isAncestorOf, isBenignRemoteFastForward, reflogCount, captureWorkingDiff, captureWorkingTreeSnapshot, applyPatch, checkPatchApplies, checkPatchAppliesOnRef, workingTreeStatus, workingTreeDigest, newStatusPaths, stageDiffIntoWorktree, diffPaths, looksLikeDiff, extractUnifiedDiff } from "./git.mjs";
 import { run } from "./process.mjs";
 import { isPidAlive, isStalled, touchHeartbeat } from "./heartbeat.mjs";
 import { coerceArtifact, normalizeReviewArtifact } from "./schema.mjs";
@@ -1088,7 +1088,15 @@ export function runWorkerSync(cwd, opts) {
     }
     changed = !!diff.trim();
     patchPaths = diffPaths(diff);
-    patchApplies = changed ? checkPatchApplies(cwd, diff) : true;
+    // Codex gate finding (#1395): with --base, the patch targets the BASE
+    // tree — validating it against the driver's HEAD misclassifies base-only
+    // files as conflicts. Index-only dry-run against the recorded base ref;
+    // falls back to the driver-tree check when nothing was isolated.
+    patchApplies = changed
+      ? (worktree && isGitRepo && baseRef
+          ? checkPatchAppliesOnRef(cwd, baseRef, diff)
+          : checkPatchApplies(cwd, diff))
+      : true;
     patchPath = path.join(artifactDir, "patches", `${worker}.diff`);
     fs.writeFileSync(patchPath, diff);
   }
@@ -1527,9 +1535,40 @@ export function launchBackground(cwd, opts) {
   const ref = resolveRefForDispatch(opts.worker, { workerRef: opts.workerRef, workspace: cwd });
   const worker = ref.label;
   const harness = ref.harness;
-  const { driver, role = "worker", brief, kind, focus, targetLabel, profile, surface, timeoutMs, maxAttempts, base } = opts;
+  const { driver, role = "worker", brief, kind, focus, targetLabel, profile, surface, timeoutMs, maxAttempts } = opts;
   const resolvedTimeoutMs = timeoutMs ?? defaultTimeoutMs(role);
   const resolvedIdleMs = opts.idleMs ?? MODEL_PROFILES[harness]?.idleMsOverride ?? defaultIdleMs();
+  // Codex gate finding (#1395): resolve --base at LAUNCH time and pin it to
+  // its SHA. The detached child otherwise resolves the raw ref only after
+  // acquiring its execution slot — a branch advancing or repointing while
+  // queued would silently change the source the worker builds on. An invalid
+  // ref is refused synchronously, before any job record or child process.
+  let base = typeof opts.base === "string" ? opts.base.trim() : "";
+  if (base) {
+    const probe = run("git", ["rev-parse", "--verify", `${base}^{commit}`], { cwd });
+    if (probe.status !== 0) {
+      return {
+        jobId: "",
+        worker,
+        harness,
+        instance: ref.instance ?? null,
+        status: "blocked",
+        resultValid: false,
+        valid: false,
+        changed: false,
+        patchApplies: null,
+        artifactDir: "",
+        patchPath: null,
+        isolated: false,
+        failureKind: "base-ref",
+        errors: [
+          `--base '${base}' is not a commit-ish visible from this repository ` +
+            `(${(probe.stderr || "").trim().split("\n")[0] || "rev-parse failed"}). Fetch the branch first, or pass a full SHA.`
+        ]
+      };
+    }
+    base = probe.stdout.trim();
+  }
   const launchedAt = new Date().toISOString();
   const jobId = randomUUID();
   const artifactDir = path.join(resolveStateDir(cwd), "tasks", jobId);
@@ -1570,7 +1609,8 @@ export function launchBackground(cwd, opts) {
     background: true,
     artifactDir,
     request: {
-      driver, worker, workerRef, role, brief, kind, focus, targetLabel, profile, surface, base,
+      driver, worker, workerRef, role, brief, kind, focus, targetLabel, profile, surface,
+      base: base || undefined,
       timeoutMs: resolvedTimeoutMs, idleMs: resolvedIdleMs, maxAttempts,
       breachHeadBefore, breachReflogCount, breachBefore
     },
@@ -1746,6 +1786,18 @@ export function applyResult(cwd, jobId, opts = {}) {
     target = canonical(path.resolve(cwd, requestedTarget ?? "."));
   } catch (e) {
     return { applied: false, error: `apply target does not exist (${e?.message || e})` };
+  }
+  // Codex gate finding (#1395): isPrimaryCheckout() inspects <path>/.git, so
+  // a SUBDIRECTORY of the primary checkout would slip past the guard while
+  // git apply still mutates the enclosing worktree. Normalize to the
+  // worktree toplevel before both the guard and the apply itself.
+  const topLevel = run("git", ["rev-parse", "--show-toplevel"], { cwd: target });
+  if (topLevel.status === 0 && topLevel.stdout.trim()) {
+    try {
+      target = canonical(topLevel.stdout.trim());
+    } catch {
+      /* keep the unresolved path; the guard below still evaluates it */
+    }
   }
   const forcePrimary =
     opts.forcePrimary === true || process.env.AGENT_COLLAB_APPLY_FORCE_PRIMARY === "1";

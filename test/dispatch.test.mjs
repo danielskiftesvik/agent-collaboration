@@ -427,6 +427,87 @@ test("--base rejects a ref that is not a commit-ish before any worker runs (#139
   assert.match(res.errors[0], /no-such-ref/);
 });
 
+// ---- codex gate round 2 findings ----
+
+test("applyResult --target into a SUBDIRECTORY of the primary checkout is still refused (#1395 codex)", () => {
+  isolateStateRoot();
+  const repo = makeRepo();
+  fs.mkdirSync(path.join(repo, "core"));
+  process.env.AGENT_COLLAB_AGY_BIN = stubBin(WRITE_STUB);
+
+  const res = runWorkerSync(repo, { driver: "claude", worker: "agy", role: "worker", brief: "x" });
+  const refused = applyResult(repo, res.jobId, { target: path.join(repo, "core") });
+
+  assert.equal(refused.applied, false, "a subdir of the primary checkout must NOT become an apply target");
+  assert.match(refused.error ?? "", /primary checkout/);
+  assert.equal(fs.existsSync(path.join(repo, "worker-was-here.txt")), false, "the shared checkout stays untouched");
+
+  delete process.env.AGENT_COLLAB_AGY_BIN;
+});
+
+test("--base validates the captured patch against the BASE tree, not the driver's HEAD (#1395 codex)", () => {
+  isolateStateRoot();
+  const repo = makeRepo();
+  git(["checkout", "-q", "-b", "feature"], repo);
+  fs.writeFileSync(path.join(repo, "feature.txt"), "feature\n");
+  git(["add", "-A"], repo);
+  git(["commit", "-q", "-m", "feature"], repo);
+  git(["checkout", "-q", "main"], repo);
+  // The worker edits a file that exists ONLY on the feature branch.
+  process.env.AGENT_COLLAB_AGY_BIN = stubBin(`
+    import fs from 'node:fs';
+    if (process.argv.includes('models')) { process.stdout.write('Gemini 3.5 Flash (High)'); process.exit(0); }
+    fs.writeFileSync('feature.txt', 'worker edit\\n');
+  `);
+
+  const res = runWorkerSync(repo, { driver: "claude", worker: "agy", role: "worker", brief: "x", base: "feature" });
+
+  assert.equal(res.patchApplies, true, "the patch is valid against the --base tree it was captured against");
+  assert.equal(res.status, "completed", "a base-valid patch must not be misclassified as conflicted");
+
+  delete process.env.AGENT_COLLAB_AGY_BIN;
+});
+
+test("launchBackground pins --base to its resolved SHA at launch time (#1395 codex)", () => {
+  isolateStateRoot();
+  const repo = makeRepo();
+  git(["checkout", "-q", "-b", "feature"], repo);
+  git(["commit", "--allow-empty", "-q", "-m", "feature tip"], repo);
+  const featureShaAtLaunch = git(["rev-parse", "feature"], repo);
+  git(["checkout", "-q", "main"], repo);
+  process.env.AGENT_COLLAB_AGY_BIN = stubBin(`
+    import fs from 'node:fs';
+    if (process.argv.includes('models')) { process.exit(0); }
+    fs.writeFileSync('worker-was-here.txt', 'hi\\n');
+    process.stdout.write('\`\`\`json\\n{"status":"completed","summary":"x","changed":true}\\n\`\`\`');
+  `);
+
+  const launched = launchBackground(repo, { driver: "claude", worker: "agy", role: "worker", brief: "x", maxAttempts: 1, base: "feature" });
+  const jobAtLaunch = getJob(repo, launched.jobId);
+  assert.equal(jobAtLaunch.request.base, featureShaAtLaunch, "the request records the PINNED sha, not the raw ref name");
+
+  // The branch advances while the job runs — the pinned source must not move.
+  git(["checkout", "-q", "feature"], repo);
+  git(["commit", "--allow-empty", "-q", "-m", "advance while job ran"], repo);
+  git(["checkout", "-q", "main"], repo);
+
+  const job = waitForJob(repo, launched.jobId, { timeoutMs: 30000, pollMs: 150 });
+  assert.equal(job.request.base, featureShaAtLaunch, "the pinned base survives branch advancement");
+  assert.equal(job.status, "completed");
+
+  delete process.env.AGENT_COLLAB_AGY_BIN;
+});
+
+test("launchBackground refuses an invalid --base synchronously without spawning (#1395 codex)", () => {
+  isolateStateRoot();
+  const repo = makeRepo();
+
+  const launched = launchBackground(repo, { driver: "claude", worker: "agy", role: "worker", brief: "x", maxAttempts: 1, base: "no-such-ref" });
+
+  assert.equal(launched.status, "blocked");
+  assert.equal(launched.failureKind, "base-ref");
+});
+
 // A worker that does real work (writes a file) but replies in prose, not JSON.
 const PROSE_WORKER_STUB = `
 import fs from 'node:fs';
