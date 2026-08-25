@@ -727,3 +727,19 @@ test("apply inside a LINKED worktree needs no flags at all (#1395 normal flow)",
   assert.equal(r.status, 0, `stdout=${r.stdout} stderr=${r.stderr}`);
   assert.equal(fs.readFileSync(path.join(wt, "worker-was-here.txt"), "utf8"), "hi from worker\n");
 });
+
+test("delegate --background with an invalid --base exits NON-zero and prints no poll instruction (#1395 codex r2)", () => {
+  const dataDir = isolateStateRoot();
+  const repo = makeRepo();
+  // A valid worker binary so the ONLY failure source is the base ref.
+  const env = { AGENT_COLLAB_DATA: dataDir, AGENT_COLLAB_AGY_BIN: stubBin(`
+    if (process.argv.includes('models')) { process.exit(0); }
+    process.stdout.write('ok');
+  `) };
+
+  const r = cli(["delegate", "--driver", "codex", "--worker", "agy", "--base", "no-such-ref", "--background", "--json", "x"], { cwd: repo, env });
+
+  assert.equal(r.status, 2, `a refused dispatch must not exit 0 (got stdout=${r.stdout} stderr=${r.stderr})`);
+  assert.match(r.stdout + r.stderr, /blocked/);
+  assert.doesNotMatch(r.stdout + r.stderr, /Poll:/, "there is no job to poll — printing poll instructions would send automation into a loop");
+});

@@ -239,7 +239,14 @@ switch (subcommand) {
     // worker (no auto-fallback — that's the synchronous path).
     if (options.background) {
       const res = launchBackground(cwd, { driver, worker, role, brief, kind, focus: options.focus, surface: options.surface, timeoutMs, profile, base });
-      out(res, options, `${res.status} (background) — ${res.worker} — ${res.jobId}\nPoll: status ${res.jobId} --wait`);
+      // Codex gate finding (#1395 r2): a synchronously-blocked dispatch (e.g.
+      // invalid --base) creates no job — printing poll instructions and
+      // exiting 0 would send automation into a polling loop on an empty id.
+      const human = res.status === "blocked"
+        ? `${res.status} — ${res.worker} — no job created\n${(res.errors ?? []).join("\n")}`
+        : `${res.status} (background) — ${res.worker} — ${res.jobId}\nPoll: status ${res.jobId} --wait`;
+      out(res, options, human);
+      if (res.status !== "queued" && res.status !== "running") process.exitCode = 2;
       break;
     }
 

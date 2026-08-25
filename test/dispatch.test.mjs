@@ -23,7 +23,7 @@ import {
 } from "../core/dispatch.mjs";
 import { appendJob, updateJob, getJob, resolveStateDir } from "../core/state.mjs";
 import { MODEL_PROFILES } from "../core/model-profiles.mjs";
-import { headRef } from "../core/git.mjs";
+import { headRef, checkPatchAppliesOnRef } from "../core/git.mjs";
 import { createWorktree, removeWorktree, resolveWorkspaceRoot } from "../core/workspace.mjs";
 
 // ---- routing ----
@@ -506,6 +506,23 @@ test("launchBackground refuses an invalid --base synchronously without spawning 
 
   assert.equal(launched.status, "blocked");
   assert.equal(launched.failureKind, "base-ref");
+});
+
+test("checkPatchAppliesOnRef returns false instead of throwing when the temp index cannot be allocated (#1395 codex r2)", () => {
+  isolateStateRoot();
+  const repo = makeRepo();
+  // Point the temp dir at an unwritable/nonexistent location so mkdtempSync
+  // throws — the helper must convert that into a clean `false`, never an
+  // exception that escapes mid-job and strands terminal-state updates.
+  const oldTmp = process.env.TMPDIR;
+  process.env.TMPDIR = "/nonexistent/ac-tmp-dir";
+  try {
+    const ok = checkPatchAppliesOnRef(repo, headRef(repo), "diff --git a/x b/x\n--- a/x\n+++ b/x\n@@ -1 +1 @@\n-a\n+b\n");
+    assert.equal(ok, false);
+  } finally {
+    if (oldTmp === undefined) delete process.env.TMPDIR;
+    else process.env.TMPDIR = oldTmp;
+  }
 });
 
 // A worker that does real work (writes a file) but replies in prose, not JSON.

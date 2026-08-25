@@ -229,7 +229,15 @@ export function checkPatchApplies(cwd, diff) {
  */
 export function checkPatchAppliesOnRef(repo, ref, diff) {
   if (!diff || !diff.trim()) return true;
-  const idxDir = fs.mkdtempSync(path.join(os.tmpdir(), "ac-idx-"));
+  let idxDir;
+  try {
+    idxDir = fs.mkdtempSync(path.join(os.tmpdir(), "ac-idx-"));
+  } catch {
+    // Codex gate finding (#1395 r2): an allocation failure here must be a
+    // clean `false` (advisory check), never an exception escaping mid-job
+    // and stranding terminal-state updates after the worker finished.
+    return false;
+  }
   try {
     const idx = path.join(idxDir, "index");
     const env = { ...process.env, GIT_INDEX_FILE: idx };
