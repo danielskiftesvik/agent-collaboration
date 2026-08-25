@@ -24,7 +24,7 @@ import {
 import { appendJob, updateJob, getJob, resolveStateDir } from "../core/state.mjs";
 import { MODEL_PROFILES } from "../core/model-profiles.mjs";
 import { headRef } from "../core/git.mjs";
-import { createWorktree, resolveWorkspaceRoot } from "../core/workspace.mjs";
+import { createWorktree, removeWorktree, resolveWorkspaceRoot } from "../core/workspace.mjs";
 
 // ---- routing ----
 
@@ -275,51 +275,77 @@ test("runWorkerSync (worker) writes a valid result and a captured patch", () => 
   delete process.env.AGENT_COLLAB_AGY_BIN;
 });
 
-test("applyResult applies the worker's patch to the main repo", () => {
+test("applyResult applies the worker's patch to a linked worktree", () => {
   isolateStateRoot();
   const repo = makeRepo();
+  const linked = createWorktree(repo, "apply-main", "HEAD");
   process.env.AGENT_COLLAB_AGY_BIN = stubBin(WRITE_STUB);
 
-  const res = runWorkerSync(repo, { driver: "claude", worker: "agy", role: "worker", brief: "x" });
-  const applied = applyResult(repo, res.jobId);
+  const res = runWorkerSync(linked, { driver: "claude", worker: "agy", role: "worker", brief: "x" });
+  const applied = applyResult(linked, res.jobId);
 
   assert.equal(applied.applied, true);
-  assert.equal(fs.readFileSync(path.join(repo, "worker-was-here.txt"), "utf8"), "hi from worker\n");
+  assert.equal(fs.readFileSync(path.join(linked, "worker-was-here.txt"), "utf8"), "hi from worker\n");
 
+  removeWorktree(repo, linked);
   delete process.env.AGENT_COLLAB_AGY_BIN;
 });
 
 test("applyResult lands the change in the working tree UNSTAGED, leaving a clean index", () => {
   isolateStateRoot();
   const repo = makeRepo();
+  const linked = createWorktree(repo, "apply-unstaged", "HEAD");
   process.env.AGENT_COLLAB_AGY_BIN = stubBin(WRITE_STUB);
 
-  const res = runWorkerSync(repo, { driver: "claude", worker: "agy", role: "worker", brief: "x" });
-  const applied = applyResult(repo, res.jobId);
+  const res = runWorkerSync(linked, { driver: "claude", worker: "agy", role: "worker", brief: "x" });
+  const applied = applyResult(linked, res.jobId);
 
   assert.equal(applied.applied, true);
   assert.equal(applied.staged, false);
-  assert.equal(fs.existsSync(path.join(repo, "worker-was-here.txt")), true);
+  assert.equal(fs.existsSync(path.join(linked, "worker-was-here.txt")), true);
   assert.equal(
-    git(["diff", "--cached", "--name-only"], repo),
+    git(["diff", "--cached", "--name-only"], linked),
     "",
     "apply must leave a CLEAN index (change is unstaged in the working tree) so a later apply doesn't index-conflict"
   );
 
+  removeWorktree(repo, linked);
   delete process.env.AGENT_COLLAB_AGY_BIN;
 });
 
 test("applyResult returns applied paths and a diffstat", () => {
   isolateStateRoot();
   const repo = makeRepo();
+  const linked = createWorktree(repo, "apply-stat", "HEAD");
   process.env.AGENT_COLLAB_AGY_BIN = stubBin(WRITE_STUB);
 
-  const res = runWorkerSync(repo, { driver: "claude", worker: "agy", role: "worker", brief: "x" });
-  const applied = applyResult(repo, res.jobId);
+  const res = runWorkerSync(linked, { driver: "claude", worker: "agy", role: "worker", brief: "x" });
+  const applied = applyResult(linked, res.jobId);
 
   assert.deepEqual(applied.paths, ["worker-was-here.txt"]);
   assert.match(applied.stat, /worker-was-here\.txt/);
 
+  removeWorktree(repo, linked);
+  delete process.env.AGENT_COLLAB_AGY_BIN;
+});
+
+test("applyResult refuses primary checkout without --force-primary", () => {
+  isolateStateRoot();
+  const repo = makeRepo();
+  const linked = createWorktree(repo, "apply-linked", "HEAD");
+  process.env.AGENT_COLLAB_AGY_BIN = stubBin(WRITE_STUB);
+
+  const res = runWorkerSync(linked, { driver: "claude", worker: "agy", role: "worker", brief: "x" });
+  const refused = applyResult(repo, res.jobId);
+  assert.equal(refused.applied, false);
+  assert.match(refused.error, /primary checkout/);
+  assert.equal(fs.existsSync(path.join(repo, "worker-was-here.txt")), false);
+
+  const applied = applyResult(linked, res.jobId);
+  assert.equal(applied.applied, true);
+  assert.equal(fs.readFileSync(path.join(linked, "worker-was-here.txt"), "utf8"), "hi from worker\n");
+
+  removeWorktree(repo, linked);
   delete process.env.AGENT_COLLAB_AGY_BIN;
 });
 

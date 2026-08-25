@@ -73,6 +73,24 @@ export function isManagedWorktree(cwd, candidate) {
   return target !== root && path.dirname(target) === root;
 }
 
+/** True when `cwd` is the repository's primary (non-linked) checkout. */
+export function isPrimaryCheckout(cwd) {
+  try {
+    const top = canonical(path.resolve(cwd));
+    const common = canonical(
+      git(["rev-parse", "--path-format=absolute", "--git-common-dir"], top)
+    );
+    const gitDir = canonical(
+      git(["rev-parse", "--path-format=absolute", "--git-dir"], top)
+    );
+    if (common !== gitDir) return false;
+    const dotGit = path.join(top, ".git");
+    return fs.existsSync(dotGit) && fs.statSync(dotGit).isDirectory();
+  } catch {
+    return false;
+  }
+}
+
 /** Every worktree (main checkout + every linked one) registered for this repo. */
 export function listWorktrees(root) {
   try {

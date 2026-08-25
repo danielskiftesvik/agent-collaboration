@@ -18,7 +18,7 @@ import { cleanupJobWorktree, collectGarbage, waitForPidExit } from "../core/gc.m
 import { resolveWorkerRef } from "../core/instances.mjs";
 
 const VALUE_FLAGS = new Set(["worker", "workers", "role", "driver", "base", "timeout", "gate", "sandbox", "focus", "surface", "task", "job", "recent", "retention-days", "artifacts-older-than"]);
-const BOOL_FLAGS = new Set(["json", "apply", "wait", "background", "profiles", "no-fallback", "live", "active", "latest", "refresh", "artifact-only", "force", "dry-run", "include-unapplied"]);
+const BOOL_FLAGS = new Set(["json", "apply", "wait", "background", "profiles", "no-fallback", "live", "active", "latest", "refresh", "artifact-only", "force", "force-primary", "dry-run", "include-unapplied"]);
 
 function parseArgs(tokens) {
   const options = {};
@@ -248,7 +248,7 @@ switch (subcommand) {
     const fallbackKinds = options["no-fallback"] ? new Set() : resolveFallbackKinds();
     const res = runWithFallback(cwd, { driver, worker, role, brief, kind, focus: options.focus, surface: options.surface, timeoutMs, profile, fallbackKinds });
     if (options.apply && res.status === "completed" && role === "worker") {
-      res.applied = applyResult(cwd, res.jobId);
+      res.applied = applyResult(cwd, res.jobId, { forcePrimary: !!options["force-primary"] });
     }
     const human =
       `${res.status} — ${res.worker} — ${res.jobId}\nartifacts: ${res.artifactDir}` +
@@ -409,10 +409,11 @@ switch (subcommand) {
   case "apply": {
     const id = positionals[0];
     if (!id) fail("apply: a job id is required");
-    const result = applyResult(cwd, id);
+    const result = applyResult(cwd, id, { forcePrimary: !!options["force-primary"] });
+    const targetLine = `Apply target: ${result.target ?? cwd}`;
     let human = result.applied
-      ? "patch applied to the working tree (unstaged; `git diff` to inspect, then commit). Pre-existing staged work is left untouched."
-      : `not applied: ${result.error ?? result.stderr}`;
+      ? `${targetLine}\npatch applied to the working tree (unstaged; git diff to inspect, then commit). Pre-existing staged work is left untouched.`
+      : `${targetLine}\nnot applied: ${result.error ?? result.stderr}`;
     if (result.applied) {
       if (result.paths?.length) human += `\nPaths: ${result.paths.join(", ")}`;
       if (result.stat) human += `\n${result.stat}`;

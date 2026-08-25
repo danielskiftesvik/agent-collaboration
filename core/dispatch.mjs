@@ -10,7 +10,7 @@ import { fileURLToPath } from "node:url";
 
 import { getAdapter, listAdapters } from "../adapters/index.mjs";
 import { resolveStateDir, appendJob, updateJob, getJob, loadState, isTerminalStatus } from "./state.mjs";
-import { createWorktree, removeWorktree, resolveWorkspaceRoot, canonical, listWorktrees } from "./workspace.mjs";
+import { createWorktree, removeWorktree, resolveWorkspaceRoot, canonical, listWorktrees, isPrimaryCheckout } from "./workspace.mjs";
 import { headRef, upstreamRef, isAncestorOf, isBenignRemoteFastForward, reflogCount, captureWorkingDiff, captureWorkingTreeSnapshot, applyPatch, checkPatchApplies, workingTreeStatus, workingTreeDigest, newStatusPaths, stageDiffIntoWorktree, diffPaths, looksLikeDiff, extractUnifiedDiff } from "./git.mjs";
 import { run } from "./process.mjs";
 import { isPidAlive, isStalled, touchHeartbeat } from "./heartbeat.mjs";
@@ -1710,17 +1710,32 @@ export function waitForJob(cwd, jobId, { timeoutMs = 1800000, pollMs = 1000 } = 
 }
 
 /** Driver-side: apply a completed worker's patch to the main branch (3-way). */
-export function applyResult(cwd, jobId) {
+export function applyResult(cwd, jobId, opts = {}) {
+  const target = canonical(path.resolve(cwd));
+  const forcePrimary =
+    opts.forcePrimary === true || process.env.AGENT_COLLAB_APPLY_FORCE_PRIMARY === "1";
+  if (!forcePrimary && isPrimaryCheckout(cwd)) {
+    return {
+      applied: false,
+      target,
+      error:
+        `refusing to apply on primary checkout: ${target} — run from a linked worktree or pass --force-primary`
+    };
+  }
   const job = getJob(cwd, jobId);
-  if (!job) return { applied: false, error: "unknown job" };
+  if (!job) return { applied: false, target, error: "unknown job" };
   if (!job.patchPath || !fs.existsSync(job.patchPath)) {
-    return { applied: false, error: "no patch for this job (reviewer or empty result)" };
+    return {
+      applied: false,
+      target,
+      error: "no patch for this job (reviewer or empty result)"
+    };
   }
   const diff = fs.readFileSync(job.patchPath, "utf8");
   const paths = diffPaths(diff);
   const stat = diff.trim() ? run("git", ["apply", "--stat"], { cwd, input: diff }).stdout.trim() : "";
   const result = applyPatch(cwd, diff);
-  const out = { ...result, paths, stat };
+  const out = { ...result, paths, stat, target };
   updateJob(cwd, jobId, { applied: result.applied, conflicted: result.conflicted, appliedPaths: paths, diffStat: stat });
   return out;
 }
