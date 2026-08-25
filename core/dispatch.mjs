@@ -567,7 +567,7 @@ export function runWorkerSync(cwd, opts) {
   const worker = ref.label; // job/artifact identity (alias or harness)
   const harness = ref.harness;
   const overlay = ref.overlay || {};
-  const { driver, role = "worker", brief, kind, focus, targetLabel, profile, surface, followupOf, maxAttempts = 2, noResume = false } = opts;
+  const { driver, role = "worker", brief, kind, focus, targetLabel, profile, surface, followupOf, maxAttempts = 2, noResume = false, base: requestedBase } = opts;
   const idleMs = opts.idleMs ?? MODEL_PROFILES[harness]?.idleMsOverride ?? defaultIdleMs();
   let timeoutMs = opts.timeoutMs ?? defaultTimeoutMs(role);
   const adapter = getAdapter(harness);
@@ -640,14 +640,38 @@ export function runWorkerSync(cwd, opts) {
   }
 
   let baseRef = null;
+  // #1395: breach detection must always watch the DRIVER's HEAD, never a
+  // caller-supplied --base (they differ the moment --base names a branch).
+  let driverHead = null;
   let workspace = cwd;
   let worktree = null;
   let isGitRepo = false;
   try {
-    baseRef = headRef(cwd);
+    driverHead = headRef(cwd);
+    baseRef = driverHead;
     isGitRepo = true;
   } catch {
     isGitRepo = false;
+  }
+  // #1395 --base: base the worker's ephemeral worktree — and therefore the
+  // captured patch — on a caller-named ref instead of the driver's HEAD, so
+  // re-applying onto that branch is a clean apply instead of a three-way
+  // conflict against everything the branch already contains. Validated up
+  // front and pinned to its resolved SHA so the whole run uses one commit.
+  if (requestedBase !== undefined && String(requestedBase).trim() !== "") {
+    if (!isGitRepo) {
+      return blocked(`--base '${requestedBase}' requires a git repository`, "base-ref");
+    }
+    const wanted = String(requestedBase).trim();
+    const probe = run("git", ["rev-parse", "--verify", `${wanted}^{commit}`], { cwd });
+    if (probe.status !== 0) {
+      return blocked(
+        `--base '${wanted}' is not a commit-ish visible from this repository ` +
+          `(${(probe.stderr || "").trim().split("\n")[0] || "rev-parse failed"}). Fetch the branch first, or pass a full SHA.`,
+        "base-ref"
+      );
+    }
+    baseRef = probe.stdout.trim();
   }
 
   const launchStatus = isGitRepo
@@ -773,7 +797,7 @@ export function runWorkerSync(cwd, opts) {
   // (observed with agy resolving the canonical $HOME repo under
   // --dangerously-skip-permissions). Only meaningful when we actually isolated;
   // in the run-in-place fallback the worker is supposed to write to cwd.
-  const breachHeadBefore = worktree ? (opts.breachHeadBefore ?? baseRef) : null;
+  const breachHeadBefore = worktree ? (opts.breachHeadBefore ?? driverHead) : null;
   const breachReflogCount = worktree ? (opts.breachReflogCount ?? reflogCount(cwd)) : null;
   const breachBefore = worktree ? launchStatus : null;
   const startedAt = new Date().toISOString();
@@ -1503,7 +1527,7 @@ export function launchBackground(cwd, opts) {
   const ref = resolveRefForDispatch(opts.worker, { workerRef: opts.workerRef, workspace: cwd });
   const worker = ref.label;
   const harness = ref.harness;
-  const { driver, role = "worker", brief, kind, focus, targetLabel, profile, surface, timeoutMs, maxAttempts } = opts;
+  const { driver, role = "worker", brief, kind, focus, targetLabel, profile, surface, timeoutMs, maxAttempts, base } = opts;
   const resolvedTimeoutMs = timeoutMs ?? defaultTimeoutMs(role);
   const resolvedIdleMs = opts.idleMs ?? MODEL_PROFILES[harness]?.idleMsOverride ?? defaultIdleMs();
   const launchedAt = new Date().toISOString();
@@ -1546,7 +1570,7 @@ export function launchBackground(cwd, opts) {
     background: true,
     artifactDir,
     request: {
-      driver, worker, workerRef, role, brief, kind, focus, targetLabel, profile, surface,
+      driver, worker, workerRef, role, brief, kind, focus, targetLabel, profile, surface, base,
       timeoutMs: resolvedTimeoutMs, idleMs: resolvedIdleMs, maxAttempts,
       breachHeadBefore, breachReflogCount, breachBefore
     },
@@ -1711,15 +1735,27 @@ export function waitForJob(cwd, jobId, { timeoutMs = 1800000, pollMs = 1000 } = 
 
 /** Driver-side: apply a completed worker's patch to the main branch (3-way). */
 export function applyResult(cwd, jobId, opts = {}) {
-  const target = canonical(path.resolve(cwd));
+  // #1395: an explicit --target names the intended tree from anywhere; the
+  // guard below then evaluates THAT tree, so pointing --target at the
+  // primary checkout still requires --force-primary (one rule, no flag
+  // interaction matrix).
+  const requestedTarget =
+    typeof opts.target === "string" && opts.target.trim() !== "" ? opts.target : null;
+  let target;
+  try {
+    target = canonical(path.resolve(cwd, requestedTarget ?? "."));
+  } catch (e) {
+    return { applied: false, error: `apply target does not exist (${e?.message || e})` };
+  }
   const forcePrimary =
     opts.forcePrimary === true || process.env.AGENT_COLLAB_APPLY_FORCE_PRIMARY === "1";
-  if (!forcePrimary && isPrimaryCheckout(cwd)) {
+  if (!forcePrimary && isPrimaryCheckout(target)) {
     return {
       applied: false,
       target,
       error:
-        `refusing to apply on primary checkout: ${target} — run from a linked worktree or pass --force-primary`
+        `refusing to apply on primary checkout: ${target} — run from a linked worktree, ` +
+        "pass --target <path> to name the intended tree, or pass --force-primary"
     };
   }
   const job = getJob(cwd, jobId);
@@ -1733,9 +1769,9 @@ export function applyResult(cwd, jobId, opts = {}) {
   }
   const diff = fs.readFileSync(job.patchPath, "utf8");
   const paths = diffPaths(diff);
-  const stat = diff.trim() ? run("git", ["apply", "--stat"], { cwd, input: diff }).stdout.trim() : "";
-  const result = applyPatch(cwd, diff);
+  const stat = diff.trim() ? run("git", ["apply", "--stat"], { cwd: target, input: diff }).stdout.trim() : "";
+  const result = applyPatch(target, diff);
   const out = { ...result, paths, stat, target };
-  updateJob(cwd, jobId, { applied: result.applied, conflicted: result.conflicted, appliedPaths: paths, diffStat: stat });
+  updateJob(cwd, jobId, { applied: result.applied, conflicted: result.conflicted, appliedPaths: paths, diffStat: stat, appliedTarget: target });
   return out;
 }

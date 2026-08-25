@@ -1,10 +1,11 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { makeRepo, isolateStateRoot, stubBin } from "./helpers.mjs";
+import { makeRepo, addWorktree, isolateStateRoot, stubBin, real, git } from "./helpers.mjs";
 import { run } from "../core/process.mjs";
 import { appendJob, getJob, loadState, resolveStateDir, saveState, updateJob } from "../core/state.mjs";
 import { headRef } from "../core/git.mjs";
@@ -17,7 +18,12 @@ function cli(args, { cwd, env } = {}) {
 }
 
 test("setup --json lists all adapters", () => {
-  const r = cli(["setup", "--json"]);
+  // Isolate HOME: ~/.agent-collaboration/config.json instance aliases
+  // legitimately surface as extra setup rows on machines that configure
+  // them (e.g. codex-business/codex-personal here), which is orthogonal
+  // to the adapter list this test pins.
+  const emptyHome = fs.mkdtempSync(path.join(os.tmpdir(), "ac-home-"));
+  const r = cli(["setup", "--json"], { env: { HOME: emptyHome } });
   assert.equal(r.status, 0, r.stderr);
   const rows = JSON.parse(r.stdout);
   assert.deepEqual(rows.map((x) => x.name).sort(), ["agy", "claude", "codex", "cursor", "dsh", "grok", "opencode", "qwen"]);
@@ -639,4 +645,85 @@ test("review --workers rejects --background and single-entry lists explicitly", 
   assert.match(bg.stderr, /does not support --background/);
   const one = cli(["review", "--workers", "codex", "--json", "x"], { cwd: repo, env: { AGENT_COLLAB_DATA: dataDir } });
   assert.match(one.stderr, /needs >=2/);
+});
+
+// ---- #1395 CLI guard. Guard-quality standard from the issue: these tests
+// invoke `apply` with the working directory set to a PRIMARY checkout and
+// assert refusal — a test that only exercised apply inside a linked
+// worktree would have passed against the defective build. ----
+
+const APPLY_DIFF = [
+  "diff --git a/worker-was-here.txt b/worker-was-here.txt",
+  "new file mode 100644",
+  "index 0000000..9daeafb",
+  "--- /dev/null",
+  "+++ b/worker-was-here.txt",
+  "@@ -0,0 +1 @@",
+  "+hi from worker"
+].join("\n") + "\n";
+
+function fabricateApplyJob(repo, id, dataDir) {
+  const artifact = fs.mkdtempSync(path.join(os.tmpdir(), "ac-apply-artifact-"));
+  const patchPath = path.join(artifact, `${id}.diff`);
+  fs.writeFileSync(patchPath, APPLY_DIFF);
+  appendJob(repo, {
+    id,
+    worker: "agy",
+    harness: "agy",
+    role: "worker",
+    status: "completed",
+    artifactDir: artifact,
+    patchPath
+  });
+  return { env: { AGENT_COLLAB_DATA: dataDir } };
+}
+
+test("apply invoked FROM the primary checkout refuses by default and lands nothing (#1395)", () => {
+  const dataDir = isolateStateRoot();
+  const repo = makeRepo();
+  const { env } = fabricateApplyJob(repo, "guard-primary", dataDir);
+
+  const r = cli(["apply", "guard-primary"], { cwd: repo, env });
+
+  assert.equal(r.status, 2, `stdout=${r.stdout} stderr=${r.stderr}`);
+  assert.match(r.stdout + r.stderr, /primary checkout/);
+  assert.equal(fs.existsSync(path.join(repo, "worker-was-here.txt")), false, "nothing may land on shared main");
+  assert.equal(git(["status", "--porcelain"], repo), "", "the primary tree is untouched");
+});
+
+test("apply --force-primary opts into the primary checkout explicitly (#1395)", () => {
+  const dataDir = isolateStateRoot();
+  const repo = makeRepo();
+  const { env } = fabricateApplyJob(repo, "guard-optin", dataDir);
+
+  const r = cli(["apply", "guard-optin", "--force-primary"], { cwd: repo, env });
+
+  assert.equal(r.status, 0, `stdout=${r.stdout} stderr=${r.stderr}`);
+  assert.equal(fs.readFileSync(path.join(repo, "worker-was-here.txt"), "utf8"), "hi from worker\n");
+});
+
+test("apply --target <linked-worktree> lands there while cwd stays primary, and names it (#1395)", () => {
+  const dataDir = isolateStateRoot();
+  const repo = makeRepo();
+  const wt = addWorktree(repo, "cli-target");
+  const { env } = fabricateApplyJob(repo, "guard-target", dataDir);
+
+  const r = cli(["apply", "guard-target", "--target", wt], { cwd: repo, env });
+
+  assert.equal(r.status, 0, `stdout=${r.stdout} stderr=${r.stderr}`);
+  assert.ok(r.stdout.includes(real(wt)), "the output names the resolved absolute target");
+  assert.equal(fs.readFileSync(path.join(wt, "worker-was-here.txt"), "utf8"), "hi from worker\n");
+  assert.equal(fs.existsSync(path.join(repo, "worker-was-here.txt")), false);
+});
+
+test("apply inside a LINKED worktree needs no flags at all (#1395 normal flow)", () => {
+  const dataDir = isolateStateRoot();
+  const repo = makeRepo();
+  const wt = addWorktree(repo, "cli-normal");
+  const { env } = fabricateApplyJob(repo, "guard-normal", dataDir);
+
+  const r = cli(["apply", "guard-normal"], { cwd: wt, env });
+
+  assert.equal(r.status, 0, `stdout=${r.stdout} stderr=${r.stderr}`);
+  assert.equal(fs.readFileSync(path.join(wt, "worker-was-here.txt"), "utf8"), "hi from worker\n");
 });

@@ -218,13 +218,13 @@ Two delegation paths, chosen automatically:
 | `/agent-collab:setup [--gate on\|off] [--sandbox on\|off] [--retention-days n]` | Detect worker-ready harnesses; configure gates/sandbox and artifact retention (default 30 days; 0 disables) |
 | `/agent-collab:doctor [--live] [--workers a,b]` | Self-check: config + readiness, and (with `--live`) a review-cycle + worktree-isolation smoke per worker against a throwaway repo |
 | `/agent-collab:recommend --task <type> --driver <self>` (or `--profiles`) | Pick the strongest available worker for a task by underlying-model strength |
-| `/agent-collab:delegate --worker <agy\|claude\|codex\|cursor\|grok\|opencode\|dsh> [--background] [--apply] <brief>` | Run a cross-harness **worker** task (produces a patch); `--background` detaches and returns a jobId |
+| `/agent-collab:delegate --worker <agy\|claude\|codex\|cursor\|grok\|opencode\|dsh> [--base <ref>] [--background] [--apply] <brief>` | Run a cross-harness **worker** task (produces a patch); `--background` detaches and returns a jobId. `--base <ref>` bases the worker's worktree (and the captured patch) on that ref instead of your HEAD — re-applying onto that branch then applies cleanly instead of three-way conflicting |
 | `/agent-collab:review --worker <name> [--focus <text>] <diff>` | Read-only cross-harness **review** |
 | `/agent-collab:adversarial-review --worker <name> <diff>` | "Try to break it" review |
 | `/agent-collab:review-followup --job <prior-id> [--worker <name>] <focused diff/context>` | Recheck a focused fix against a prior review |
 | `/agent-collab:status [jobId\|--latest] [--worker name] [--role role] [--refresh\|--wait] [--active] [--recent n]` | List / inspect jobs with lock-free live health; reads mutate state only when explicitly refreshed or waited |
 | `/agent-collab:result <jobId\|--latest> [--worker name] [--role role]` | Show a terminal job's report, or `ready:false` plus the exact wait command while it runs |
-| `/agent-collab:apply <jobId>` | Apply a worker's patch (3-way) to the working tree |
+| `/agent-collab:apply <jobId> [--target <path>] [--force-primary]` | Apply a worker's patch (3-way). The resolved apply target is always named in the output. A repository's **primary** checkout refuses by default (#1395): pass `--target <worktree>` to name the intended tree, or `--force-primary` to opt in explicitly |
 | `/agent-collab:gc [--dry-run] [--artifacts-older-than days] [--include-unapplied]` | Reclaim dead/terminal worktrees and expired artifacts; unapplied patches are preserved by default |
 | `/agent-collab:cancel <jobId> [--force]` | Cancel an unhealthy job; healthy within-budget jobs require the explicit `--force` override |
 
