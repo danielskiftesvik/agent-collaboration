@@ -23,7 +23,7 @@ import {
 } from "../core/dispatch.mjs";
 import { appendJob, updateJob, getJob, resolveStateDir } from "../core/state.mjs";
 import { MODEL_PROFILES } from "../core/model-profiles.mjs";
-import { headRef } from "../core/git.mjs";
+import { headRef, checkPatchAppliesOnRef } from "../core/git.mjs";
 import { createWorktree, removeWorktree, resolveWorkspaceRoot } from "../core/workspace.mjs";
 
 // ---- routing ----
@@ -233,6 +233,13 @@ test("runWorkerSync lets codex run as a write-worker and captures its patch", ()
   const repo = makeRepo();
   const oldAllow = process.env.AGENT_COLLAB_ALLOW_NONWRITER;
   delete process.env.AGENT_COLLAB_ALLOW_NONWRITER;
+  // Isolate HOME: on machines with ~/.agent-collaboration/config.json
+  // instance aliases (codex-business/codex-personal here), "codex" resolves
+  // to an instance label and the patch lands under that label instead —
+  // environmental, orthogonal to what this test pins.
+  const emptyHome = fs.mkdtempSync(path.join(os.tmpdir(), "ac-home-"));
+  const oldHome = process.env.HOME;
+  process.env.HOME = emptyHome;
   process.env.AGENT_COLLAB_CODEX_COMPANION = codexCompanionStub(`
     import fs from 'node:fs';
     fs.writeFileSync('codex-wrote.txt', 'hi from codex\\n');
@@ -252,6 +259,8 @@ test("runWorkerSync lets codex run as a write-worker and captures its patch", ()
   delete process.env.AGENT_COLLAB_CODEX_COMPANION;
   if (oldAllow === undefined) delete process.env.AGENT_COLLAB_ALLOW_NONWRITER;
   else process.env.AGENT_COLLAB_ALLOW_NONWRITER = oldAllow;
+  if (oldHome === undefined) delete process.env.HOME;
+  else process.env.HOME = oldHome;
 });
 
 test("runWorkerSync (worker) writes a valid result and a captured patch", () => {
@@ -347,6 +356,173 @@ test("applyResult refuses primary checkout without --force-primary", () => {
 
   removeWorktree(repo, linked);
   delete process.env.AGENT_COLLAB_AGY_BIN;
+});
+
+// ---- #1395 (this lane, layered on the primary-checkout guard): --target
+// names the intended tree from anywhere, and delegate --base captures the
+// patch against a caller-named ref. ----
+
+test("applyResult honors --target into a LINKED worktree while cwd stays primary (#1395)", () => {
+  isolateStateRoot();
+  const repo = makeRepo();
+  const wt = createWorktree(repo, "target1395", "HEAD");
+  process.env.AGENT_COLLAB_AGY_BIN = stubBin(WRITE_STUB);
+
+  const res = runWorkerSync(repo, { driver: "claude", worker: "agy", role: "worker", brief: "x" });
+  const applied = applyResult(repo, res.jobId, { target: wt });
+
+  assert.equal(applied.applied, true);
+  assert.equal(applied.target, real(wt));
+  assert.equal(fs.readFileSync(path.join(wt, "worker-was-here.txt"), "utf8"), "hi from worker\n");
+  assert.equal(fs.existsSync(path.join(repo, "worker-was-here.txt")), false, "the primary tree stays untouched");
+
+  removeWorktree(repo, wt);
+  delete process.env.AGENT_COLLAB_AGY_BIN;
+});
+
+test("--target pointing at the primary checkout still requires --force-primary (#1395)", () => {
+  isolateStateRoot();
+  const repo = makeRepo();
+  process.env.AGENT_COLLAB_AGY_BIN = stubBin(WRITE_STUB);
+
+  const res = runWorkerSync(repo, { driver: "claude", worker: "agy", role: "worker", brief: "x" });
+  const refused = applyResult(repo, res.jobId, { target: repo });
+
+  assert.equal(refused.applied, false);
+  assert.match(refused.error, /primary checkout/);
+
+  delete process.env.AGENT_COLLAB_AGY_BIN;
+});
+
+test("--base bases the worker worktree on the requested ref so the patch is relative to it (#1395)", () => {
+  isolateStateRoot();
+  const repo = makeRepo();
+  git(["checkout", "-q", "-b", "feature"], repo);
+  fs.writeFileSync(path.join(repo, "feature.txt"), "feature\n");
+  git(["add", "-A"], repo);
+  git(["commit", "-q", "-m", "feature"], repo);
+  git(["checkout", "-q", "main"], repo);
+  process.env.AGENT_COLLAB_AGY_BIN = stubBin(WRITE_STUB);
+
+  const res = runWorkerSync(repo, { driver: "claude", worker: "agy", role: "worker", brief: "x", base: "feature" });
+
+  assert.equal(res.status, "completed", res.errors?.join("; "));
+  const job = getJob(repo, res.jobId);
+  assert.equal(job.baseRef, git(["rev-parse", "feature"], repo), "the job records the requested base, not the driver's HEAD");
+  const diff = fs.readFileSync(path.join(res.artifactDir, "patches", "agy.diff"), "utf8");
+  assert.match(diff, /worker-was-here\.txt/);
+  assert.doesNotMatch(diff, /feature\.txt/, "the patch must be relative to --base, not cumulative against the driver's HEAD");
+
+  delete process.env.AGENT_COLLAB_AGY_BIN;
+});
+
+test("--base rejects a ref that is not a commit-ish before any worker runs (#1395)", () => {
+  isolateStateRoot();
+  const repo = makeRepo();
+
+  const res = runWorkerSync(repo, { driver: "claude", worker: "agy", role: "worker", brief: "x", base: "no-such-ref" });
+
+  assert.equal(res.status, "blocked");
+  assert.equal(res.failureKind, "base-ref");
+  assert.match(res.errors[0], /no-such-ref/);
+});
+
+// ---- codex gate round 2 findings ----
+
+test("applyResult --target into a SUBDIRECTORY of the primary checkout is still refused (#1395 codex)", () => {
+  isolateStateRoot();
+  const repo = makeRepo();
+  fs.mkdirSync(path.join(repo, "core"));
+  process.env.AGENT_COLLAB_AGY_BIN = stubBin(WRITE_STUB);
+
+  const res = runWorkerSync(repo, { driver: "claude", worker: "agy", role: "worker", brief: "x" });
+  const refused = applyResult(repo, res.jobId, { target: path.join(repo, "core") });
+
+  assert.equal(refused.applied, false, "a subdir of the primary checkout must NOT become an apply target");
+  assert.match(refused.error ?? "", /primary checkout/);
+  assert.equal(fs.existsSync(path.join(repo, "worker-was-here.txt")), false, "the shared checkout stays untouched");
+
+  delete process.env.AGENT_COLLAB_AGY_BIN;
+});
+
+test("--base validates the captured patch against the BASE tree, not the driver's HEAD (#1395 codex)", () => {
+  isolateStateRoot();
+  const repo = makeRepo();
+  git(["checkout", "-q", "-b", "feature"], repo);
+  fs.writeFileSync(path.join(repo, "feature.txt"), "feature\n");
+  git(["add", "-A"], repo);
+  git(["commit", "-q", "-m", "feature"], repo);
+  git(["checkout", "-q", "main"], repo);
+  // The worker edits a file that exists ONLY on the feature branch.
+  process.env.AGENT_COLLAB_AGY_BIN = stubBin(`
+    import fs from 'node:fs';
+    if (process.argv.includes('models')) { process.stdout.write('Gemini 3.5 Flash (High)'); process.exit(0); }
+    fs.writeFileSync('feature.txt', 'worker edit\\n');
+  `);
+
+  const res = runWorkerSync(repo, { driver: "claude", worker: "agy", role: "worker", brief: "x", base: "feature" });
+
+  assert.equal(res.patchApplies, true, "the patch is valid against the --base tree it was captured against");
+  assert.equal(res.status, "completed", "a base-valid patch must not be misclassified as conflicted");
+
+  delete process.env.AGENT_COLLAB_AGY_BIN;
+});
+
+test("launchBackground pins --base to its resolved SHA at launch time (#1395 codex)", () => {
+  isolateStateRoot();
+  const repo = makeRepo();
+  git(["checkout", "-q", "-b", "feature"], repo);
+  git(["commit", "--allow-empty", "-q", "-m", "feature tip"], repo);
+  const featureShaAtLaunch = git(["rev-parse", "feature"], repo);
+  git(["checkout", "-q", "main"], repo);
+  process.env.AGENT_COLLAB_AGY_BIN = stubBin(`
+    import fs from 'node:fs';
+    if (process.argv.includes('models')) { process.exit(0); }
+    fs.writeFileSync('worker-was-here.txt', 'hi\\n');
+    process.stdout.write('\`\`\`json\\n{"status":"completed","summary":"x","changed":true}\\n\`\`\`');
+  `);
+
+  const launched = launchBackground(repo, { driver: "claude", worker: "agy", role: "worker", brief: "x", maxAttempts: 1, base: "feature" });
+  const jobAtLaunch = getJob(repo, launched.jobId);
+  assert.equal(jobAtLaunch.request.base, featureShaAtLaunch, "the request records the PINNED sha, not the raw ref name");
+
+  // The branch advances while the job runs — the pinned source must not move.
+  git(["checkout", "-q", "feature"], repo);
+  git(["commit", "--allow-empty", "-q", "-m", "advance while job ran"], repo);
+  git(["checkout", "-q", "main"], repo);
+
+  const job = waitForJob(repo, launched.jobId, { timeoutMs: 30000, pollMs: 150 });
+  assert.equal(job.request.base, featureShaAtLaunch, "the pinned base survives branch advancement");
+  assert.equal(job.status, "completed");
+
+  delete process.env.AGENT_COLLAB_AGY_BIN;
+});
+
+test("launchBackground refuses an invalid --base synchronously without spawning (#1395 codex)", () => {
+  isolateStateRoot();
+  const repo = makeRepo();
+
+  const launched = launchBackground(repo, { driver: "claude", worker: "agy", role: "worker", brief: "x", maxAttempts: 1, base: "no-such-ref" });
+
+  assert.equal(launched.status, "blocked");
+  assert.equal(launched.failureKind, "base-ref");
+});
+
+test("checkPatchAppliesOnRef returns false instead of throwing when the temp index cannot be allocated (#1395 codex r2)", () => {
+  isolateStateRoot();
+  const repo = makeRepo();
+  // Point the temp dir at an unwritable/nonexistent location so mkdtempSync
+  // throws — the helper must convert that into a clean `false`, never an
+  // exception that escapes mid-job and strands terminal-state updates.
+  const oldTmp = process.env.TMPDIR;
+  process.env.TMPDIR = "/nonexistent/ac-tmp-dir";
+  try {
+    const ok = checkPatchAppliesOnRef(repo, headRef(repo), "diff --git a/x b/x\n--- a/x\n+++ b/x\n@@ -1 +1 @@\n-a\n+b\n");
+    assert.equal(ok, false);
+  } finally {
+    if (oldTmp === undefined) delete process.env.TMPDIR;
+    else process.env.TMPDIR = oldTmp;
+  }
 });
 
 // A worker that does real work (writes a file) but replies in prose, not JSON.

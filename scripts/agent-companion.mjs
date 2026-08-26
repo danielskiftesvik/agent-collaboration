@@ -17,7 +17,7 @@ import { MODEL_PROFILES } from "../core/model-profiles.mjs";
 import { cleanupJobWorktree, collectGarbage, waitForPidExit } from "../core/gc.mjs";
 import { resolveWorkerRef } from "../core/instances.mjs";
 
-const VALUE_FLAGS = new Set(["worker", "workers", "role", "driver", "base", "timeout", "gate", "sandbox", "focus", "surface", "task", "job", "recent", "retention-days", "artifacts-older-than"]);
+const VALUE_FLAGS = new Set(["worker", "workers", "role", "driver", "base", "target", "timeout", "gate", "sandbox", "focus", "surface", "task", "job", "recent", "retention-days", "artifacts-older-than"]);
 const BOOL_FLAGS = new Set(["json", "apply", "wait", "background", "profiles", "no-fallback", "live", "active", "latest", "refresh", "artifact-only", "force", "force-primary", "dry-run", "include-unapplied"]);
 
 function parseArgs(tokens) {
@@ -185,6 +185,7 @@ switch (subcommand) {
 
     const timeoutMs = options.timeout ? Number(options.timeout) * 1000 : undefined;
     const profile = options.profile;
+    const base = options.base;
 
     // Dual/multi review: `--workers a,b` fans the SAME brief out to each worker
     // (sequentially; NO auto-fallback per leg — a fallback could collapse the
@@ -213,7 +214,7 @@ switch (subcommand) {
       const legs = workers.map((w) => ({
         worker: w,
         result: runWithFallback(cwd, {
-          driver, worker: w, role, brief, kind, focus: options.focus, surface: options.surface, timeoutMs, profile,
+          driver, worker: w, role, brief, kind, focus: options.focus, surface: options.surface, timeoutMs, profile, base,
           fallbackKinds: new Set()
         })
       }));
@@ -237,8 +238,15 @@ switch (subcommand) {
     // `status <jobId> --wait`, read with `result`, stop with `cancel`. Single
     // worker (no auto-fallback — that's the synchronous path).
     if (options.background) {
-      const res = launchBackground(cwd, { driver, worker, role, brief, kind, focus: options.focus, surface: options.surface, timeoutMs, profile });
-      out(res, options, `${res.status} (background) — ${res.worker} — ${res.jobId}\nPoll: status ${res.jobId} --wait`);
+      const res = launchBackground(cwd, { driver, worker, role, brief, kind, focus: options.focus, surface: options.surface, timeoutMs, profile, base });
+      // Codex gate finding (#1395 r2): a synchronously-blocked dispatch (e.g.
+      // invalid --base) creates no job — printing poll instructions and
+      // exiting 0 would send automation into a polling loop on an empty id.
+      const human = res.status === "blocked"
+        ? `${res.status} — ${res.worker} — no job created\n${(res.errors ?? []).join("\n")}`
+        : `${res.status} (background) — ${res.worker} — ${res.jobId}\nPoll: status ${res.jobId} --wait`;
+      out(res, options, human);
+      if (res.status !== "queued" && res.status !== "running") process.exitCode = 2;
       break;
     }
 
@@ -246,7 +254,7 @@ switch (subcommand) {
     // (rate-limit, timeout); auth surfaces. Tune via AGENT_COLLAB_FALLBACK
     // (off|on|comma-list); --no-fallback forces a single worker.
     const fallbackKinds = options["no-fallback"] ? new Set() : resolveFallbackKinds();
-    const res = runWithFallback(cwd, { driver, worker, role, brief, kind, focus: options.focus, surface: options.surface, timeoutMs, profile, fallbackKinds });
+    const res = runWithFallback(cwd, { driver, worker, role, brief, kind, focus: options.focus, surface: options.surface, timeoutMs, profile, base, fallbackKinds });
     if (options.apply && res.status === "completed" && role === "worker") {
       res.applied = applyResult(cwd, res.jobId, { forcePrimary: !!options["force-primary"] });
     }
@@ -409,7 +417,10 @@ switch (subcommand) {
   case "apply": {
     const id = positionals[0];
     if (!id) fail("apply: a job id is required");
-    const result = applyResult(cwd, id, { forcePrimary: !!options["force-primary"] });
+    const result = applyResult(cwd, id, {
+      target: options.target,
+      forcePrimary: !!options["force-primary"]
+    });
     const targetLine = `Apply target: ${result.target ?? cwd}`;
     let human = result.applied
       ? `${targetLine}\npatch applied to the working tree (unstaged; git diff to inspect, then commit). Pre-existing staged work is left untouched.`
@@ -425,7 +436,8 @@ switch (subcommand) {
           "Try `git reset` (and restore the files) to clean the index, then re-run apply.";
       } else if (/patch does not apply|conflict/i.test(s)) {
         human += "\nTip: the base moved under this patch. Inspect the patch and the target files; " +
-          "resolve conflicts manually, or re-delegate against the current HEAD.";
+          "resolve conflicts manually, or re-delegate against the current HEAD" +
+          " (or pass --base <ref> at delegate time so the patch is captured against the branch you intend).";
       }
     }
     out(result, options, human);
@@ -529,13 +541,13 @@ switch (subcommand) {
         "  setup [--json] [--gate on|off] [--sandbox on|off] [--retention-days n]",
         "  doctor [--live] [--workers a,b] [--json]   self-check (config + readiness; --live runs review+isolation smoke)",
         "  recommend --task <type> [--driver <name>] [--json]   |   recommend --profiles",
-        "  delegate --worker <name|instance> [--driver <name>] [--role worker|reviewer] [--background] [--apply] [--timeout s] <brief>",
+        "  delegate --worker <name|instance> [--driver <name>] [--role worker|reviewer] [--base <ref>] [--background] [--apply] [--timeout s] <brief>",
         "  review  --worker <name|instance> | --workers a,b [--surface head|working-tree|diff] [--focus <text>] [--profile <name>] [--background] <diff/context>",
         "  adversarial-review --worker <name|instance> | --workers a,b [--surface head|working-tree|diff] [--focus <text>] [--profile <name>] [--background] <diff/context>",
         "  review-followup --job <prior-id> [--worker <name>] [--surface head|working-tree|diff] <focused diff/context>",
         "  status [jobId|--latest] [--worker name] [--role role] [--refresh|--wait] [--timeout s] [--active] [--recent n] [--json]",
         "  result <jobId|--latest> [--worker name] [--role role] [--refresh] [--artifact-only] [--json]",
-        "  apply  <jobId>",
+        "  apply  <jobId> [--target <path>] [--force-primary]",
         "  gc [--dry-run] [--artifacts-older-than days] [--include-unapplied] [--json]",
         "  cancel <jobId> [--force]"
       ].join("\n")
