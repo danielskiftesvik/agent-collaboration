@@ -6,6 +6,8 @@ import test from "node:test";
 
 import {
   resolveWorkerRef,
+  snapshotWorkerRef,
+  seatEnvFromWorkerRef,
   withEnvOverlay,
   sandboxDirsFromOverlay,
   listConfiguredInstances,
@@ -272,4 +274,36 @@ test("claude-local instance buildCommand uses the instance bin", () => {
       assert.equal(cmd.command, bin);
     }
   );
+});
+
+test("snapshotWorkerRef records instance CODEX_HOME for seat audit (#754)", () => {
+  const dir = tmpDir();
+  const home = path.join(dir, "biz");
+  withUserConfig(
+    {
+      instances: {
+        "codex-business": { harness: "codex", env: { CODEX_HOME: home } }
+      }
+    },
+    () => {
+      const snap = snapshotWorkerRef(resolveWorkerRef("codex-business"), { ambientEnv: {} });
+      assert.equal(snap.instance, "codex-business");
+      assert.equal(snap.env.CODEX_HOME, path.resolve(home));
+      assert.deepEqual(seatEnvFromWorkerRef(snap), { CODEX_HOME: path.resolve(home) });
+    }
+  );
+});
+
+test("snapshotWorkerRef captures ambient CODEX_HOME when bare codex has no instance", () => {
+  const dir = tmpDir();
+  const home = path.join(dir, "ambient-biz");
+  withUserConfig({}, () => {
+    const bare = resolveWorkerRef("codex");
+    assert.equal(bare.instance, null);
+    const snap = snapshotWorkerRef(bare, {
+      ambientEnv: { CODEX_HOME: home }
+    });
+    assert.equal(snap.env.CODEX_HOME, path.resolve(home));
+    assert.equal(snap.hasOverlay, true);
+  });
 });

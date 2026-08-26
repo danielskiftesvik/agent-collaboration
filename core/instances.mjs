@@ -317,6 +317,60 @@ export function sandboxDirsFromOverlay(overlay = {}) {
   return dirs;
 }
 
+/**
+ * Durable seat snapshot for job records (#754 / prspctv).
+ * Instance overlay wins; ambient AGENT_COLLAB_* / harness HOME fills gaps so
+ * bare `--worker codex` under CODEX_HOME=~/.codex-business is still auditable.
+ */
+export function snapshotWorkerRef(ref, { ambientEnv = process.env } = {}) {
+  if (!ref || typeof ref !== "object") {
+    throw new Error("snapshotWorkerRef requires a resolved worker ref");
+  }
+  const env = { ...(ref.env || {}) };
+  const overlay = { ...(ref.overlay || {}) };
+
+  const captureHome = (key, ambientKeys) => {
+    const raw =
+      overlay[key] ||
+      env[key] ||
+      ambientKeys.map((k) => ambientEnv?.[k]).find((v) => v != null && v !== "");
+    if (!raw) return;
+    const expanded = path.resolve(expandHome(String(raw)));
+    env[key] = expanded;
+    overlay[key] = expanded;
+  };
+
+  if (ref.harness === "codex") {
+    captureHome("CODEX_HOME", ["AGENT_COLLAB_CODEX_HOME", "CODEX_HOME"]);
+  } else if (ref.harness === "claude") {
+    captureHome("CLAUDE_CONFIG_DIR", ["AGENT_COLLAB_CLAUDE_CONFIG_DIR", "CLAUDE_CONFIG_DIR"]);
+  } else if (ref.harness === "grok") {
+    captureHome("GROK_HOME", ["AGENT_COLLAB_GROK_HOME", "GROK_HOME"]);
+  }
+
+  return {
+    label: ref.label,
+    harness: ref.harness,
+    instance: ref.instance ?? null,
+    env,
+    bin: ref.bin ?? null,
+    overlay,
+    hasOverlay: Object.keys(overlay).length > 0
+  };
+}
+
+/** Allowlisted env keys safe to expose on result/status seat summaries. */
+export const SEAT_ENV_KEYS = ["CODEX_HOME", "CLAUDE_CONFIG_DIR", "GROK_HOME"];
+
+export function seatEnvFromWorkerRef(workerRef) {
+  const src = workerRef?.env || workerRef?.overlay || {};
+  const out = {};
+  for (const k of SEAT_ENV_KEYS) {
+    if (src[k]) out[k] = src[k];
+  }
+  return out;
+}
+
 /** List configured instances for setup/doctor (does not probe). */
 export function listConfiguredInstances(opts = {}) {
   const cfg = loadInstanceConfig(opts);
