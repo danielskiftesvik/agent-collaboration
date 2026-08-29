@@ -9,7 +9,8 @@
   ~0% CPU with no `tasks/<uuid>/` dir. Now:
   - Launch GC is detached (`AGENT_COLLAB_LAUNCH_GC=sync|off` to override).
   - `--no-fallback` / empty `fallbackKinds` with an explicit worker skips
-    `runSetup()`.
+    `runSetup()`, then bound-probes only that worker so a hung `--version`
+    fails in ~15s instead of the 4h worker budget.
   - Control-plane `run()` gets a 15s default timeout (`AGENT_COLLAB_CMD_TIMEOUT_MS`;
     `0` disables). Idle-guarded workers keep the role-sized hard timeout.
   - `git worktree add/remove/prune` and `listWorktrees` use that deadline.

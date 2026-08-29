@@ -1436,6 +1436,35 @@ export function runWithFallback(cwd, opts) {
       runSetup(undefined, { workspace: cwd })
         .filter((r) => r.validWorker && !r.instance)
         .map((r) => r.name);
+  // Still bound-probe the requested worker so a hung `--version` fails in
+  // ~15s instead of the 4h worker hard timeout (#1548 opencode review).
+  if (skipSetup && worker) {
+    try {
+      const ref = resolveWorkerRef(worker, { workspace: cwd });
+      const p = withEnvOverlay(ref.overlay || {}, () => getAdapter(ref.harness).probe());
+      if (!p.available && /ETIMEDOUT|timed out/i.test(String(p.error || ""))) {
+        return {
+          jobId: "",
+          worker,
+          harness: ref.harness,
+          instance: ref.instance ?? null,
+          status: "failed",
+          resultValid: false,
+          valid: false,
+          changed: false,
+          patchApplies: null,
+          artifact: null,
+          artifactDir: "",
+          patchPath: null,
+          isolated: false,
+          failureKind: "timeout",
+          errors: [`${worker} probe timed out (${p.error})`]
+        };
+      }
+    } catch {
+      /* runWorkerSync reports spawn failures */
+    }
+  }
 
   // Candidate order: the EXPLICITLY-requested worker first — always honored, even
   // if it equals the (possibly merely guessed) driver label — then the remaining

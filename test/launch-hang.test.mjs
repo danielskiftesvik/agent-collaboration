@@ -88,6 +88,34 @@ test("delegate --no-fallback writes a pre-registration launch log to stderr", { 
   assert.match(r.stderr, /agent-collab \S+ .*start/, "launch must log before task registration so a hang is observable");
 });
 
+test("runWithFallback no-fallback fails fast when the requested worker probe times out", { timeout: 4000 }, () => {
+  isolateStateRoot();
+  const repo = makeRepo();
+  const prev = process.env.AGENT_COLLAB_CMD_TIMEOUT_MS;
+  process.env.AGENT_COLLAB_AGY_BIN = hungBin();
+  process.env.AGENT_COLLAB_CMD_TIMEOUT_MS = "400";
+  const t0 = Date.now();
+  let res;
+  try {
+    res = runWithFallback(repo, {
+      driver: "claude",
+      worker: "agy",
+      role: "worker",
+      brief: "make a file",
+      fallbackKinds: new Set(),
+      maxAttempts: 1
+    });
+  } finally {
+    delete process.env.AGENT_COLLAB_AGY_BIN;
+    if (prev === undefined) delete process.env.AGENT_COLLAB_CMD_TIMEOUT_MS;
+    else process.env.AGENT_COLLAB_CMD_TIMEOUT_MS = prev;
+  }
+  const ms = Date.now() - t0;
+  assert.ok(ms < 2500, `requested-worker probe timeout should fail fast, took ${ms}ms`);
+  assert.equal(res.status, "failed");
+  assert.equal(res.failureKind, "timeout");
+});
+
 test("collector unlinks an out-of-root symlink without deleting the target", () => {
   isolateStateRoot();
   const repo = makeRepo();

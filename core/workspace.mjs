@@ -109,6 +109,10 @@ export function listWorktrees(root) {
       cwd: root,
       timeout: timeout || undefined
     });
+    if (r.error?.code === "ETIMEDOUT") {
+      process.stderr.write(`agent-collab git worktree list timed out cwd=${root}\n`);
+      return [];
+    }
     if (r.status !== 0) return [];
     return (r.stdout || "")
       .split("\n")
