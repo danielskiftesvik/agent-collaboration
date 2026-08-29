@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.13.1 - 2026-08-29
+
+- **Launch no longer parks on janitor I/O or sibling probes (#1548).**
+  `delegate`/`review`/`setup` used to run `collectGarbage` synchronously, then
+  `runWithFallback` probed every adapter via unbounded `spawnSync` even with
+  `--no-fallback`. A hung `probe()` or `git worktree remove` left the parent at
+  ~0% CPU with no `tasks/<uuid>/` dir. Now:
+  - Launch GC is detached (`AGENT_COLLAB_LAUNCH_GC=sync|off` to override).
+  - `--no-fallback` / empty `fallbackKinds` with an explicit worker skips
+    `runSetup()`.
+  - Control-plane `run()` gets a 15s default timeout (`AGENT_COLLAB_CMD_TIMEOUT_MS`;
+    `0` disables). Idle-guarded workers keep the role-sized hard timeout.
+  - `git worktree add/remove/prune` and `listWorktrees` use that deadline.
+  - GC unlinks out-of-root symlinks without following them into a live tree.
+  - Stderr `agent-collab <iso> …` lines log before task registration.
+
 ## 0.13.0 - 2026-08-23
 
 - **DeepSeek Harness (`dsh`) is a full citizen.** Driver, worker, and reviewer.

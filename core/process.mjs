@@ -177,6 +177,16 @@ export function run(command, args = [], opts = {}) {
     // spawnSync does not escalate its default SIGTERM, so make the documented
     // +30s outer backstop a real, unconditional ceiling.
     spawnOpts.killSignal = "SIGKILL";
+  } else if (spawnOpts.timeout === undefined) {
+    // Probes, git, and other control-plane spawnSync calls have no idle-guard.
+    // Without a deadline they park the parent at 0% CPU forever (#1548).
+    // Workers pass idleMs>0 and keep the role-sized hard timeout above.
+    const raw = process.env.AGENT_COLLAB_CMD_TIMEOUT_MS;
+    const parsed = raw === undefined || raw === "" ? 15000 : Number(raw);
+    if (Number.isFinite(parsed) && parsed > 0) {
+      spawnOpts.timeout = parsed;
+      spawnOpts.killSignal = spawnOpts.killSignal || "SIGKILL";
+    }
   }
 
   try {

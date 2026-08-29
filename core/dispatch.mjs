@@ -1425,11 +1425,17 @@ export function runWithFallback(cwd, opts) {
         ? new Set()
         : resolveFallbackKinds();
   // Auto-fallback candidates are base harnesses only (not instance aliases).
-  const avail =
-    available ||
-    runSetup(undefined, { workspace: cwd })
-      .filter((r) => r.validWorker && !r.instance)
-      .map((r) => r.name);
+  // --no-fallback / empty fallbackKinds with an explicit worker must NOT
+  // probe every harness: runSetup() is unbounded spawnSync per adapter and
+  // is how delegate hung before a task dir existed (#1548). Dual review
+  // also passes an empty kinds set per leg.
+  const skipSetup = kinds.size === 0 && Boolean(worker) && available == null;
+  const avail = skipSetup
+    ? []
+    : available ||
+      runSetup(undefined, { workspace: cwd })
+        .filter((r) => r.validWorker && !r.instance)
+        .map((r) => r.name);
 
   // Candidate order: the EXPLICITLY-requested worker first — always honored, even
   // if it equals the (possibly merely guessed) driver label — then the remaining

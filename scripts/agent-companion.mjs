@@ -2,6 +2,7 @@
 // agent-collaboration companion CLI. Generalized from codex-plugin-cc's
 // codex-companion.mjs (Apache-2.0, Copyright 2026 OpenAI) into a harness-agnostic
 // dispatcher. Slash commands are thin wrappers over these subcommands.
+import { spawn } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -114,14 +115,41 @@ const [subcommand, ...rest] = process.argv.slice(2);
 const { options, positionals } = parseArgs(rest);
 const cwd = process.cwd();
 
+function logLaunch(msg) {
+  if (process.env.AGENT_COLLAB_VERBOSE === "off") return;
+  process.stderr.write(`agent-collab ${new Date().toISOString()} ${msg}\n`);
+}
+
 function automaticGarbageCollection() {
+  const mode = process.env.AGENT_COLLAB_LAUNCH_GC || "detached";
+  if (mode === "off") {
+    logLaunch("gc: skipped");
+    return null;
+  }
+  if (mode === "sync") {
+    logLaunch("gc: sync start");
+    try {
+      // Keep housekeeping bounded: at most 100 old artifact trees per invocation.
+      const result = collectGarbage(cwd, { maxArtifactScans: 100 });
+      logLaunch("gc: sync done");
+      return result;
+    } catch (e) {
+      logLaunch(`gc: sync error ${e?.message || e}`);
+      return null;
+    }
+  }
+  // Default: never block delegate/review/setup on janitor I/O or git (#1548).
   try {
-    // Keep housekeeping off the launch critical path: at most 100 old artifact
-    // trees are recursively inspected per invocation. Explicit `gc` is unbounded.
-    return collectGarbage(cwd, { maxArtifactScans: 100 });
-  } catch {
-    // Launches must not fail because best-effort cleanup encountered a transient
-    // filesystem or git error. The explicit `gc` command reports those details.
+    const child = spawn(process.execPath, [fileURLToPath(import.meta.url), "gc"], {
+      cwd,
+      detached: true,
+      stdio: "ignore"
+    });
+    child.unref();
+    logLaunch(`gc: detached pid=${child.pid}`);
+    return { detached: true, pid: child.pid };
+  } catch (e) {
+    logLaunch(`gc: detach failed ${e?.message || e}`);
     return null;
   }
 }
@@ -135,6 +163,7 @@ if (subcommand === "version" || subcommand === "--version" || options.version) {
 
 switch (subcommand) {
   case "setup": {
+    logLaunch("setup start");
     if (options["retention-days"] !== undefined) {
       const days = Number(options["retention-days"]);
       if (!Number.isFinite(days) || days < 0) fail("setup: --retention-days must be a non-negative number (0 disables artifact expiry)");
@@ -166,7 +195,9 @@ switch (subcommand) {
   case "delegate":
   case "review":
   case "adversarial-review": {
+    logLaunch(`${subcommand} start`);
     automaticGarbageCollection();
+    logLaunch(`${subcommand} post-gc`);
     const { driver, source: driverSource } = resolveDriver(options);
     const worker = options.worker;
     // Dual review (`--workers a,b`) has no single --worker; delegate still requires one.
@@ -316,6 +347,7 @@ switch (subcommand) {
   }
 
   case "doctor": {
+    logLaunch("doctor start");
     const live = !!options.live;
     const workers = options.workers
       ? options.workers.split(",").map((s) => s.trim()).filter(Boolean)
@@ -334,6 +366,7 @@ switch (subcommand) {
   }
 
   case "recommend": {
+    logLaunch("recommend start");
     if (options.profiles) {
       out(MODEL_PROFILES, options, renderProfiles(MODEL_PROFILES));
       break;

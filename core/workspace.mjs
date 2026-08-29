@@ -2,11 +2,11 @@
 // resolveWorkspaceRoot keyed state by the git toplevel. This version resolves the
 // MAIN workspace root even when called inside a linked worktree, so a worker
 // running in a worktree shares state/artifacts with its driver.
-import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
+import { run } from "./process.mjs";
 import { resolveStateDir } from "./state.mjs";
 
 export function canonical(p) {
@@ -17,12 +17,22 @@ export function canonical(p) {
   }
 }
 
+function gitTimeoutMs() {
+  const raw = process.env.AGENT_COLLAB_GIT_TIMEOUT_MS ?? process.env.AGENT_COLLAB_CMD_TIMEOUT_MS;
+  if (raw === undefined || raw === "") return 15000;
+  const n = Number(raw);
+  return Number.isFinite(n) && n >= 0 ? n : 15000;
+}
+
 function git(args, cwd) {
-  return execFileSync("git", args, {
-    cwd,
-    encoding: "utf8",
-    stdio: ["ignore", "pipe", "ignore"]
-  }).trim();
+  const timeout = gitTimeoutMs();
+  const r = run("git", args, { cwd, timeout: timeout || undefined });
+  if (r.error || r.status !== 0) {
+    const err = new Error((r.stderr || r.error?.message || `git ${args.join(" ")} failed`).trim());
+    err.code = r.error?.code;
+    throw err;
+  }
+  return (r.stdout || "").trim();
 }
 
 /**
@@ -94,12 +104,13 @@ export function isPrimaryCheckout(cwd) {
 /** Every worktree (main checkout + every linked one) registered for this repo. */
 export function listWorktrees(root) {
   try {
-    const out = execFileSync("git", ["worktree", "list", "--porcelain"], {
+    const timeout = gitTimeoutMs();
+    const r = run("git", ["worktree", "list", "--porcelain"], {
       cwd: root,
-      encoding: "utf8",
-      stdio: ["ignore", "pipe", "ignore"]
+      timeout: timeout || undefined
     });
-    return out
+    if (r.status !== 0) return [];
+    return (r.stdout || "")
       .split("\n")
       .filter((l) => l.startsWith("worktree "))
       .map((l) => canonical(l.slice("worktree ".length).trim()));

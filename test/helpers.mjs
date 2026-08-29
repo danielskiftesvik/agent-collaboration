@@ -42,6 +42,7 @@ export function isolateStateRoot() {
   process.env.AGENT_COLLAB_DATA = dir;
   process.env.AGENT_COLLAB_SANDBOX = "off";
   process.env.AGENT_COLLAB_ALLOW_NONWRITER = "on";
+  process.env.AGENT_COLLAB_LAUNCH_GC = "off";
   return dir;
 }
 

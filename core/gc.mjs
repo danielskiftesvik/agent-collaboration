@@ -16,9 +16,22 @@ const DEFAULT_TERMINAL_LIVE_GRACE_MS = 60 * 60 * 1000;
 
 function directoryEntries(dir) {
   try {
-    return fs.readdirSync(dir, { withFileTypes: true }).filter((entry) => entry.isDirectory());
+    return fs.readdirSync(dir, { withFileTypes: true }).filter(
+      (entry) => entry.isDirectory() || entry.isSymbolicLink()
+    );
   } catch {
     return [];
+  }
+}
+
+/** Unlink a symlink without following it. Never fs.rmSync a resolved live tree. */
+export function unlinkEscapedSymlink(target) {
+  try {
+    if (!fs.lstatSync(target).isSymbolicLink()) return false;
+    fs.unlinkSync(target);
+    return true;
+  } catch {
+    return false;
   }
 }
 
@@ -90,7 +103,12 @@ export function cleanupJobWorktree(cwd, job, options = {}) {
   const target = job?.workspace;
   const result = { id: job?.id ?? path.basename(target ?? ""), path: target ?? null, removed: false };
   if (!target) return { ...result, reason: "no-worktree" };
-  if (!isManagedWorktree(cwd, target)) return { ...result, reason: "outside-managed-root" };
+  if (!isManagedWorktree(cwd, target)) {
+    if (!options.dryRun && unlinkEscapedSymlink(target)) {
+      return { ...result, removed: true, reason: "escaped-symlink" };
+    }
+    return { ...result, reason: "outside-managed-root" };
+  }
   if (!isTerminalStatus(job?.status)) return { ...result, reason: "nonterminal" };
   if (job?.pid && isPidAlive(job.pid)) {
     const terminalStamp = Date.parse(job.completedAt ?? job.terminalAt ?? job.updatedAt ?? job.createdAt ?? "");
@@ -140,6 +158,24 @@ function collectWorktrees(cwd, state, options) {
 
   for (const entry of entries) {
     const target = path.join(root, entry.name);
+    let isLink = false;
+    try {
+      isLink = fs.lstatSync(target).isSymbolicLink();
+    } catch {
+      /* vanished */
+    }
+    if (isLink && !isManagedWorktree(cwd, target)) {
+      if (options.dryRun) {
+        removed.push({ id: entry.name, path: target, bytes: 0, reason: "escaped-symlink", dryRun: true });
+        continue;
+      }
+      if (unlinkEscapedSymlink(target)) {
+        removed.push({ id: entry.name, path: target, bytes: 0, reason: "escaped-symlink" });
+      } else {
+        skipped.push({ id: entry.name, path: target, reason: "escaped-symlink-unlink-failed" });
+      }
+      continue;
+    }
     const known = jobs.get(entry.name);
     if (!known) {
       if (options.stateReliable === false) {

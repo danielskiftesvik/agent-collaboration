@@ -171,7 +171,7 @@ test("each collaboration launch runs the safe worktree janitor", () => {
 
   const r = cli(["delegate", "--driver", "claude", "--worker", "claude", "do a thing"], {
     cwd: repo,
-    env: { AGENT_COLLAB_DATA: dataDir }
+    env: { AGENT_COLLAB_DATA: dataDir, AGENT_COLLAB_LAUNCH_GC: "sync" }
   });
 
   assert.equal(r.status, 0, r.stderr);
