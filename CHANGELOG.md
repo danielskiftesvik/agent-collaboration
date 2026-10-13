@@ -10,6 +10,9 @@
   scenario written only in the body no longer counts. Every reviewer contract
   and the dispatch fallback ask for it, `normalizeReviewArtifact` trims it, and
   `mergeReviews` keeps it when a leg escalates a finding to critical.
+- **Repair re-prompts name the validation errors.** A schema-invalid result is
+  re-prompted with its error lines (up to 20), on both the resumed-thread and
+  fresh re-send paths, so a reviewer is told which finding lacks a field.
 
 ## 0.13.1 - 2026-08-29
 

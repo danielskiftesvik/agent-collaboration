@@ -953,12 +953,24 @@ export function runWorkerSync(cwd, opts) {
 
   // Repair prompts: a full fresh re-send vs. a short ask used when CONTINUING the
   // worker's existing thread (resume) — there the context is already loaded.
-  const freshRepair =
+  // Both name the previous attempt's validation errors, so a reviewer that left
+  // out a required field (e.g. reachable_scenario on a critical finding) is
+  // told which finding lacks it.
+  const validationErrorLines = () => {
+    const errors = Array.isArray(coerce?.errors) ? coerce.errors.filter((e) => typeof e === "string") : [];
+    if (!errors.length) return "";
+    const shown = errors.slice(0, 20).map((e) => `- ${e}`);
+    if (errors.length > shown.length) shown.push(`- (${errors.length - shown.length} more)`);
+    return `\nValidation errors:\n${shown.join("\n")}`;
+  };
+  const freshRepair = () =>
     `${basePrompt}\n\nIMPORTANT: your previous reply was not valid. ` +
-    `Respond with ONLY a single JSON object matching the schema above — no prose.`;
-  const resumeRepair =
+    `Respond with ONLY a single JSON object matching the schema above — no prose.` +
+    validationErrorLines();
+  const resumeRepair = () =>
     "Your previous reply was not valid for the required schema. Re-send ONLY a " +
-    "single JSON object matching that schema — no prose, nothing else.";
+    "single JSON object matching that schema — no prose, nothing else." +
+    validationErrorLines();
   // OpenCode (and similar) null-turn: same session, short nudge — do not restart.
   const continueNudge =
     "Your previous turn produced no usable answer (null turn / empty completion). " +
@@ -991,7 +1003,7 @@ export function runWorkerSync(cwd, opts) {
       // a fresh full re-send so resume can never regress.
       // Skip thread-resume when noResume (background runs): `--resume-last` /
       // bare `--continue` can resolve a DIFFERENT job's thread under concurrency.
-      const repairBrief = pendingNullTurnNudge ? continueNudge : resumeRepair;
+      const repairBrief = pendingNullTurnNudge ? continueNudge : resumeRepair();
       const retryCmd = (!noResume && adapter.buildRetryCommand)
         ? buildCmd(() =>
             adapter.buildRetryCommand({
@@ -1011,13 +1023,13 @@ export function runWorkerSync(cwd, opts) {
         proc = execGuarded(cmd);
         if (adapter.isResumeMiss && adapter.isResumeMiss(proc)) {
           cmd = buildCmd(() =>
-            adapter.buildCommand({ role, brief: freshRepair, workspace, artifactDir, timeoutMs, profile })
+            adapter.buildCommand({ role, brief: freshRepair(), workspace, artifactDir, timeoutMs, profile })
           );
           proc = execGuarded(cmd);
         }
       } else {
         cmd = buildCmd(() =>
-          adapter.buildCommand({ role, brief: freshRepair, workspace, artifactDir, timeoutMs, profile })
+          adapter.buildCommand({ role, brief: freshRepair(), workspace, artifactDir, timeoutMs, profile })
         );
         proc = execGuarded(cmd);
       }
