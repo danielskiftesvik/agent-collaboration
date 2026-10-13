@@ -126,15 +126,26 @@ test("codex telemetry is null when two completed jobs share the latest completed
   assert.deepEqual(r.telemetry, { threadId: THREAD, turnId: null, resolvedModel: null, effort: null });
 });
 
-test("codex telemetry picks the latest completed turn when completedAt differs", () => {
+test("codex telemetry is null when the thread has two completed jobs, even if the later one has an EARLIER completedAt", () => {
   const { artifactDir, home } = fixture();
-  writeJob(artifactDir, "task-1", completedJob({ completedAt: "2026-10-13T07:00:00.000Z", turnId: OTHER_TURN }));
-  writeJob(artifactDir, "task-2", completedJob({ id: "task-2" }));
-  writeRollout(home, [turnContext({ turn_id: OTHER_TURN, model: "gpt-old", effort: "low" }, {}), turnContext()]);
+  // Wall-clock rollback: the second (later) attempt carries the earlier stamp.
+  writeJob(artifactDir, "task-1", completedJob());
+  writeJob(artifactDir, "task-2", completedJob({ id: "task-2", turnId: OTHER_TURN, completedAt: "2026-10-13T07:00:00.000Z" }));
+  writeRollout(home, [turnContext(), turnContext({ turn_id: OTHER_TURN, model: "gpt-6-luna", effort: "xhigh" }, {})]);
   const r = parse({ artifactDir, home });
-  assert.equal(r.telemetry.turnId, TURN);
-  assert.equal(r.telemetry.resolvedModel, "gpt-5.6-luna");
-  assert.equal(r.telemetry.effort, "medium");
+  assert.equal(r.telemetry.resolvedModel, null, "two same-thread jobs must not be ordered by wall clock");
+  assert.equal(r.telemetry.effort, null);
+  assert.equal(r.telemetry.turnId, null);
+});
+
+test("codex telemetry is null when artifactDir holds any second companion job (a repair attempt on another thread)", () => {
+  const { artifactDir, home } = fixture();
+  writeJob(artifactDir, "task-1", completedJob());
+  writeJob(artifactDir, "task-0", { id: "task-0", status: "failed", threadId: "01a1344a-cf0a-7510-b1a0-bd95629856ff" });
+  writeRollout(home, [turnContext()]);
+  const r = parse({ artifactDir, home });
+  assert.equal(r.telemetry.resolvedModel, null, "a job with a repair attempt must not bind");
+  assert.equal(r.telemetry.effort, null);
 });
 
 test("codex telemetry ignores a job record outside artifactDir (sibling dir or symlink escape)", () => {
@@ -247,25 +258,33 @@ test("codex telemetry follows a symlinked sessions directory", () => {
   assert.equal(r.telemetry.effort, "medium");
 });
 
-test("codex telemetry refuses a rollout over the 64 MiB cap without reading it", () => {
+test("codex telemetry refuses a rollout over the 1 GiB cap without reading it", () => {
   const { artifactDir, home } = fixture();
   writeJob(artifactDir, "task-1", completedJob());
   const file = writeRollout(home, [turnContext()]);
-  fs.truncateSync(file, 64 * 1024 * 1024 + 1); // sparse: no real disk use
+  fs.truncateSync(file, 1024 * 1024 * 1024 + 1); // sparse: no real disk use
   const readSync = mock.method(fs, "readSync");
   const readFileSync = mock.method(fs, "readFileSync");
   try {
     const r = parse({ artifactDir, home });
     assert.equal(r.telemetry.resolvedModel, null);
     assert.equal(r.telemetry.effort, null);
-    const touched = [...readSync.mock.calls, ...readFileSync.mock.calls].length;
-    const readWhole = readFileSync.mock.calls.some((c) => String(c.arguments[0]) === file);
-    assert.equal(readWhole, false, "the rollout must not be read whole");
-    assert.equal(readSync.mock.calls.length, 0, `rollout bytes were read (${touched} read calls)`);
+    assert.equal(readFileSync.mock.calls.some((c) => String(c.arguments[0]) === file), false, "the rollout must not be read whole");
+    assert.equal(readSync.mock.calls.length, 0, "no rollout bytes may be read over the cap");
   } finally {
     readSync.mock.restore();
     readFileSync.mock.restore();
   }
+});
+
+test("codex telemetry binds a 100 MiB rollout (real sessions reach 111 MB)", () => {
+  const { artifactDir, home } = fixture();
+  writeJob(artifactDir, "task-1", completedJob());
+  const file = writeRollout(home, [turnContext()]);
+  fs.truncateSync(file, 100 * 1024 * 1024); // sparse tail, one huge NUL line
+  const r = parse({ artifactDir, home });
+  assert.equal(r.telemetry.resolvedModel, "gpt-5.6-luna");
+  assert.equal(r.telemetry.effort, "medium");
 });
 
 test("codex telemetry reads a rollout under the cap in bounded chunks, never whole", () => {
@@ -304,6 +323,92 @@ test("codex telemetry uses the spawn env CODEX_HOME over a conflicting ambient s
   }
 });
 
+function withReaddirEnoent(target, fn) {
+  const real = fs.readdirSync;
+  const spy = mock.method(fs, "readdirSync", function (dir, ...rest) {
+    if (String(dir) === target) {
+      const err = new Error(`ENOENT: no such file or directory, scandir '${target}'`);
+      err.code = "ENOENT";
+      throw err;
+    }
+    return real.call(fs, dir, ...rest);
+  });
+  try {
+    return fn();
+  } finally {
+    spy.mock.restore();
+  }
+}
+
+test("codex telemetry fails closed when a sessions child vanishes after its parent was listed", () => {
+  const { artifactDir, home } = fixture();
+  writeJob(artifactDir, "task-1", completedJob());
+  writeRollout(home, [turnContext()]);
+  const other = path.join(home, "sessions", "2026", "10", "14");
+  fs.mkdirSync(other, { recursive: true });
+  const r = withReaddirEnoent(other, () => parse({ artifactDir, home }));
+  assert.equal(r.telemetry.resolvedModel, null, "ENOENT on a listed child is an incomplete scan");
+  assert.equal(r.telemetry.effort, null);
+});
+
+test("codex telemetry fails closed when a companion jobs directory vanishes after its slug was listed", () => {
+  const { artifactDir, home } = fixture();
+  writeJob(artifactDir, "task-1", completedJob());
+  writeRollout(home, [turnContext()]);
+  const slug = path.join(artifactDir, "codex-companion", "state", "ws-other");
+  fs.mkdirSync(slug, { recursive: true });
+  const r = withReaddirEnoent(path.join(slug, "jobs"), () => parse({ artifactDir, home }));
+  assert.equal(r.telemetry.resolvedModel, null, "ENOENT on a listed slug's jobs dir is an incomplete scan");
+});
+
+test("codex telemetry is null/null when the companion state root does not exist", () => {
+  const { artifactDir, home } = fixture();
+  writeRollout(home, [turnContext()]);
+  assert.deepEqual(parse({ artifactDir, home }).telemetry, { threadId: THREAD, turnId: null, resolvedModel: null, effort: null });
+});
+
+test("codex telemetry recognises turn_context independent of JSON whitespace and key order", () => {
+  const { artifactDir, home } = fixture();
+  writeJob(artifactDir, "task-1", completedJob());
+  const payload = {
+    turn_id: TURN, model: "gpt-5.6-luna", effort: "medium",
+    collaboration_mode: { settings: { model: "gpt-5.6-luna", reasoning_effort: "medium" } },
+    cwd: "/x/" + "p".repeat(400)
+  };
+  // Payload first pushes the record kind far past the line head; spaces around ':'.
+  const spaced = `{"payload" : ${JSON.stringify(payload)}, "timestamp" : "${COMPLETED_AT}", "type" : "turn_context"}`;
+  writeRollout(home, [spaced]);
+  const r = parse({ artifactDir, home });
+  assert.equal(r.telemetry.resolvedModel, "gpt-5.6-luna");
+  assert.equal(r.telemetry.effort, "medium");
+});
+
+test("codex telemetry fails closed on a malformed whitespace-variant turn_context candidate", () => {
+  const { artifactDir, home } = fixture();
+  writeJob(artifactDir, "task-1", completedJob());
+  writeRollout(home, [turnContext(), '{"timestamp": "x", "type" :  "turn_context", "payload": {"turn_id": ']);
+  assert.equal(parse({ artifactDir, home }).telemetry.resolvedModel, null);
+});
+
+test("codex telemetry does not mistake an escaped turn_context mention in tool output for a record", () => {
+  const { artifactDir, home } = fixture();
+  writeJob(artifactDir, "task-1", completedJob());
+  const mention = JSON.stringify({ type: "response_item", payload: { text: 'grep \'"type":"turn_context"\' broken {' } });
+  writeRollout(home, [mention, turnContext()]);
+  assert.equal(parse({ artifactDir, home }).telemetry.resolvedModel, "gpt-5.6-luna");
+});
+
+test("codex telemetry fails closed on a turn_context with an array payload or no turn_id", () => {
+  const first = fixture();
+  writeJob(first.artifactDir, "task-1", completedJob());
+  writeRollout(first.home, [turnContext(), JSON.stringify({ timestamp: COMPLETED_AT, type: "turn_context", payload: [TURN] })]);
+  assert.equal(parse(first).telemetry.resolvedModel, null, "array payload must be ambiguous");
+  const second = fixture();
+  writeJob(second.artifactDir, "task-1", completedJob());
+  writeRollout(second.home, [turnContext(), JSON.stringify({ timestamp: COMPLETED_AT, type: "turn_context", payload: { model: "gpt-x", effort: "low" } })]);
+  assert.equal(parse(second).telemetry.resolvedModel, null, "turn_context without turn_id must be ambiguous");
+});
+
 test("codex output-form and plain-text results carry explicit null telemetry", () => {
   const codex = getAdapter("codex");
   const outputForm = codex.parseOutput({ stdout: JSON.stringify({ output: ANSWER }) });
@@ -323,20 +428,14 @@ test("codex output-form result with a thread id resolves its turn like the envel
   assert.equal(r.telemetry.effort, "medium");
 });
 
-test("codex telemetry fails closed when the completed job has no completedAt", () => {
+test("codex telemetry binding never reads completedAt (a single job binds without one)", () => {
   const { artifactDir, home } = fixture();
   const { completedAt, ...noStamp } = completedJob();
   writeJob(artifactDir, "task-1", noStamp);
   writeRollout(home, [turnContext()]);
   const r = parse({ artifactDir, home });
-  assert.deepEqual(r.telemetry, { threadId: THREAD, turnId: null, resolvedModel: null, effort: null });
-});
-
-test("codex telemetry fails closed on a non-canonical completedAt", () => {
-  const { artifactDir, home } = fixture();
-  writeJob(artifactDir, "task-1", completedJob({ completedAt: "2026-10-13T08:00:00Z" }));
-  writeRollout(home, [turnContext()]);
-  assert.equal(parse({ artifactDir, home }).telemetry.turnId, null);
+  assert.equal(r.telemetry.resolvedModel, "gpt-5.6-luna");
+  assert.equal(r.telemetry.effort, "medium");
 });
 
 test("codex telemetry is null when turn_context disagrees with its collaboration_mode settings", () => {
@@ -464,7 +563,7 @@ test("a codex repair whose final response is plain text records null, not attemp
   assertNullAttribution(out);
 });
 
-test("a codex repair with its own bound turn records the repair turn's model and effort", () => {
+test("a codex repair is never turn-bound, even when attempt 2 has its own bound turn", () => {
   const out = runCodexStub(
     [ATTEMPT1_BOUND, { job: completedJob({ id: "task-2", threadId: THREAD2, turnId: TURN2, completedAt: LATER }), stdout: envelope({ threadId: THREAD2 }) }],
     {
@@ -475,9 +574,15 @@ test("a codex repair with its own bound turn records the repair turn's model and
     }
   );
   assert.equal(out.attempts, 2);
-  assert.equal(out.res.resolvedModel, "gpt-6-luna");
-  assert.equal(out.res.workerTelemetry?.effort, "xhigh");
-  assert.equal(out.res.workerTelemetry?.turnId, TURN2);
-  assert.equal(out.job.resolvedModel, "gpt-6-luna");
-  assert.equal(out.job.workerTelemetry?.effort, "xhigh");
+  assertNullAttribution(out);
+});
+
+test("a same-thread codex repair after a clock rollback records null, not attempt 1's turn", () => {
+  const out = runCodexStub(
+    [ATTEMPT1_BOUND, { job: completedJob({ id: "task-2", turnId: TURN2, completedAt: "2026-10-13T07:00:00.000Z" }), stdout: envelope() }],
+    { rollouts: [{ lines: [turnContext(), turnContext({ turn_id: TURN2, model: "gpt-6-luna", effort: "xhigh" }, {})] }] }
+  );
+  assert.equal(out.attempts, 2);
+  assert.equal(out.res.status, "completed");
+  assertNullAttribution(out);
 });
