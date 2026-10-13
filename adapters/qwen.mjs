@@ -52,6 +52,7 @@
 // retry call (shared plumbing, not a qwen-only change) — deferred; repair falls
 // back to the dispatch layer's existing fresh-re-send path.
 import { defineAdapter } from "./contract.mjs";
+import { REACHABLE_SCENARIO_INSTRUCTION } from "../core/schema.mjs";
 import { run } from "../core/process.mjs";
 
 const bin = () => process.env.AGENT_COLLAB_QWEN_BIN || "qwen";
@@ -144,9 +145,11 @@ export default defineAdapter({
         "no markdown headings, no commentary. Match this exact shape (replace the values):\n" +
         '{"verdict":"approve" | "needs-attention","summary":"<one line>",' +
         '"findings":[{"severity":"high","title":"...","body":"...","file":"path",' +
-        '"line_start":1,"line_end":1,"confidence":0.9,"recommendation":"..."}],' +
+        '"line_start":1,"line_end":1,"confidence":0.9,"recommendation":"...",' +
+        '"reachable_scenario":"..."}],' +
         '"next_steps":["..."]}. Every actionable defect must be in findings; never hide defects in ' +
-        'summary or next_steps. A needs-attention verdict requires at least one finding.'
+        'summary or next_steps. A needs-attention verdict requires at least one finding. ' +
+        REACHABLE_SCENARIO_INSTRUCTION
       );
     }
     return (

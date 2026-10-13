@@ -7,7 +7,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { defineAdapter } from "./contract.mjs";
-import { extractJson } from "../core/schema.mjs";
+import { extractJson, REACHABLE_SCENARIO_INSTRUCTION } from "../core/schema.mjs";
 import { resolvePin } from "../core/pins.mjs";
 
 const CLEANUP_BROKER = fileURLToPath(new URL("../scripts/cleanup-codex-broker.mjs", import.meta.url));
@@ -127,7 +127,8 @@ export default defineAdapter({
     const shape =
       role === "reviewer"
         ? "verdict (approve|needs-attention), summary, findings[] " +
-          "(severity, title, body, file, line_start, line_end, confidence, recommendation), next_steps[]"
+          "(severity, title, body, file, line_start, line_end, confidence, recommendation, reachable_scenario), " +
+          "next_steps[]"
         : "status (completed|failed|blocked), summary, changed (boolean)";
     return (
       "\n\n<structured_output_contract>\n" +
@@ -135,6 +136,7 @@ export default defineAdapter({
       shape +
       "\nPut the highest-value items first. Every actionable defect must be a finding; " +
       "never hide defects in summary or next_steps. A needs-attention verdict requires at least one finding. " +
+      (role === "reviewer" ? REACHABLE_SCENARIO_INSTRUCTION + " " : "") +
       "Keep it compact.\n" +
       "</structured_output_contract>"
     );

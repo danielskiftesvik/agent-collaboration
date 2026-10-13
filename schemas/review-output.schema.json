@@ -64,6 +64,11 @@
           },
           "recommendation": {
             "type": "string"
+          },
+          "reachable_scenario": {
+            "$comment": "Required when severity is critical (after severity normalization): who, on what device or tooling run, does what, and what goes wrong. The cross-field rule lives in core/schema.mjs validate().",
+            "type": "string",
+            "minLength": 1
           }
         }
       }

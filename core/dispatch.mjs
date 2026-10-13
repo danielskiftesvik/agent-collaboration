@@ -14,7 +14,7 @@ import { createWorktree, removeWorktree, resolveWorkspaceRoot, canonical, listWo
 import { headRef, upstreamRef, isAncestorOf, isBenignRemoteFastForward, reflogCount, captureWorkingDiff, captureWorkingTreeSnapshot, applyPatch, checkPatchApplies, checkPatchAppliesOnRef, workingTreeStatus, workingTreeDigest, newStatusPaths, stageDiffIntoWorktree, diffPaths, looksLikeDiff, extractUnifiedDiff } from "./git.mjs";
 import { run } from "./process.mjs";
 import { isPidAlive, isStalled, touchHeartbeat } from "./heartbeat.mjs";
-import { coerceArtifact, normalizeReviewArtifact } from "./schema.mjs";
+import { coerceArtifact, normalizeReviewArtifact, REACHABLE_SCENARIO_INSTRUCTION } from "./schema.mjs";
 import { buildFromTemplate, templateDigest } from "./prompts.mjs";
 import { classifyFailure, FALLBACK_KINDS } from "./failures.mjs";
 import { MODEL_PROFILES, TASK_ROUTING, DEFAULT_ROUTING, WRITE_TASKS, resolveModelTimeout } from "./model-profiles.mjs";
@@ -415,14 +415,16 @@ const NATIVE_INSTRUCTION = {
   opencode: "Use opencode's built-in subagent/task capabilities instead of a cross-harness job."
 };
 
-function schemaInstruction(role) {
+export function schemaInstruction(role) {
   if (role === "reviewer") {
     return (
       '\n\n---\nReturn ONLY a JSON object (optionally in a ```json fence) of the form:\n' +
       '{"verdict":"approve"|"needs-attention","summary":string,' +
       '"findings":[{"severity":"critical"|"high"|"medium"|"low","title":string,"body":string,' +
-      '"file":string,"line_start":int,"line_end":int,"confidence":0..1,"recommendation":string}],' +
-      '"next_steps":[string]}'
+      '"file":string,"line_start":int,"line_end":int,"confidence":0..1,"recommendation":string,' +
+      '"reachable_scenario":string}],' +
+      '"next_steps":[string]}\n' +
+      REACHABLE_SCENARIO_INSTRUCTION
     );
   }
   return (

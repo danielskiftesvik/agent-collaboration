@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.13.2 - 2026-10-13
+
+- **Critical review findings must name a reachable scenario.** A finding whose
+  severity is (or normalizes to) `critical` now needs a non-blank
+  `reachable_scenario` string (who, on what device or tooling run, does what,
+  and what goes wrong); without it the review is schema-invalid
+  (`resultValid: false`). Downstream merge gates read only this field, so a
+  scenario written only in the body no longer counts. Every reviewer contract
+  and the dispatch fallback ask for it, `normalizeReviewArtifact` trims it, and
+  `mergeReviews` keeps it when a leg escalates a finding to critical.
+
 ## 0.13.1 - 2026-08-29
 
 - **Launch no longer parks on janitor I/O or sibling probes (#1548).**

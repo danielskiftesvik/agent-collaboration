@@ -69,7 +69,8 @@ export function mergeReviews(legs) {
             severity: f.severity,
             title: f.title,
             body: f.body,
-            recommendation: f.recommendation ?? match.recommendation
+            recommendation: f.recommendation ?? match.recommendation,
+            reachable_scenario: f.reachable_scenario ?? match.reachable_scenario
           });
         }
       } else {
