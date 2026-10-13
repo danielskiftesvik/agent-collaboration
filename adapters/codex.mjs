@@ -33,16 +33,19 @@ function isInside(root, candidate) {
 
 // Bounds for the telemetry scan. Every failed, oversized or incomplete read is
 // ambiguous and yields null; nothing is ever inferred from a partial scan.
+// Memory stays at one chunk plus one kept line; the file cap only bounds time.
 const MAX_JOB_BYTES = 1024 * 1024;
-const MAX_ROLLOUT_BYTES = 64 * 1024 * 1024;
+const MAX_ROLLOUT_BYTES = 1024 * 1024 * 1024;
 const ROLLOUT_CHUNK_BYTES = 1024 * 1024;
 const MAX_TURN_CONTEXT_LINE_BYTES = 1024 * 1024;
-// A rollout line is `{"timestamp":…,"type":<kind>,"payload":…}`; the record
-// kind sits in the first bytes, so only lines whose head names turn_context
-// are kept and parsed. Other lines (tool output can be megabytes) are skipped
-// without being held in memory.
-const LINE_HEAD_BYTES = 256;
-const TURN_CONTEXT_MARK = '"type":"turn_context"';
+// A turn_context record names its kind as `"type":"turn_context"` with any
+// JSON whitespace and in any key position. Inside a JSON string the quotes
+// are escaped (\"type\"), so a mention in tool output never matches.
+const TURN_CONTEXT_RE = /"type"\s*:\s*"turn_context"/;
+const TURN_CONTEXT_WORD = Buffer.from("turn_context");
+// Overflow lines (over the per-line cap) are scanned for the marker through a
+// sliding window instead of being held.
+const MARK_WINDOW_BYTES = 256;
 
 function realpathOrNull(p) {
   try {
@@ -52,13 +55,14 @@ function realpathOrNull(p) {
   }
 }
 
-// Directory listing for the scan: [] when the directory does not exist, null
-// (ambiguous) when it exists but cannot be read.
-function listDir(dir, withFileTypes) {
+// Directory listing for the scan. A missing ROOT is an empty scan ([]); any
+// error on a child that its parent just listed, ENOENT included, means the
+// scan is incomplete and returns null.
+function listDir(dir, withFileTypes, { root = false } = {}) {
   try {
     return fs.readdirSync(dir, withFileTypes ? { withFileTypes: true } : undefined);
   } catch (err) {
-    return err && err.code === "ENOENT" ? [] : null;
+    return root && err && err.code === "ENOENT" ? [] : null;
   }
 }
 
@@ -74,13 +78,19 @@ function readJsonFile(file, maxBytes) {
   }
 }
 
-function completedTurnId(artifactDir, threadId) {
+// The turn id of a SINGLE-ATTEMPT job, else null. artifactDir is one
+// agent-collaboration job; each companion task (the first attempt and every
+// repair re-send or resume) leaves one record in a jobs directory under it.
+// Telemetry binds only when there is exactly one such record, it is
+// completed, and it names this thread. Any repair attempt or sibling job
+// returns null, so no turn is ever chosen by wall-clock order.
+function singleAttemptTurnId(artifactDir, threadId) {
   const realArtifactDir = realpathOrNull(artifactDir);
   if (!realArtifactDir) return null;
   const root = path.join(artifactDir, "codex-companion", "state");
-  const slugs = listDir(root, true);
+  const slugs = listDir(root, true, { root: true });
   if (!slugs) return null;
-  const jobs = [];
+  const records = [];
   for (const slug of slugs) {
     if (!slug.isDirectory()) continue;
     const jobsDir = path.join(root, slug.name, "jobs");
@@ -94,23 +104,14 @@ function completedTurnId(artifactDir, threadId) {
       if (!real || !isInside(realArtifactDir, real)) return null;
       const job = readJsonFile(full, MAX_JOB_BYTES);
       if (!job) return null;
-      if (job.status !== "completed") continue;
-      if (job.threadId !== threadId) continue;
-      if (!UUID_RE.test(job.turnId || "")) return null;
-      const ms = parseCanonicalUtcMs(job.completedAt);
-      if (ms === null) return null;
-      jobs.push({ turnId: job.turnId, ms });
+      records.push(job);
+      if (records.length > 1) return null; // a repair attempt or a sibling job
     }
   }
-  if (!jobs.length) return null;
-  let latest = jobs[0].ms;
-  for (const job of jobs) {
-    if (job.ms > latest) latest = job.ms;
-  }
-  const top = jobs.filter((job) => job.ms === latest);
-  const ids = new Set(top.map((job) => job.turnId));
-  if (ids.size !== 1) return null;
-  return top[0].turnId;
+  if (records.length !== 1) return null;
+  const job = records[0];
+  if (job.status !== "completed" || job.threadId !== threadId) return null;
+  return UUID_RE.test(job.turnId || "") ? job.turnId : null;
 }
 
 // The sessions root may itself be a symlink (resolved first); each matching
@@ -156,23 +157,18 @@ function nonemptyString(value) {
   return typeof value === "string" && value.trim() ? value.trim() : null;
 }
 
-function parseCanonicalUtcMs(value) {
-  if (typeof value !== "string") return null;
-  const ms = Date.parse(value);
-  if (!Number.isFinite(ms)) return null;
-  if (new Date(ms).toISOString() !== value) return null;
-  return ms;
-}
-
 function settingsField(settings, key) {
   if (!settings || !Object.prototype.hasOwnProperty.call(settings, key)) return undefined;
   return settings[key];
 }
 
 // Null (ambiguous) unless every turn_context record for the turn parses, is
-// complete, and agrees. The rollout is read in bounded chunks: a file over
-// MAX_ROLLOUT_BYTES is refused before any read, at most the size seen at open
-// is read, and only turn_context lines (each capped) are held in memory.
+// complete, and agrees. The rollout is read in ROLLOUT_CHUNK_BYTES chunks up to
+// the size seen at open; a file over MAX_ROLLOUT_BYTES is refused before any
+// read. Lines up to MAX_TURN_CONTEXT_LINE_BYTES are held until their end and
+// parsed only if they carry the turn_context marker; a longer line is dropped
+// as it streams and, if the marker shows up in it, the scan is ambiguous. The
+// first matching row is kept and each later one compared at once.
 function readTurnContext(rolloutPath, turnId) {
   let fd;
   try {
@@ -183,41 +179,52 @@ function readTurnContext(rolloutPath, turnId) {
   try {
     const st = fs.fstatSync(fd);
     if (!st.isFile() || st.size > MAX_ROLLOUT_BYTES) return null;
-    const found = [];
+    let first = null;
+    let ambiguous = false;
     let pieces = [];
     let lineBytes = 0;
-    let mode = "head"; // head -> keep | skip, per line
-    let ambiguous = false;
+    let overflow = false;
+    let tail = Buffer.alloc(0); // overflow window carry
 
-    const decide = () => {
-      const head = Buffer.concat(pieces).subarray(0, LINE_HEAD_BYTES).toString("utf8");
-      if (head.includes(TURN_CONTEXT_MARK)) {
-        mode = "keep";
-      } else {
-        mode = "skip";
-        pieces = [];
+    const consider = (row) => {
+      if (row === null) ambiguous = true;
+      else if (row) {
+        if (!first) first = row;
+        else if (row.model !== first.model || row.effort !== first.effort) ambiguous = true;
       }
     };
-    const endLine = () => {
-      if (mode === "head" && lineBytes > 0) decide();
-      if (mode === "keep") {
-        const row = turnContextRow(Buffer.concat(pieces).toString("utf8"), turnId);
-        if (row === null) ambiguous = true;
-        else if (row) found.push(row);
-      }
-      pieces = [];
-      lineBytes = 0;
-      mode = "head";
+    const overflowScan = (seg) => {
+      const win = Buffer.concat([tail, seg]);
+      if (win.includes(TURN_CONTEXT_WORD) && TURN_CONTEXT_RE.test(win.toString("utf8"))) ambiguous = true;
+      tail = Buffer.from(win.subarray(Math.max(0, win.length - MARK_WINDOW_BYTES)));
     };
     const take = (seg) => {
-      if (!seg.length || mode === "skip") {
-        lineBytes += seg.length;
+      if (!seg.length) return;
+      lineBytes += seg.length;
+      if (overflow) {
+        overflowScan(seg);
         return;
       }
       pieces.push(seg);
-      lineBytes += seg.length;
-      if (mode === "head" && lineBytes >= LINE_HEAD_BYTES) decide();
-      if (mode === "keep" && lineBytes > MAX_TURN_CONTEXT_LINE_BYTES) ambiguous = true;
+      if (lineBytes > MAX_TURN_CONTEXT_LINE_BYTES) {
+        overflow = true;
+        const held = Buffer.concat(pieces);
+        pieces = [];
+        overflowScan(held);
+      }
+    };
+    const endLine = () => {
+      if (!overflow && lineBytes > 0) {
+        const line = Buffer.concat(pieces);
+        if (line.includes(TURN_CONTEXT_WORD)) {
+          const text = line.toString("utf8");
+          if (TURN_CONTEXT_RE.test(text)) consider(turnContextRow(text, turnId));
+        }
+      }
+      pieces = [];
+      lineBytes = 0;
+      overflow = false;
+      tail = Buffer.alloc(0);
     };
 
     const buf = Buffer.alloc(Math.min(ROLLOUT_CHUNK_BYTES, Math.max(1, st.size)));
@@ -241,12 +248,7 @@ function readTurnContext(rolloutPath, turnId) {
       }
     }
     if (!ambiguous && lineBytes > 0) endLine(); // final line without a newline
-    if (ambiguous || !found.length) return null;
-    const first = found[0];
-    for (const row of found.slice(1)) {
-      if (row.model !== first.model || row.effort !== first.effort) return null;
-    }
-    return first;
+    return ambiguous ? null : first;
   } catch {
     return null;
   } finally {
@@ -258,8 +260,8 @@ function readTurnContext(rolloutPath, turnId) {
   }
 }
 
-// One kept line: false = not this turn's record (skip), null = ambiguous,
-// otherwise { model, effort }.
+// One candidate line: false = not this turn's record (skip), null =
+// ambiguous, otherwise { model, effort }.
 function turnContextRow(line, turnId) {
   let rec;
   try {
@@ -267,13 +269,17 @@ function turnContextRow(line, turnId) {
   } catch {
     return null;
   }
-  if (rec?.type !== "turn_context") return false;
-  if (!rec.payload || typeof rec.payload !== "object") return null;
-  if (rec.payload.turn_id !== turnId) return false;
-  const model = nonemptyString(rec.payload.model);
-  const effort = nonemptyString(rec.payload.effort);
+  if (!rec || typeof rec !== "object" || Array.isArray(rec)) return null;
+  if (rec.type !== "turn_context") return false; // the marker sat in a nested object
+  const payload = rec.payload;
+  if (!payload || typeof payload !== "object" || Array.isArray(payload)) return null;
+  const recTurn = nonemptyString(payload.turn_id);
+  if (!recTurn) return null;
+  if (recTurn !== turnId) return false;
+  const model = nonemptyString(payload.model);
+  const effort = nonemptyString(payload.effort);
   if (!model || !effort) return null;
-  const settings = rec.payload.collaboration_mode?.settings;
+  const settings = payload.collaboration_mode?.settings;
   const nestedModel = settingsField(settings, "model");
   if (nestedModel !== undefined) {
     const nested = nonemptyString(nestedModel);
@@ -291,7 +297,7 @@ function resolveCodexTurnTelemetry({ artifactDir, env, threadId }) {
   const tid = nonemptyString(threadId);
   if (!tid || !UUID_RE.test(tid)) return emptyTelemetry(null, null);
   if (!artifactDir) return emptyTelemetry(tid, null);
-  const turnId = completedTurnId(artifactDir, tid);
+  const turnId = singleAttemptTurnId(artifactDir, tid);
   if (!turnId) return emptyTelemetry(tid, null);
   const home = resolveCodexHome(env || {});
   const rollout = findRollout(home, tid);

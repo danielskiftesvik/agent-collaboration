@@ -2,30 +2,30 @@
 
 ## 0.13.3 - 2026-10-13
 
-- **Codex jobs record the model and effort of the turn that actually ran.**
-  `resolvedModel` and `workerTelemetry.effort` (with `threadId` and `turnId`)
-  are now read from the completed turn's `turn_context` record in the Codex
-  rollout (`$CODEX_HOME/sessions/YYYY/MM/DD/rollout-*-<threadId>.jsonl`),
-  bound through the companion's job record under the job's `artifactDir`.
-  Model and effort claimed by the `task --json` envelope are never trusted.
-  Every ambiguity fails closed to `null`: no artifactDir, a non-UUID thread,
-  no completed job for the thread, two latest completed turns with different
-  ids, a missing or non-canonical `completedAt`, a job record that resolves
-  outside `artifactDir`, zero or several rollouts for the thread, or a
-  `turn_context` that is incomplete or disagrees with itself or its
-  `collaboration_mode` settings. `runWorkerSync` now passes `artifactDir` and
-  the spawn env to `parseOutput`.
+- **Codex jobs record the model and effort of the turn that actually ran,
+  for single-attempt jobs.** `resolvedModel` and `workerTelemetry.effort`
+  (with `threadId` and `turnId`) are read from the turn's `turn_context`
+  record in the Codex rollout
+  (`$CODEX_HOME/sessions/YYYY/MM/DD/rollout-*-<threadId>.jsonl`), bound
+  through the companion's job record under the job's `artifactDir`. They bind
+  only when `artifactDir` holds exactly one companion job record, completed,
+  for the envelope's thread: any repair attempt or sibling job gives null, so
+  no turn is ever chosen by wall-clock order. Model and effort claimed by the
+  `task --json` envelope are never trusted. `runWorkerSync` passes
+  `artifactDir` and the spawn env to `parseOutput`.
 - **A repair attempt never inherits an earlier attempt's model or effort.**
   Telemetry is per attempt: dispatch records the final attempt's telemetry
   only, so an attempt that cannot be attributed clears what an earlier one
   reported. Every codex output path (envelope, `output` form, plain text)
   returns explicit telemetry, null when unresolved.
-- **The telemetry scan fails closed and is bounded.** An unreadable directory,
-  a malformed or oversized job file, a malformed or truncated `turn_context`
-  record, or a rollout whose real path leaves the (real) sessions root gives
-  null; a symlinked `sessions` directory still works. Rollouts over 64 MiB
-  are refused before any read; smaller ones are read in 1 MiB chunks, and
-  only `turn_context` lines (each capped at 1 MiB) are held in memory.
+- **The telemetry scan fails closed and is bounded.** An unreadable
+  directory (or one listed a moment earlier that has vanished), a malformed
+  or oversized job file, a malformed, truncated or incomplete `turn_context`
+  record, a non-unique rollout, or a rollout whose real path leaves the
+  (real) sessions root gives null; a symlinked `sessions` directory still
+  works. `turn_context` records are recognised regardless of JSON whitespace
+  or key order. Rollouts are streamed in 1 MiB chunks holding at most one
+  line of up to 1 MiB; files over 1 GiB are refused before any read.
 
 ## 0.13.2 - 2026-10-13
 
