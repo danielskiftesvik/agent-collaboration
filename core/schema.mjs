@@ -77,8 +77,33 @@ export function validate(schema, value) {
   ) {
     errors.push("$.findings: needs-attention verdict requires at least one finding");
   }
+  // A critical finding must name its reachable scenario in a structured field:
+  // downstream merge gates read only `reachable_scenario`, never free text in
+  // the body, so a critical without it is not actionable as a blocker.
+  // Severity is normalized here too (blocker/crit/fatal count as critical), so
+  // the rule holds whether or not normalizeReviewArtifact ran first.
+  if (value && typeof value === "object" && !Array.isArray(value) && Array.isArray(value.findings)) {
+    value.findings.forEach((f, i) => {
+      if (!f || typeof f !== "object" || Array.isArray(f)) return;
+      if (normalizeSeverity(f.severity) !== "critical") return;
+      const scenario = f.reachable_scenario;
+      if (typeof scenario !== "string" || scenario.trim() === "") {
+        errors.push(`$.findings[${i}].reachable_scenario: ${REACHABLE_SCENARIO_ERROR}`);
+      }
+    });
+  }
   return { valid: errors.length === 0, errors };
 }
+
+const REACHABLE_SCENARIO_ERROR =
+  "required for a critical finding (who, on what device or tooling run, does what, and what goes wrong)";
+
+/** The reviewer-contract sentence every adapter (and the dispatch fallback)
+ *  appends, so reviewers know the field is required before validation rejects
+ *  the result. */
+export const REACHABLE_SCENARIO_INSTRUCTION =
+  "reachable_scenario is REQUIRED on every critical finding: who, on what device or tooling run, " +
+  "does what, and what goes wrong (the result is rejected without it).";
 
 /** Best-effort extraction of a JSON object from text that may wrap it in prose
  *  or a ```json fence (needed for harnesses like `agy` that print plain text). */
@@ -152,6 +177,7 @@ function normalizeVerdict(s) {
  * "normalize, don't reject" renderer:
  *   - lowercase/trim `verdict` and each finding's `severity` (codex emits "High")
  *   - map common severity synonyms (blocker→critical, warning→medium, nit→low)
+ *   - trim a finding's string `reachable_scenario` (kept, like every finding key)
  *   - coerce `next_steps`/`findings` to arrays (default [])
  * Because we reuse codex's generic `task` path (no `outputSchema` enforcement,
  * unlike the reference's native review subcommand), this client-side normalization
@@ -167,7 +193,13 @@ export function normalizeReviewArtifact(value) {
   if (Array.isArray(out.findings)) {
     out.findings = out.findings.map((f) =>
       f && typeof f === "object" && !Array.isArray(f)
-        ? { ...f, severity: normalizeSeverity(f.severity) }
+        ? {
+            ...f,
+            severity: normalizeSeverity(f.severity),
+            ...(typeof f.reachable_scenario === "string"
+              ? { reachable_scenario: f.reachable_scenario.trim() }
+              : {})
+          }
         : f
     );
   }

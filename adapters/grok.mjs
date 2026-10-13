@@ -8,6 +8,7 @@ import os from "node:os";
 import path from "node:path";
 
 import { defineAdapter } from "./contract.mjs";
+import { REACHABLE_SCENARIO_INSTRUCTION } from "../core/schema.mjs";
 import { run } from "../core/process.mjs";
 import { resolvePin } from "../core/pins.mjs";
 
@@ -67,10 +68,12 @@ export default defineAdapter({
         "\n\n<output_contract>\nReturn ONLY a JSON object of the form:\n" +
         '{"verdict":"approve"|"needs-attention","summary":string,' +
         '"findings":[{"severity":"critical"|"high"|"medium"|"low","title":string,"body":string,' +
-        '"file":string,"line_start":int,"line_end":int,"confidence":0..1,"recommendation":string}],' +
+        '"file":string,"line_start":int,"line_end":int,"confidence":0..1,"recommendation":string,' +
+        '"reachable_scenario":string}],' +
         '"next_steps":[string]}\nPut the highest-severity findings first. Every actionable defect must be a finding; ' +
         'never hide defects in summary or next_steps. A needs-attention verdict requires at least one finding. ' +
-        'No prose outside the JSON.\n</output_contract>'
+        REACHABLE_SCENARIO_INSTRUCTION +
+        ' No prose outside the JSON.\n</output_contract>'
       );
     }
     return (

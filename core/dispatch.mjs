@@ -14,7 +14,7 @@ import { createWorktree, removeWorktree, resolveWorkspaceRoot, canonical, listWo
 import { headRef, upstreamRef, isAncestorOf, isBenignRemoteFastForward, reflogCount, captureWorkingDiff, captureWorkingTreeSnapshot, applyPatch, checkPatchApplies, checkPatchAppliesOnRef, workingTreeStatus, workingTreeDigest, newStatusPaths, stageDiffIntoWorktree, diffPaths, looksLikeDiff, extractUnifiedDiff } from "./git.mjs";
 import { run } from "./process.mjs";
 import { isPidAlive, isStalled, touchHeartbeat } from "./heartbeat.mjs";
-import { coerceArtifact, normalizeReviewArtifact } from "./schema.mjs";
+import { coerceArtifact, normalizeReviewArtifact, REACHABLE_SCENARIO_INSTRUCTION } from "./schema.mjs";
 import { buildFromTemplate, templateDigest } from "./prompts.mjs";
 import { classifyFailure, FALLBACK_KINDS } from "./failures.mjs";
 import { MODEL_PROFILES, TASK_ROUTING, DEFAULT_ROUTING, WRITE_TASKS, resolveModelTimeout } from "./model-profiles.mjs";
@@ -415,14 +415,16 @@ const NATIVE_INSTRUCTION = {
   opencode: "Use opencode's built-in subagent/task capabilities instead of a cross-harness job."
 };
 
-function schemaInstruction(role) {
+export function schemaInstruction(role) {
   if (role === "reviewer") {
     return (
       '\n\n---\nReturn ONLY a JSON object (optionally in a ```json fence) of the form:\n' +
       '{"verdict":"approve"|"needs-attention","summary":string,' +
       '"findings":[{"severity":"critical"|"high"|"medium"|"low","title":string,"body":string,' +
-      '"file":string,"line_start":int,"line_end":int,"confidence":0..1,"recommendation":string}],' +
-      '"next_steps":[string]}'
+      '"file":string,"line_start":int,"line_end":int,"confidence":0..1,"recommendation":string,' +
+      '"reachable_scenario":string}],' +
+      '"next_steps":[string]}\n' +
+      REACHABLE_SCENARIO_INSTRUCTION
     );
   }
   return (
@@ -951,12 +953,24 @@ export function runWorkerSync(cwd, opts) {
 
   // Repair prompts: a full fresh re-send vs. a short ask used when CONTINUING the
   // worker's existing thread (resume) — there the context is already loaded.
-  const freshRepair =
+  // Both name the previous attempt's validation errors, so a reviewer that left
+  // out a required field (e.g. reachable_scenario on a critical finding) is
+  // told which finding lacks it.
+  const validationErrorLines = () => {
+    const errors = Array.isArray(coerce?.errors) ? coerce.errors.filter((e) => typeof e === "string") : [];
+    if (!errors.length) return "";
+    const shown = errors.slice(0, 20).map((e) => `- ${e}`);
+    if (errors.length > shown.length) shown.push(`- (${errors.length - shown.length} more)`);
+    return `\nValidation errors:\n${shown.join("\n")}`;
+  };
+  const freshRepair = () =>
     `${basePrompt}\n\nIMPORTANT: your previous reply was not valid. ` +
-    `Respond with ONLY a single JSON object matching the schema above — no prose.`;
-  const resumeRepair =
+    `Respond with ONLY a single JSON object matching the schema above — no prose.` +
+    validationErrorLines();
+  const resumeRepair = () =>
     "Your previous reply was not valid for the required schema. Re-send ONLY a " +
-    "single JSON object matching that schema — no prose, nothing else.";
+    "single JSON object matching that schema — no prose, nothing else." +
+    validationErrorLines();
   // OpenCode (and similar) null-turn: same session, short nudge — do not restart.
   const continueNudge =
     "Your previous turn produced no usable answer (null turn / empty completion). " +
@@ -989,7 +1003,7 @@ export function runWorkerSync(cwd, opts) {
       // a fresh full re-send so resume can never regress.
       // Skip thread-resume when noResume (background runs): `--resume-last` /
       // bare `--continue` can resolve a DIFFERENT job's thread under concurrency.
-      const repairBrief = pendingNullTurnNudge ? continueNudge : resumeRepair;
+      const repairBrief = pendingNullTurnNudge ? continueNudge : resumeRepair();
       const retryCmd = (!noResume && adapter.buildRetryCommand)
         ? buildCmd(() =>
             adapter.buildRetryCommand({
@@ -1009,13 +1023,13 @@ export function runWorkerSync(cwd, opts) {
         proc = execGuarded(cmd);
         if (adapter.isResumeMiss && adapter.isResumeMiss(proc)) {
           cmd = buildCmd(() =>
-            adapter.buildCommand({ role, brief: freshRepair, workspace, artifactDir, timeoutMs, profile })
+            adapter.buildCommand({ role, brief: freshRepair(), workspace, artifactDir, timeoutMs, profile })
           );
           proc = execGuarded(cmd);
         }
       } else {
         cmd = buildCmd(() =>
-          adapter.buildCommand({ role, brief: freshRepair, workspace, artifactDir, timeoutMs, profile })
+          adapter.buildCommand({ role, brief: freshRepair(), workspace, artifactDir, timeoutMs, profile })
         );
         proc = execGuarded(cmd);
       }

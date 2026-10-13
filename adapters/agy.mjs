@@ -5,6 +5,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { defineAdapter } from "./contract.mjs";
+import { REACHABLE_SCENARIO_INSTRUCTION } from "../core/schema.mjs";
 import { run } from "../core/process.mjs";
 import { resolvePin } from "../core/pins.mjs";
 
@@ -99,9 +100,11 @@ export default defineAdapter({
         "Match this exact shape (replace the values):\n" +
         '{"verdict":"approve" | "needs-attention","summary":"<one line>",' +
         '"findings":[{"severity":"high","title":"...","body":"...","file":"path",' +
-        '"line_start":1,"line_end":1,"confidence":0.9,"recommendation":"..."}],' +
+        '"line_start":1,"line_end":1,"confidence":0.9,"recommendation":"...",' +
+        '"reachable_scenario":"..."}],' +
         '"next_steps":["..."]}. Every actionable defect must be in findings; never hide defects in ' +
-        'summary or next_steps. A needs-attention verdict requires at least one finding.'
+        'summary or next_steps. A needs-attention verdict requires at least one finding. ' +
+        REACHABLE_SCENARIO_INSTRUCTION
       );
     }
     return (
