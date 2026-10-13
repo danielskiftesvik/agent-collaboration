@@ -31,49 +31,70 @@ function isInside(root, candidate) {
   return rel === "" || (!rel.startsWith("..") && !path.isAbsolute(rel));
 }
 
-// Job records must resolve (symlinks followed) inside artifactDir: a link that
-// escapes it is ignored. Rollouts keep the lexical isInside check because a
-// Codex home may legitimately symlink its sessions directory elsewhere.
-function isInsideReal(root, candidate) {
+// Bounds for the telemetry scan. Every failed, oversized or incomplete read is
+// ambiguous and yields null; nothing is ever inferred from a partial scan.
+const MAX_JOB_BYTES = 1024 * 1024;
+const MAX_ROLLOUT_BYTES = 64 * 1024 * 1024;
+const ROLLOUT_CHUNK_BYTES = 1024 * 1024;
+const MAX_TURN_CONTEXT_LINE_BYTES = 1024 * 1024;
+// A rollout line is `{"timestamp":…,"type":<kind>,"payload":…}`; the record
+// kind sits in the first bytes, so only lines whose head names turn_context
+// are kept and parsed. Other lines (tool output can be megabytes) are skipped
+// without being held in memory.
+const LINE_HEAD_BYTES = 256;
+const TURN_CONTEXT_MARK = '"type":"turn_context"';
+
+function realpathOrNull(p) {
   try {
-    return isInside(fs.realpathSync.native(root), fs.realpathSync.native(candidate));
+    return fs.realpathSync.native(p);
   } catch {
-    return false;
+    return null;
   }
 }
 
-function readJsonFile(file) {
+// Directory listing for the scan: [] when the directory does not exist, null
+// (ambiguous) when it exists but cannot be read.
+function listDir(dir, withFileTypes) {
   try {
-    return JSON.parse(fs.readFileSync(file, "utf8"));
+    return fs.readdirSync(dir, withFileTypes ? { withFileTypes: true } : undefined);
+  } catch (err) {
+    return err && err.code === "ENOENT" ? [] : null;
+  }
+}
+
+// Null when the file is unreadable, over the cap, or not a JSON object.
+function readJsonFile(file, maxBytes) {
+  try {
+    const st = fs.statSync(file);
+    if (!st.isFile() || st.size > maxBytes) return null;
+    const value = JSON.parse(fs.readFileSync(file, "utf8"));
+    return value && typeof value === "object" && !Array.isArray(value) ? value : null;
   } catch {
     return null;
   }
 }
 
 function completedTurnId(artifactDir, threadId) {
+  const realArtifactDir = realpathOrNull(artifactDir);
+  if (!realArtifactDir) return null;
   const root = path.join(artifactDir, "codex-companion", "state");
-  let slugs;
-  try {
-    slugs = fs.readdirSync(root, { withFileTypes: true });
-  } catch {
-    return null;
-  }
+  const slugs = listDir(root, true);
+  if (!slugs) return null;
   const jobs = [];
   for (const slug of slugs) {
     if (!slug.isDirectory()) continue;
     const jobsDir = path.join(root, slug.name, "jobs");
-    let names;
-    try {
-      names = fs.readdirSync(jobsDir);
-    } catch {
-      continue;
-    }
+    const names = listDir(jobsDir, false);
+    if (!names) return null;
     for (const name of names) {
       if (!name.endsWith(".json")) continue;
       const full = path.join(jobsDir, name);
-      if (!isInsideReal(artifactDir, full)) continue;
-      const job = readJsonFile(full);
-      if (!job || job.status !== "completed") continue;
+      // Job records must resolve (symlinks followed) inside artifactDir.
+      const real = realpathOrNull(full);
+      if (!real || !isInside(realArtifactDir, real)) return null;
+      const job = readJsonFile(full, MAX_JOB_BYTES);
+      if (!job) return null;
+      if (job.status !== "completed") continue;
       if (job.threadId !== threadId) continue;
       if (!UUID_RE.test(job.turnId || "")) return null;
       const ms = parseCanonicalUtcMs(job.completedAt);
@@ -92,47 +113,36 @@ function completedTurnId(artifactDir, threadId) {
   return top[0].turnId;
 }
 
+// The sessions root may itself be a symlink (resolved first); each matching
+// rollout must then resolve inside that real root.
 function findRollout(home, threadId) {
   const sessions = path.join(home, "sessions");
-  let years;
-  try {
-    years = fs.readdirSync(sessions, { withFileTypes: true });
-  } catch {
-    return null;
-  }
+  const realSessions = realpathOrNull(sessions);
+  if (!realSessions) return null;
+  const years = listDir(sessions, true);
+  if (!years) return null;
   const matches = [];
   const suffix = `-${threadId}.jsonl`;
   for (const year of years) {
     if (!year.isDirectory()) continue;
     const yearDir = path.join(sessions, year.name);
-    let months;
-    try {
-      months = fs.readdirSync(yearDir, { withFileTypes: true });
-    } catch {
-      continue;
-    }
+    const months = listDir(yearDir, true);
+    if (!months) return null;
     for (const month of months) {
       if (!month.isDirectory()) continue;
       const monthDir = path.join(yearDir, month.name);
-      let days;
-      try {
-        days = fs.readdirSync(monthDir, { withFileTypes: true });
-      } catch {
-        continue;
-      }
+      const days = listDir(monthDir, true);
+      if (!days) return null;
       for (const day of days) {
         if (!day.isDirectory()) continue;
         const dayDir = path.join(monthDir, day.name);
-        let files;
-        try {
-          files = fs.readdirSync(dayDir);
-        } catch {
-          continue;
-        }
+        const files = listDir(dayDir, false);
+        if (!files) return null;
         for (const name of files) {
           if (!name.startsWith("rollout-") || !name.endsWith(suffix)) continue;
           const full = path.join(dayDir, name);
-          if (!isInside(home, full)) continue;
+          const real = realpathOrNull(full);
+          if (!real || !isInside(realSessions, real)) return null;
           matches.push(full);
         }
       }
@@ -159,46 +169,122 @@ function settingsField(settings, key) {
   return settings[key];
 }
 
+// Null (ambiguous) unless every turn_context record for the turn parses, is
+// complete, and agrees. The rollout is read in bounded chunks: a file over
+// MAX_ROLLOUT_BYTES is refused before any read, at most the size seen at open
+// is read, and only turn_context lines (each capped) are held in memory.
 function readTurnContext(rolloutPath, turnId) {
-  let text;
+  let fd;
   try {
-    text = fs.readFileSync(rolloutPath, "utf8");
+    fd = fs.openSync(rolloutPath, "r");
   } catch {
     return null;
   }
-  const found = [];
-  for (const line of text.split("\n")) {
-    if (!line.includes("turn_context")) continue;
-    let rec;
+  try {
+    const st = fs.fstatSync(fd);
+    if (!st.isFile() || st.size > MAX_ROLLOUT_BYTES) return null;
+    const found = [];
+    let pieces = [];
+    let lineBytes = 0;
+    let mode = "head"; // head -> keep | skip, per line
+    let ambiguous = false;
+
+    const decide = () => {
+      const head = Buffer.concat(pieces).subarray(0, LINE_HEAD_BYTES).toString("utf8");
+      if (head.includes(TURN_CONTEXT_MARK)) {
+        mode = "keep";
+      } else {
+        mode = "skip";
+        pieces = [];
+      }
+    };
+    const endLine = () => {
+      if (mode === "head" && lineBytes > 0) decide();
+      if (mode === "keep") {
+        const row = turnContextRow(Buffer.concat(pieces).toString("utf8"), turnId);
+        if (row === null) ambiguous = true;
+        else if (row) found.push(row);
+      }
+      pieces = [];
+      lineBytes = 0;
+      mode = "head";
+    };
+    const take = (seg) => {
+      if (!seg.length || mode === "skip") {
+        lineBytes += seg.length;
+        return;
+      }
+      pieces.push(seg);
+      lineBytes += seg.length;
+      if (mode === "head" && lineBytes >= LINE_HEAD_BYTES) decide();
+      if (mode === "keep" && lineBytes > MAX_TURN_CONTEXT_LINE_BYTES) ambiguous = true;
+    };
+
+    const buf = Buffer.alloc(Math.min(ROLLOUT_CHUNK_BYTES, Math.max(1, st.size)));
+    let remaining = st.size;
+    while (remaining > 0 && !ambiguous) {
+      const n = fs.readSync(fd, buf, 0, Math.min(buf.length, remaining), null);
+      if (n <= 0) return null; // shrank under us: incomplete scan
+      remaining -= n;
+      const chunk = Buffer.from(buf.subarray(0, n));
+      let pos = 0;
+      while (pos < n && !ambiguous) {
+        const nl = chunk.indexOf(10, pos);
+        if (nl === -1) {
+          take(chunk.subarray(pos));
+          pos = n;
+        } else {
+          take(chunk.subarray(pos, nl));
+          endLine();
+          pos = nl + 1;
+        }
+      }
+    }
+    if (!ambiguous && lineBytes > 0) endLine(); // final line without a newline
+    if (ambiguous || !found.length) return null;
+    const first = found[0];
+    for (const row of found.slice(1)) {
+      if (row.model !== first.model || row.effort !== first.effort) return null;
+    }
+    return first;
+  } catch {
+    return null;
+  } finally {
     try {
-      rec = JSON.parse(line);
+      fs.closeSync(fd);
     } catch {
-      continue;
+      /* already closed */
     }
-    if (rec?.type !== "turn_context" || !rec.payload) continue;
-    if (rec.payload.turn_id !== turnId) continue;
-    const model = nonemptyString(rec.payload.model);
-    const effort = nonemptyString(rec.payload.effort);
-    if (!model || !effort) return null;
-    const settings = rec.payload.collaboration_mode?.settings;
-    const nestedModel = settingsField(settings, "model");
-    if (nestedModel !== undefined) {
-      const nested = nonemptyString(nestedModel);
-      if (!nested || nested !== model) return null;
-    }
-    const nestedEffort = settingsField(settings, "reasoning_effort");
-    if (nestedEffort !== undefined) {
-      const reasoning = nonemptyString(nestedEffort);
-      if (!reasoning || reasoning !== effort) return null;
-    }
-    found.push({ model, effort });
   }
-  if (!found.length) return null;
-  const first = found[0];
-  for (const row of found.slice(1)) {
-    if (row.model !== first.model || row.effort !== first.effort) return null;
+}
+
+// One kept line: false = not this turn's record (skip), null = ambiguous,
+// otherwise { model, effort }.
+function turnContextRow(line, turnId) {
+  let rec;
+  try {
+    rec = JSON.parse(line);
+  } catch {
+    return null;
   }
-  return first;
+  if (rec?.type !== "turn_context") return false;
+  if (!rec.payload || typeof rec.payload !== "object") return null;
+  if (rec.payload.turn_id !== turnId) return false;
+  const model = nonemptyString(rec.payload.model);
+  const effort = nonemptyString(rec.payload.effort);
+  if (!model || !effort) return null;
+  const settings = rec.payload.collaboration_mode?.settings;
+  const nestedModel = settingsField(settings, "model");
+  if (nestedModel !== undefined) {
+    const nested = nonemptyString(nestedModel);
+    if (!nested || nested !== model) return null;
+  }
+  const nestedEffort = settingsField(settings, "reasoning_effort");
+  if (nestedEffort !== undefined) {
+    const reasoning = nonemptyString(nestedEffort);
+    if (!reasoning || reasoning !== effort) return null;
+  }
+  return { model, effort };
 }
 
 function resolveCodexTurnTelemetry({ artifactDir, env, threadId }) {
@@ -360,10 +446,17 @@ export default defineAdapter({
         })
       };
     }
+    // Every path returns explicit telemetry: dispatch attributes the result to
+    // this attempt alone, so a missing value must read as null, never as
+    // "keep the previous attempt's".
     if (extracted && typeof extracted.output === "string") {
-      return { answerText: extracted.output, structured: null };
+      return {
+        answerText: extracted.output,
+        structured: null,
+        telemetry: resolveCodexTurnTelemetry({ artifactDir, env, threadId: extracted.threadId })
+      };
     }
-    return { answerText: (stdout ?? "").trim(), structured: null };
+    return { answerText: (stdout ?? "").trim(), structured: null, telemetry: emptyTelemetry() };
   },
   probe() {
     const companion = resolveCompanion();

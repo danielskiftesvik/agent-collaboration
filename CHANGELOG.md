@@ -15,6 +15,17 @@
   `turn_context` that is incomplete or disagrees with itself or its
   `collaboration_mode` settings. `runWorkerSync` now passes `artifactDir` and
   the spawn env to `parseOutput`.
+- **A repair attempt never inherits an earlier attempt's model or effort.**
+  Telemetry is per attempt: dispatch records the final attempt's telemetry
+  only, so an attempt that cannot be attributed clears what an earlier one
+  reported. Every codex output path (envelope, `output` form, plain text)
+  returns explicit telemetry, null when unresolved.
+- **The telemetry scan fails closed and is bounded.** An unreadable directory,
+  a malformed or oversized job file, a malformed or truncated `turn_context`
+  record, or a rollout whose real path leaves the (real) sessions root gives
+  null; a symlinked `sessions` directory still works. Rollouts over 64 MiB
+  are refused before any read; smaller ones are read in 1 MiB chunks, and
+  only `turn_context` lines (each capped at 1 MiB) are held in memory.
 
 ## 0.13.2 - 2026-10-13
 
