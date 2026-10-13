@@ -1061,12 +1061,17 @@ export function runWorkerSync(cwd, opts) {
       stdout: proc.stdout,
       stderr: proc.stderr,
       exitCode: proc.status,
-      workspace
+      workspace,
+      artifactDir,
+      env: cmd.env
     });
-    workerTelemetry = parsed.telemetry ?? workerTelemetry;
+    // Telemetry is per attempt: the recorded result is this attempt's output,
+    // so an attempt that cannot be attributed clears the model/effort an
+    // earlier attempt reported instead of inheriting them.
+    workerTelemetry = parsed.telemetry ?? null;
     if (parsed.telemetry?.sessionId) resumeSessionId = parsed.telemetry.sessionId;
     resolvedModel = parsed.telemetry?.resolvedModel ??
-      (parsed.telemetry?.resolvedModels?.length === 1 ? parsed.telemetry.resolvedModels[0] : resolvedModel);
+      (parsed.telemetry?.resolvedModels?.length === 1 ? parsed.telemetry.resolvedModels[0] : null);
     answerText = parsed.answerText ?? "";
     const candidate = parsed.structured ? JSON.stringify(parsed.structured) : answerText;
     coerce = coerceArtifact(schema, candidate, normalize);
