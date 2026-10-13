@@ -1,7 +1,7 @@
 // Codex turn telemetry: resolvedModel/effort come from the completed turn's
 // `turn_context` record in the Codex rollout, bound through the companion's
 // job record under the job's artifactDir. Every ambiguity fails closed to null.
-import { test } from "node:test";
+import { test, mock } from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
@@ -154,12 +154,171 @@ test("codex telemetry ignores a job record outside artifactDir (sibling dir or s
   assert.equal(r.telemetry.effort, null);
 });
 
-test("codex telemetry ignores a malformed job file and binds from the valid one", () => {
+test("codex telemetry fails closed on a malformed job file even when a valid one exists", () => {
   const { artifactDir, home } = fixture();
   writeJob(artifactDir, "broken", "{not json");
   writeJob(artifactDir, "task-1", completedJob());
-  writeRollout(home, ["{not json either", turnContext()]);
+  writeRollout(home, [turnContext()]);
   const r = parse({ artifactDir, home });
+  assert.deepEqual(r.telemetry, { threadId: THREAD, turnId: null, resolvedModel: null, effort: null });
+});
+
+test("codex telemetry skips a malformed rollout line that is not a turn_context record", () => {
+  const { artifactDir, home } = fixture();
+  writeJob(artifactDir, "task-1", completedJob());
+  writeRollout(home, ["{not json at all", turnContext()]);
+  const r = parse({ artifactDir, home });
+  assert.equal(r.telemetry.resolvedModel, "gpt-5.6-luna");
+  assert.equal(r.telemetry.effort, "medium");
+});
+
+test("codex telemetry fails closed on a malformed or truncated turn_context record", () => {
+  const { artifactDir, home } = fixture();
+  writeJob(artifactDir, "task-1", completedJob());
+  const full = turnContext();
+  writeRollout(home, [full, '{"timestamp":"2026-10-13T08:00:01.000Z","type":"turn_context","payload":{"turn_id":"x"']);
+  assert.equal(parse({ artifactDir, home }).telemetry.resolvedModel, null, "malformed turn_context line must be ambiguous");
+  const second = fixture();
+  writeJob(second.artifactDir, "task-1", completedJob());
+  // A rollout truncated in the middle of the turn's own turn_context record.
+  const file = writeRollout(second.home, [full]);
+  fs.writeFileSync(file, full.slice(0, Math.floor(full.length / 2)));
+  const r = parse(second);
+  assert.equal(r.telemetry.resolvedModel, null, "truncated rollout must be ambiguous");
+  assert.equal(r.telemetry.effort, null);
+});
+
+const ROOT = typeof process.getuid === "function" && process.getuid() === 0;
+
+test("codex telemetry fails closed when a sessions directory cannot be read", { skip: ROOT && "root ignores mode bits" }, () => {
+  const { artifactDir, home } = fixture();
+  writeJob(artifactDir, "task-1", completedJob());
+  writeRollout(home, [turnContext()]);
+  const blocked = path.join(home, "sessions", "2026", "09");
+  fs.mkdirSync(blocked, { recursive: true });
+  fs.chmodSync(blocked, 0o000);
+  try {
+    const r = parse({ artifactDir, home });
+    assert.equal(r.telemetry.resolvedModel, null);
+    assert.equal(r.telemetry.effort, null);
+  } finally {
+    fs.chmodSync(blocked, 0o755);
+  }
+});
+
+test("codex telemetry fails closed when a companion jobs directory cannot be read", { skip: ROOT && "root ignores mode bits" }, () => {
+  const { artifactDir, home } = fixture();
+  writeJob(artifactDir, "task-1", completedJob());
+  writeRollout(home, [turnContext()]);
+  const blocked = path.join(artifactDir, "codex-companion", "state", "ws-other", "jobs");
+  fs.mkdirSync(blocked, { recursive: true });
+  fs.chmodSync(blocked, 0o000);
+  try {
+    const r = parse({ artifactDir, home });
+    assert.equal(r.telemetry.turnId, null);
+    assert.equal(r.telemetry.resolvedModel, null);
+  } finally {
+    fs.chmodSync(blocked, 0o755);
+  }
+});
+
+test("codex telemetry rejects a rollout symlink that escapes the sessions root", () => {
+  const { artifactDir, home } = fixture();
+  writeJob(artifactDir, "task-1", completedJob());
+  const elsewhere = tmp("ac-codex-elsewhere-");
+  const outside = path.join(elsewhere, "rollout.jsonl");
+  fs.writeFileSync(outside, turnContext() + "\n");
+  const day = path.join(home, "sessions", "2026", "10", "13");
+  fs.mkdirSync(day, { recursive: true });
+  fs.symlinkSync(outside, path.join(day, `rollout-2026-10-13T08-00-00-${THREAD}.jsonl`));
+  const r = parse({ artifactDir, home });
+  assert.equal(r.telemetry.resolvedModel, null);
+  assert.equal(r.telemetry.effort, null);
+});
+
+test("codex telemetry follows a symlinked sessions directory", () => {
+  const { artifactDir, home } = fixture();
+  writeJob(artifactDir, "task-1", completedJob());
+  const store = tmp("ac-codex-store-");
+  writeRollout(store, [turnContext()]);
+  fs.symlinkSync(path.join(store, "sessions"), path.join(home, "sessions"));
+  const r = parse({ artifactDir, home });
+  assert.equal(r.telemetry.resolvedModel, "gpt-5.6-luna");
+  assert.equal(r.telemetry.effort, "medium");
+});
+
+test("codex telemetry refuses a rollout over the 64 MiB cap without reading it", () => {
+  const { artifactDir, home } = fixture();
+  writeJob(artifactDir, "task-1", completedJob());
+  const file = writeRollout(home, [turnContext()]);
+  fs.truncateSync(file, 64 * 1024 * 1024 + 1); // sparse: no real disk use
+  const readSync = mock.method(fs, "readSync");
+  const readFileSync = mock.method(fs, "readFileSync");
+  try {
+    const r = parse({ artifactDir, home });
+    assert.equal(r.telemetry.resolvedModel, null);
+    assert.equal(r.telemetry.effort, null);
+    const touched = [...readSync.mock.calls, ...readFileSync.mock.calls].length;
+    const readWhole = readFileSync.mock.calls.some((c) => String(c.arguments[0]) === file);
+    assert.equal(readWhole, false, "the rollout must not be read whole");
+    assert.equal(readSync.mock.calls.length, 0, `rollout bytes were read (${touched} read calls)`);
+  } finally {
+    readSync.mock.restore();
+    readFileSync.mock.restore();
+  }
+});
+
+test("codex telemetry reads a rollout under the cap in bounded chunks, never whole", () => {
+  const { artifactDir, home } = fixture();
+  writeJob(artifactDir, "task-1", completedJob());
+  const filler = JSON.stringify({ type: "event_msg", payload: { text: "x".repeat(4096) } });
+  const file = writeRollout(home, [turnContext(), ...Array(600).fill(filler)]); // ~2.4 MiB
+  const readFileSync = mock.method(fs, "readFileSync");
+  try {
+    const r = parse({ artifactDir, home });
+    assert.equal(r.telemetry.resolvedModel, "gpt-5.6-luna");
+    assert.equal(readFileSync.mock.calls.some((c) => String(c.arguments[0]) === file), false);
+  } finally {
+    readFileSync.mock.restore();
+  }
+});
+
+test("codex telemetry uses the spawn env CODEX_HOME over a conflicting ambient seat home", () => {
+  const { artifactDir, home } = fixture();
+  writeJob(artifactDir, "task-1", completedJob());
+  writeRollout(home, [turnContext()]);
+  const ambient = tmp("ac-codex-ambient-");
+  writeRollout(ambient, [turnContext({ model: "gpt-other-seat", effort: "low" }, {})]);
+  const saved = { CODEX_HOME: process.env.CODEX_HOME, AGENT_COLLAB_CODEX_HOME: process.env.AGENT_COLLAB_CODEX_HOME };
+  process.env.CODEX_HOME = ambient;
+  process.env.AGENT_COLLAB_CODEX_HOME = ambient;
+  try {
+    const r = parse({ artifactDir, home });
+    assert.equal(r.telemetry.resolvedModel, "gpt-5.6-luna");
+    assert.equal(r.telemetry.effort, "medium");
+  } finally {
+    for (const [k, v] of Object.entries(saved)) {
+      if (v === undefined) delete process.env[k];
+      else process.env[k] = v;
+    }
+  }
+});
+
+test("codex output-form and plain-text results carry explicit null telemetry", () => {
+  const codex = getAdapter("codex");
+  const outputForm = codex.parseOutput({ stdout: JSON.stringify({ output: ANSWER }) });
+  assert.equal(outputForm.answerText, ANSWER);
+  assert.deepEqual(outputForm.telemetry, { threadId: null, turnId: null, resolvedModel: null, effort: null });
+  const plain = codex.parseOutput({ stdout: "plain words, no envelope" });
+  assert.deepEqual(plain.telemetry, { threadId: null, turnId: null, resolvedModel: null, effort: null });
+});
+
+test("codex output-form result with a thread id resolves its turn like the envelope", () => {
+  const { artifactDir, home } = fixture();
+  writeJob(artifactDir, "task-1", completedJob());
+  writeRollout(home, [turnContext()]);
+  const r = parse({ artifactDir, home, stdout: JSON.stringify({ output: ANSWER, threadId: THREAD }) });
+  assert.equal(r.answerText, ANSWER);
   assert.equal(r.telemetry.resolvedModel, "gpt-5.6-luna");
   assert.equal(r.telemetry.effort, "medium");
 });
@@ -207,45 +366,118 @@ test("codex telemetry is null for a non-UUID threadId or a missing artifactDir",
     { threadId: THREAD, turnId: null, resolvedModel: null, effort: null });
 });
 
-test("runWorkerSync passes artifactDir and the spawn env to parseOutput (telemetry lands on the job)", () => {
+const THREAD2 = "01a1344a-cf0a-7510-b1a0-bd9562985640";
+const TURN2 = "01a1344a-d5c1-79c3-bd08-59c5060d7a50";
+const LATER = "2026-10-13T09:00:00.000Z";
+const INVALID = '{"verdict":"maybe"}';
+
+// Runs runWorkerSync against a stub companion. Each attempt (1-based) writes
+// its job record under CLAUDE_PLUGIN_DATA (as the real companion does, scoped
+// by the adapter to <artifactDir>/codex-companion) and prints its stdout.
+// CODEX_HOME is a temp dir on every path, so the real ~/.codex is never read.
+function runCodexStub(plan, { rollouts = [] } = {}) {
   isolateStateRoot();
   const repo = makeRepo();
   const home = tmp("ac-codex-home-");
-  writeRollout(home, [turnContext()]);
-  // Isolate HOME so instance aliases on this machine cannot relabel "codex".
-  const saved = {
-    HOME: process.env.HOME,
-    AGENT_COLLAB_CODEX_HOME: process.env.AGENT_COLLAB_CODEX_HOME,
-    AGENT_COLLAB_CODEX_COMPANION: process.env.AGENT_COLLAB_CODEX_COMPANION
-  };
+  for (const r of rollouts) writeRollout(home, r.lines, r.opts);
+  const keys = ["HOME", "CODEX_HOME", "AGENT_COLLAB_CODEX_HOME", "AGENT_COLLAB_CODEX_COMPANION"];
+  const saved = Object.fromEntries(keys.map((k) => [k, process.env[k]]));
   process.env.HOME = tmp("ac-home-");
+  process.env.CODEX_HOME = home;
   process.env.AGENT_COLLAB_CODEX_HOME = home;
   const stubDir = tmp("ac-codexstub-");
+  const planFile = path.join(stubDir, "plan.json");
+  fs.writeFileSync(planFile, JSON.stringify(plan));
   const stub = path.join(stubDir, "companion.mjs");
-  // The stub writes its job record where the real companion does: under
-  // CLAUDE_PLUGIN_DATA, which the adapter scopes to <artifactDir>/codex-companion.
   fs.writeFileSync(stub, `
     import fs from 'node:fs';
     import path from 'node:path';
-    const jobs = path.join(process.env.CLAUDE_PLUGIN_DATA, 'state', 'ws-1234', 'jobs');
-    fs.mkdirSync(jobs, { recursive: true });
-    fs.writeFileSync(path.join(jobs, 'task-1.json'), JSON.stringify(${JSON.stringify(completedJob())}));
-    process.stdout.write(${JSON.stringify(envelope())});
+    const plan = JSON.parse(fs.readFileSync(${JSON.stringify(planFile)}, 'utf8'));
+    const counter = ${JSON.stringify(path.join(stubDir, "count"))};
+    let n = 0;
+    try { n = Number(fs.readFileSync(counter, 'utf8')) || 0; } catch {}
+    fs.writeFileSync(counter, String(n + 1));
+    const step = plan[Math.min(n, plan.length - 1)];
+    if (step.job) {
+      const jobs = path.join(process.env.CLAUDE_PLUGIN_DATA, 'state', 'ws-1234', 'jobs');
+      fs.mkdirSync(jobs, { recursive: true });
+      fs.writeFileSync(path.join(jobs, 'task-' + (n + 1) + '.json'), JSON.stringify(step.job));
+    }
+    process.stdout.write(step.stdout);
   `);
   process.env.AGENT_COLLAB_CODEX_COMPANION = stub;
   try {
-    const res = runWorkerSync(repo, { driver: "claude", worker: "codex", role: "reviewer", brief: "review", maxAttempts: 1, noResume: true });
-    assert.equal(res.status, "completed");
-    assert.equal(res.resolvedModel, "gpt-5.6-luna");
-    assert.equal(res.workerTelemetry?.effort, "medium");
-    assert.equal(res.workerTelemetry?.turnId, TURN);
-    const job = getJob(repo, res.jobId);
-    assert.equal(job.resolvedModel, "gpt-5.6-luna");
-    assert.equal(job.workerTelemetry?.effort, "medium");
+    const res = runWorkerSync(repo, {
+      driver: "claude", worker: "codex", role: "reviewer", brief: "review",
+      maxAttempts: plan.length, noResume: true
+    });
+    return { res, job: getJob(repo, res.jobId), attempts: Number(fs.readFileSync(path.join(stubDir, "count"), "utf8")) };
   } finally {
     for (const [k, v] of Object.entries(saved)) {
       if (v === undefined) delete process.env[k];
       else process.env[k] = v;
     }
   }
+}
+
+function assertNullAttribution({ res, job }) {
+  assert.equal(res.resolvedModel, null, "result resolvedModel inherited from an earlier attempt");
+  assert.equal(res.workerTelemetry?.effort ?? null, null, "result effort inherited from an earlier attempt");
+  assert.equal(res.workerTelemetry?.resolvedModel ?? null, null);
+  assert.equal(job.resolvedModel, null, "job record resolvedModel inherited from an earlier attempt");
+  assert.equal(job.workerTelemetry?.effort ?? null, null, "job record effort inherited from an earlier attempt");
+}
+
+const ATTEMPT1_BOUND = { job: completedJob(), stdout: envelope({ rawOutput: INVALID }) };
+
+test("runWorkerSync passes artifactDir and the spawn env to parseOutput (telemetry lands on the job)", () => {
+  const { res, job } = runCodexStub([{ job: completedJob(), stdout: envelope() }], { rollouts: [{ lines: [turnContext()] }] });
+  assert.equal(res.status, "completed");
+  assert.equal(res.resolvedModel, "gpt-5.6-luna");
+  assert.equal(res.workerTelemetry?.effort, "medium");
+  assert.equal(res.workerTelemetry?.turnId, TURN);
+  assert.equal(job.resolvedModel, "gpt-5.6-luna");
+  assert.equal(job.workerTelemetry?.effort, "medium");
+});
+
+test("a codex repair whose final response has no usable turn context records null, not attempt 1's values", () => {
+  const out = runCodexStub(
+    [ATTEMPT1_BOUND, { job: completedJob({ id: "task-2", threadId: THREAD2, turnId: TURN2, completedAt: LATER }), stdout: envelope({ threadId: THREAD2 }) }],
+    { rollouts: [{ lines: [turnContext()] }] } // no rollout for THREAD2
+  );
+  assert.equal(out.attempts, 2);
+  assert.equal(out.res.status, "completed");
+  assertNullAttribution(out);
+});
+
+test("a codex repair whose final response uses the output form records null, not attempt 1's values", () => {
+  const out = runCodexStub([ATTEMPT1_BOUND, { stdout: JSON.stringify({ output: ANSWER }) }], { rollouts: [{ lines: [turnContext()] }] });
+  assert.equal(out.attempts, 2);
+  assert.equal(out.res.status, "completed");
+  assertNullAttribution(out);
+});
+
+test("a codex repair whose final response is plain text records null, not attempt 1's values", () => {
+  const out = runCodexStub([ATTEMPT1_BOUND, { stdout: ANSWER }], { rollouts: [{ lines: [turnContext()] }] });
+  assert.equal(out.attempts, 2);
+  assert.equal(out.res.status, "completed");
+  assertNullAttribution(out);
+});
+
+test("a codex repair with its own bound turn records the repair turn's model and effort", () => {
+  const out = runCodexStub(
+    [ATTEMPT1_BOUND, { job: completedJob({ id: "task-2", threadId: THREAD2, turnId: TURN2, completedAt: LATER }), stdout: envelope({ threadId: THREAD2 }) }],
+    {
+      rollouts: [
+        { lines: [turnContext()] },
+        { lines: [turnContext({ turn_id: TURN2, model: "gpt-6-luna", effort: "xhigh" }, { model: "gpt-6-luna", reasoning_effort: "xhigh" })], opts: { thread: THREAD2, stamp: "2026-10-13T09-00-00" } }
+      ]
+    }
+  );
+  assert.equal(out.attempts, 2);
+  assert.equal(out.res.resolvedModel, "gpt-6-luna");
+  assert.equal(out.res.workerTelemetry?.effort, "xhigh");
+  assert.equal(out.res.workerTelemetry?.turnId, TURN2);
+  assert.equal(out.job.resolvedModel, "gpt-6-luna");
+  assert.equal(out.job.workerTelemetry?.effort, "xhigh");
 });
