@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.13.3 - 2026-10-13
+
+- **Codex jobs record the model and effort of the turn that actually ran.**
+  `resolvedModel` and `workerTelemetry.effort` (with `threadId` and `turnId`)
+  are now read from the completed turn's `turn_context` record in the Codex
+  rollout (`$CODEX_HOME/sessions/YYYY/MM/DD/rollout-*-<threadId>.jsonl`),
+  bound through the companion's job record under the job's `artifactDir`.
+  Model and effort claimed by the `task --json` envelope are never trusted.
+  Every ambiguity fails closed to `null`: no artifactDir, a non-UUID thread,
+  no completed job for the thread, two latest completed turns with different
+  ids, a missing or non-canonical `completedAt`, a job record that resolves
+  outside `artifactDir`, zero or several rollouts for the thread, or a
+  `turn_context` that is incomplete or disagrees with itself or its
+  `collaboration_mode` settings. `runWorkerSync` now passes `artifactDir` and
+  the spawn env to `parseOutput`.
+
 ## 0.13.2 - 2026-10-13
 
 - **Critical review findings must name a reachable scenario.** A finding whose

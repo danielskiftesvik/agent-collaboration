@@ -1061,7 +1061,9 @@ export function runWorkerSync(cwd, opts) {
       stdout: proc.stdout,
       stderr: proc.stderr,
       exitCode: proc.status,
-      workspace
+      workspace,
+      artifactDir,
+      env: cmd.env
     });
     workerTelemetry = parsed.telemetry ?? workerTelemetry;
     if (parsed.telemetry?.sessionId) resumeSessionId = parsed.telemetry.sessionId;

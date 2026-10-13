@@ -11,6 +11,209 @@ import { extractJson, REACHABLE_SCENARIO_INSTRUCTION } from "../core/schema.mjs"
 import { resolvePin } from "../core/pins.mjs";
 
 const CLEANUP_BROKER = fileURLToPath(new URL("../scripts/cleanup-codex-broker.mjs", import.meta.url));
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+function emptyTelemetry(threadId = null, turnId = null) {
+  return { threadId, turnId, resolvedModel: null, effort: null };
+}
+
+function resolveCodexHome(env = {}) {
+  return (
+    env.CODEX_HOME ||
+    env.AGENT_COLLAB_CODEX_HOME ||
+    process.env.CODEX_HOME ||
+    path.join(os.homedir(), ".codex")
+  );
+}
+
+function isInside(root, candidate) {
+  const rel = path.relative(root, candidate);
+  return rel === "" || (!rel.startsWith("..") && !path.isAbsolute(rel));
+}
+
+// Job records must resolve (symlinks followed) inside artifactDir: a link that
+// escapes it is ignored. Rollouts keep the lexical isInside check because a
+// Codex home may legitimately symlink its sessions directory elsewhere.
+function isInsideReal(root, candidate) {
+  try {
+    return isInside(fs.realpathSync.native(root), fs.realpathSync.native(candidate));
+  } catch {
+    return false;
+  }
+}
+
+function readJsonFile(file) {
+  try {
+    return JSON.parse(fs.readFileSync(file, "utf8"));
+  } catch {
+    return null;
+  }
+}
+
+function completedTurnId(artifactDir, threadId) {
+  const root = path.join(artifactDir, "codex-companion", "state");
+  let slugs;
+  try {
+    slugs = fs.readdirSync(root, { withFileTypes: true });
+  } catch {
+    return null;
+  }
+  const jobs = [];
+  for (const slug of slugs) {
+    if (!slug.isDirectory()) continue;
+    const jobsDir = path.join(root, slug.name, "jobs");
+    let names;
+    try {
+      names = fs.readdirSync(jobsDir);
+    } catch {
+      continue;
+    }
+    for (const name of names) {
+      if (!name.endsWith(".json")) continue;
+      const full = path.join(jobsDir, name);
+      if (!isInsideReal(artifactDir, full)) continue;
+      const job = readJsonFile(full);
+      if (!job || job.status !== "completed") continue;
+      if (job.threadId !== threadId) continue;
+      if (!UUID_RE.test(job.turnId || "")) return null;
+      const ms = parseCanonicalUtcMs(job.completedAt);
+      if (ms === null) return null;
+      jobs.push({ turnId: job.turnId, ms });
+    }
+  }
+  if (!jobs.length) return null;
+  let latest = jobs[0].ms;
+  for (const job of jobs) {
+    if (job.ms > latest) latest = job.ms;
+  }
+  const top = jobs.filter((job) => job.ms === latest);
+  const ids = new Set(top.map((job) => job.turnId));
+  if (ids.size !== 1) return null;
+  return top[0].turnId;
+}
+
+function findRollout(home, threadId) {
+  const sessions = path.join(home, "sessions");
+  let years;
+  try {
+    years = fs.readdirSync(sessions, { withFileTypes: true });
+  } catch {
+    return null;
+  }
+  const matches = [];
+  const suffix = `-${threadId}.jsonl`;
+  for (const year of years) {
+    if (!year.isDirectory()) continue;
+    const yearDir = path.join(sessions, year.name);
+    let months;
+    try {
+      months = fs.readdirSync(yearDir, { withFileTypes: true });
+    } catch {
+      continue;
+    }
+    for (const month of months) {
+      if (!month.isDirectory()) continue;
+      const monthDir = path.join(yearDir, month.name);
+      let days;
+      try {
+        days = fs.readdirSync(monthDir, { withFileTypes: true });
+      } catch {
+        continue;
+      }
+      for (const day of days) {
+        if (!day.isDirectory()) continue;
+        const dayDir = path.join(monthDir, day.name);
+        let files;
+        try {
+          files = fs.readdirSync(dayDir);
+        } catch {
+          continue;
+        }
+        for (const name of files) {
+          if (!name.startsWith("rollout-") || !name.endsWith(suffix)) continue;
+          const full = path.join(dayDir, name);
+          if (!isInside(home, full)) continue;
+          matches.push(full);
+        }
+      }
+    }
+  }
+  if (matches.length !== 1) return null;
+  return matches[0];
+}
+
+function nonemptyString(value) {
+  return typeof value === "string" && value.trim() ? value.trim() : null;
+}
+
+function parseCanonicalUtcMs(value) {
+  if (typeof value !== "string") return null;
+  const ms = Date.parse(value);
+  if (!Number.isFinite(ms)) return null;
+  if (new Date(ms).toISOString() !== value) return null;
+  return ms;
+}
+
+function settingsField(settings, key) {
+  if (!settings || !Object.prototype.hasOwnProperty.call(settings, key)) return undefined;
+  return settings[key];
+}
+
+function readTurnContext(rolloutPath, turnId) {
+  let text;
+  try {
+    text = fs.readFileSync(rolloutPath, "utf8");
+  } catch {
+    return null;
+  }
+  const found = [];
+  for (const line of text.split("\n")) {
+    if (!line.includes("turn_context")) continue;
+    let rec;
+    try {
+      rec = JSON.parse(line);
+    } catch {
+      continue;
+    }
+    if (rec?.type !== "turn_context" || !rec.payload) continue;
+    if (rec.payload.turn_id !== turnId) continue;
+    const model = nonemptyString(rec.payload.model);
+    const effort = nonemptyString(rec.payload.effort);
+    if (!model || !effort) return null;
+    const settings = rec.payload.collaboration_mode?.settings;
+    const nestedModel = settingsField(settings, "model");
+    if (nestedModel !== undefined) {
+      const nested = nonemptyString(nestedModel);
+      if (!nested || nested !== model) return null;
+    }
+    const nestedEffort = settingsField(settings, "reasoning_effort");
+    if (nestedEffort !== undefined) {
+      const reasoning = nonemptyString(nestedEffort);
+      if (!reasoning || reasoning !== effort) return null;
+    }
+    found.push({ model, effort });
+  }
+  if (!found.length) return null;
+  const first = found[0];
+  for (const row of found.slice(1)) {
+    if (row.model !== first.model || row.effort !== first.effort) return null;
+  }
+  return first;
+}
+
+function resolveCodexTurnTelemetry({ artifactDir, env, threadId }) {
+  const tid = nonemptyString(threadId);
+  if (!tid || !UUID_RE.test(tid)) return emptyTelemetry(null, null);
+  if (!artifactDir) return emptyTelemetry(tid, null);
+  const turnId = completedTurnId(artifactDir, tid);
+  if (!turnId) return emptyTelemetry(tid, null);
+  const home = resolveCodexHome(env || {});
+  const rollout = findRollout(home, tid);
+  if (!rollout) return emptyTelemetry(tid, turnId);
+  const ctx = readTurnContext(rollout, turnId);
+  if (!ctx) return emptyTelemetry(tid, turnId);
+  return { threadId: tid, turnId, resolvedModel: ctx.model, effort: ctx.effort };
+}
 
 function scopedDataDir(artifactDir) {
   return artifactDir ? path.join(artifactDir, "codex-companion") : null;
@@ -141,20 +344,24 @@ export default defineAdapter({
       "</structured_output_contract>"
     );
   },
-  parseOutput({ stdout }) {
+  parseOutput({ stdout, artifactDir, env }) {
     // codex-companion `task --json` wraps the answer in an envelope:
     // { status, threadId, rawOutput, touchedFiles, reasoningSummary }.
-    // The agent's actual answer is the rawOutput string.
-    const env = extractJson(stdout);
-    if (env && typeof env.rawOutput === "string") {
+    // Model/effort come from the bound turn_context, never the envelope.
+    const extracted = extractJson(stdout);
+    if (extracted && typeof extracted.rawOutput === "string") {
       return {
-        answerText: env.rawOutput,
+        answerText: extracted.rawOutput,
         structured: null,
-        telemetry: { threadId: env.threadId ?? null, resolvedModel: env.model ?? null }
+        telemetry: resolveCodexTurnTelemetry({
+          artifactDir,
+          env,
+          threadId: extracted.threadId
+        })
       };
     }
-    if (env && typeof env.output === "string") {
-      return { answerText: env.output, structured: null };
+    if (extracted && typeof extracted.output === "string") {
+      return { answerText: extracted.output, structured: null };
     }
     return { answerText: (stdout ?? "").trim(), structured: null };
   },

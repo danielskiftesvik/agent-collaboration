@@ -7,7 +7,7 @@
 // Required:
 //   name: string
 //   buildCommand({ role, brief, workspace, timeoutMs, structured }) -> { command, args, env? }
-//   parseOutput({ role, stdout, stderr, exitCode, workspace }) -> artifact object
+//   parseOutput({ role, stdout, stderr, exitCode, workspace, artifactDir, env }) -> artifact object
 //   probe() -> { available: boolean, version?: string, error?: string }
 // Optional:
 //   unattendedProbe() -> { ok: boolean, detail?: string }   (used by `setup`)
