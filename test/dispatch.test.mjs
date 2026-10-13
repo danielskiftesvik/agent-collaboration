@@ -2212,6 +2212,48 @@ test("a codex repair attempt RESUMES the thread (task --resume-last) and succeed
   delete process.env.AC_MARKER;
 });
 
+// The repair re-prompt names the validation errors, so a reviewer that left
+// out a required field (e.g. reachable_scenario on a critical finding) is told
+// which finding lacks it — on both the resumed-thread and fresh re-send paths.
+for (const noResume of [false, true]) {
+  test(`a schema-invalid review is re-prompted with its validation errors (noResume=${noResume})`, () => {
+    isolateStateRoot();
+    const repo = makeRepo();
+    const countFile = path.join(isolateStateRoot(), "n.txt");
+    const promptFile = path.join(isolateStateRoot(), "repair-prompt.txt");
+    process.env.AC_COUNT_FILE = countFile;
+    process.env.AC_PROMPT_FILE = promptFile;
+    process.env.AGENT_COLLAB_CODEX_COMPANION = codexCompanionStub(`
+      import fs from 'node:fs';
+      const f = process.env.AC_COUNT_FILE;
+      const n = (fs.existsSync(f) ? Number(fs.readFileSync(f,'utf8')) : 0) + 1;
+      fs.writeFileSync(f, String(n));
+      const finding = {severity:'critical', title:'Lost set', body:'The final set is dropped.'};
+      if (n > 1) {
+        fs.writeFileSync(process.env.AC_PROMPT_FILE, process.argv[process.argv.length - 1]);
+        finding.reachable_scenario = 'A user finishes a workout offline and the last set is dropped on sync.';
+      }
+      const review = JSON.stringify({verdict:'needs-attention', summary:'one issue', findings:[finding]});
+      process.stdout.write(JSON.stringify({ status: 0, rawOutput: '\`\`\`json\\n' + review + '\\n\`\`\`' }));
+    `);
+
+    const res = runWorkerSync(repo, { driver: "claude", worker: "codex", role: "reviewer", brief: "review", maxAttempts: 2, noResume });
+
+    assert.equal(res.status, "completed");
+    assert.equal(res.resultValid, true);
+    const prompt = fs.readFileSync(promptFile, "utf8");
+    assert.match(
+      prompt,
+      /\$\.findings\[0\]\.reachable_scenario: required for a critical finding \(who, on what device or tooling run, does what, and what goes wrong\)/,
+      `repair prompt must list the validation errors; got: ${prompt.slice(-600)}`
+    );
+
+    delete process.env.AGENT_COLLAB_CODEX_COMPANION;
+    delete process.env.AC_COUNT_FILE;
+    delete process.env.AC_PROMPT_FILE;
+  });
+}
+
 test("a codex repair falls back to a FRESH re-send when the thread can't be resumed", () => {
   isolateStateRoot();
   const repo = makeRepo();
