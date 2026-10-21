@@ -18,6 +18,8 @@ const HANG = `Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 30000
 const WRITE_STUB = `
 import fs from 'node:fs';
 if (process.argv.includes('models')) { process.stdout.write('Gemini 3.5 Flash (High)'); process.exit(0); }
+// The adapter probe (\`--version\`) runs in the caller's cwd, not a worktree (#15).
+if (process.argv.includes('--version')) { process.stdout.write('1.0.0\\n'); process.exit(0); }
 fs.writeFileSync('worker-was-here.txt', 'hi from worker\\n');
 process.stdout.write('Done.\\n\\n\`\`\`json\\n{"status":"completed","summary":"made a file","changed":true}\\n\`\`\`\\n');
 `;
@@ -48,6 +50,11 @@ test("runWithFallback with empty fallbackKinds does not probe sibling harnesses"
   process.env.AGENT_COLLAB_AGY_BIN = stubBin(WRITE_STUB);
   process.env.AGENT_COLLAB_DSH_BIN = hungBin();
   process.env.AGENT_COLLAB_CMD_TIMEOUT_MS = "15000";
+  // The requested-worker probe runs in the caller's cwd (#15: it used to drop
+  // worker-was-here.txt into whichever checkout ran the suite).
+  const callerCwd = process.cwd();
+  const scratch = fs.mkdtempSync(path.join(os.tmpdir(), "ac-probe-cwd-"));
+  process.chdir(scratch);
   const t0 = Date.now();
   let res;
   try {
@@ -60,11 +67,13 @@ test("runWithFallback with empty fallbackKinds does not probe sibling harnesses"
       maxAttempts: 1
     });
   } finally {
+    process.chdir(callerCwd);
     delete process.env.AGENT_COLLAB_AGY_BIN;
     delete process.env.AGENT_COLLAB_DSH_BIN;
   }
   const ms = Date.now() - t0;
   assert.ok(ms < 6000, `--no-fallback must not wait on a hung sibling probe, took ${ms}ms`);
+  assert.deepEqual(fs.readdirSync(scratch), [], "probing the worker must not run its task in the caller's cwd");
   assert.notEqual(res.status, undefined);
   assert.notEqual(res.failureKind, "timeout");
 });
