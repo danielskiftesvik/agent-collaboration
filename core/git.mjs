@@ -231,6 +231,16 @@ export function resolveCommitRange(cwd, spec) {
 }
 
 /**
+ * Resolve a `--commit` spec once to its pinned `base..tip` SHA form, so every
+ * dual-review leg, fallback attempt and queued run reviews the same commits
+ * even if the named ref moves mid-run. Idempotent on its own output.
+ */
+export function pinCommitRange(cwd, spec) {
+  const { base, tip } = resolveCommitRange(cwd, spec);
+  return `${base}..${tip}`;
+}
+
+/**
  * Stage `tip`'s tree over a reviewer worktree checked out at the range's base,
  * so `git diff HEAD` is exactly base..tip — deletions included, which a
  * re-applied patch can't express once the change has landed (#12).

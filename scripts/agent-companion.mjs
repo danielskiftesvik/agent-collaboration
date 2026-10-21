@@ -17,6 +17,7 @@ import { renderSetup, renderJob, renderJobList, renderRecommendation, renderProf
 import { MODEL_PROFILES } from "../core/model-profiles.mjs";
 import { cleanupJobWorktree, collectGarbage, waitForPidExit } from "../core/gc.mjs";
 import { resolveWorkerRef, seatEnvFromWorkerRef } from "../core/instances.mjs";
+import { pinCommitRange } from "../core/git.mjs";
 
 const VALUE_FLAGS = new Set(["worker", "workers", "role", "driver", "base", "target", "timeout", "gate", "sandbox", "focus", "surface", "commit", "task", "job", "recent", "retention-days", "artifacts-older-than"]);
 const BOOL_FLAGS = new Set(["json", "apply", "wait", "background", "profiles", "no-fallback", "live", "active", "latest", "refresh", "artifact-only", "force", "force-primary", "dry-run", "include-unapplied"]);
@@ -207,9 +208,20 @@ switch (subcommand) {
     const role = options.role || (subcommand === "delegate" ? "worker" : "reviewer");
     const kind = subcommand === "delegate" ? undefined : subcommand; // review | adversarial-review
     const brief = positionals.join(" ");
-    if (options.commit && !kind) fail("delegate: --commit selects a review surface; use it with review or adversarial-review");
+    const hasCommit = "commit" in options;
+    if (hasCommit && !kind) fail("delegate: --commit selects a review surface; use it with review or adversarial-review");
     // A --commit review carries its own change, so the brief is optional focus text.
-    if (!brief && !options.commit) fail(`${subcommand}: a brief is required`);
+    if (!brief && !hasCommit) fail(`${subcommand}: a brief is required`);
+    // Pin --commit to SHAs once, here: dual-review legs and fallback attempts
+    // each re-resolving a symbolic ref could review different commits.
+    let commit;
+    if (hasCommit) {
+      try {
+        commit = pinCommitRange(cwd, options.commit);
+      } catch (err) {
+        fail(`${subcommand}: ${err.message}`);
+      }
+    }
 
     // Take the native (same-harness) path ONLY when the driver is authoritatively
     // known (explicit --driver or AGENT_COLLAB_DRIVER). A guessed/fallback driver
@@ -252,7 +264,7 @@ switch (subcommand) {
       const legs = workers.map((w) => ({
         worker: w,
         result: runWithFallback(cwd, {
-          driver, worker: w, role, brief, kind, focus: options.focus, surface: options.surface, commit: options.commit, timeoutMs, profile, base,
+          driver, worker: w, role, brief, kind, focus: options.focus, surface: options.surface, commit, timeoutMs, profile, base,
           fallbackKinds: new Set()
         })
       }));
@@ -276,7 +288,7 @@ switch (subcommand) {
     // `status <jobId> --wait`, read with `result`, stop with `cancel`. Single
     // worker (no auto-fallback — that's the synchronous path).
     if (options.background) {
-      const res = launchBackground(cwd, { driver, worker, role, brief, kind, focus: options.focus, surface: options.surface, commit: options.commit, timeoutMs, profile, base });
+      const res = launchBackground(cwd, { driver, worker, role, brief, kind, focus: options.focus, surface: options.surface, commit, timeoutMs, profile, base });
       // Codex gate finding (#1395 r2): a synchronously-blocked dispatch (e.g.
       // invalid --base) creates no job — printing poll instructions and
       // exiting 0 would send automation into a polling loop on an empty id.
@@ -292,7 +304,7 @@ switch (subcommand) {
     // (rate-limit, timeout); auth surfaces. Tune via AGENT_COLLAB_FALLBACK
     // (off|on|comma-list); --no-fallback forces a single worker.
     const fallbackKinds = options["no-fallback"] ? new Set() : resolveFallbackKinds();
-    const res = runWithFallback(cwd, { driver, worker, role, brief, kind, focus: options.focus, surface: options.surface, commit: options.commit, timeoutMs, profile, base, fallbackKinds });
+    const res = runWithFallback(cwd, { driver, worker, role, brief, kind, focus: options.focus, surface: options.surface, commit, timeoutMs, profile, base, fallbackKinds });
     if (options.apply && res.status === "completed" && role === "worker") {
       res.applied = applyResult(cwd, res.jobId, { forcePrimary: !!options["force-primary"] });
     }
@@ -315,7 +327,16 @@ switch (subcommand) {
     const worker = options.worker || prior.worker;
     const { driver } = resolveDriver(options);
     const brief = positionals.join(" ");
-    if (!brief && !options.commit) fail("review-followup: provide the focused follow-up diff or context");
+    const hasCommit = "commit" in options;
+    if (!brief && !hasCommit) fail("review-followup: provide the focused follow-up diff or context");
+    let commit;
+    if (hasCommit) {
+      try {
+        commit = pinCommitRange(cwd, options.commit);
+      } catch (err) {
+        fail(`review-followup: ${err.message}`);
+      }
+    }
     let priorArtifact = null;
     let priorReport = "";
     try {
@@ -339,7 +360,7 @@ switch (subcommand) {
     const timeoutMs = options.timeout ? Number(options.timeout) * 1000 : undefined;
     const res = runWithFallback(cwd, {
       driver, worker, role: "reviewer", kind: "review", brief, focus,
-      surface: options.surface, commit: options.commit, profile: options.profile, timeoutMs,
+      surface: options.surface, commit, base: options.base, profile: options.profile, timeoutMs,
       followupOf: priorId,
       fallbackKinds: options["no-fallback"] ? new Set() : resolveFallbackKinds()
     });

@@ -1413,6 +1413,57 @@ test("a pasted diff that HEAD already contains fails closed and points at --comm
   delete process.env.AGENT_COLLAB_AGY_BIN;
 });
 
+// Codex review of #14: each fallback attempt re-resolved a symbolic --commit,
+// so a ref moving mid-run had the fallback review a different range.
+test("runWithFallback reviews the same pinned --commit range on every attempt (#12)", () => {
+  isolateStateRoot();
+  const { repo, a, b, c } = landedCommitRepo();
+  git(["branch", "topic", c], repo);
+  process.env.AC_MOVE_TO = a;
+  process.env.AGENT_COLLAB_AGY_BIN = stubBin(`
+    import { execFileSync } from 'node:child_process';
+    if (process.argv.includes('models')) { process.exit(0); }
+    // Only during the review run itself (not the companion's availability probe).
+    if (process.cwd().includes('agent-collaboration-worktrees')) execFileSync('git', ['branch', '-f', 'topic', process.env.AC_MOVE_TO]);
+    process.stderr.write('Error: 429 RESOURCE_EXHAUSTED quota exceeded; retry-after: 60\\n');
+    process.exit(1);
+  `);
+  process.env.AGENT_COLLAB_CLAUDE_BIN = stubBin(`
+    process.stdout.write(JSON.stringify({ result: '\`\`\`json\\n{"verdict":"approve","summary":"ok","findings":[]}\\n\`\`\`' }));
+  `);
+
+  const res = runWithFallback(repo, {
+    driver: "codex", worker: "agy", role: "reviewer", kind: "review", commit: "topic",
+    available: ["agy", "claude"], maxAttempts: 1
+  });
+
+  assert.equal(git(["rev-parse", "topic"], repo), a, "the first attempt moved the ref");
+  assert.equal(res.worker, "claude");
+  assert.equal(res.status, "completed", (res.errors || []).join("; "));
+  assert.deepEqual(getJob(repo, res.jobId).reviewContext.commit, { base: b, tip: c });
+
+  delete process.env.AGENT_COLLAB_AGY_BIN;
+  delete process.env.AGENT_COLLAB_CLAUDE_BIN;
+  delete process.env.AC_MOVE_TO;
+});
+
+test("an explicitly empty --commit is refused, never read as no surface (#12)", () => {
+  isolateStateRoot();
+  const repo = makeRepo();
+  process.env.AGENT_COLLAB_AGY_BIN = stubBin(COMMIT_PROBE_STUB);
+
+  for (const commit of ["", "   "]) {
+    const res = runWorkerSync(repo, { driver: "claude", worker: "agy", role: "reviewer", kind: "review", brief: "focus text", commit });
+    assert.equal(res.status, "blocked", JSON.stringify(commit));
+    assert.match(res.errors[0], /--commit needs a commit/);
+    const bg = launchBackground(repo, { driver: "claude", worker: "agy", role: "reviewer", kind: "review", brief: "focus text", commit });
+    assert.equal(bg.status, "blocked", JSON.stringify(commit));
+    assert.equal(bg.failureKind, "review-surface");
+  }
+
+  delete process.env.AGENT_COLLAB_AGY_BIN;
+});
+
 test("launchBackground pins --commit to resolved SHAs at launch time (#12)", () => {
   isolateStateRoot();
   const { repo, b, c } = landedCommitRepo();

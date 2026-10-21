@@ -11,7 +11,7 @@ import { fileURLToPath } from "node:url";
 import { getAdapter, listAdapters } from "../adapters/index.mjs";
 import { resolveStateDir, appendJob, updateJob, getJob, loadState, isTerminalStatus } from "./state.mjs";
 import { createWorktree, removeWorktree, resolveWorkspaceRoot, canonical, listWorktrees, isPrimaryCheckout } from "./workspace.mjs";
-import { headRef, upstreamRef, isAncestorOf, isBenignRemoteFastForward, reflogCount, captureWorkingDiff, captureWorkingTreeSnapshot, applyPatch, checkPatchApplies, checkPatchAppliesOnRef, workingTreeStatus, workingTreeDigest, newStatusPaths, stageDiffIntoWorktree, stageCommitIntoWorktree, resolveCommitRange, diffPaths, looksLikeDiff, extractUnifiedDiff } from "./git.mjs";
+import { headRef, upstreamRef, isAncestorOf, isBenignRemoteFastForward, reflogCount, captureWorkingDiff, captureWorkingTreeSnapshot, applyPatch, checkPatchApplies, checkPatchAppliesOnRef, workingTreeStatus, workingTreeDigest, newStatusPaths, stageDiffIntoWorktree, stageCommitIntoWorktree, resolveCommitRange, pinCommitRange, diffPaths, looksLikeDiff, extractUnifiedDiff } from "./git.mjs";
 import { run } from "./process.mjs";
 import { isPidAlive, isStalled, touchHeartbeat } from "./heartbeat.mjs";
 import { coerceArtifact, normalizeReviewArtifact, REACHABLE_SCENARIO_INSTRUCTION } from "./schema.mjs";
@@ -687,23 +687,25 @@ export function runWorkerSync(cwd, opts) {
   let resolvedSurface = null;
   let sourceSnapshot = null;
   let commitRange = null;
-  if (commit && !(role === "reviewer" && TEMPLATE_KINDS.has(kind))) {
+  // Supplied-ness, not truthiness: an empty --commit must be refused, never
+  // read as "no commit surface" and quietly reviewed as HEAD.
+  if (commit != null && !(role === "reviewer" && TEMPLATE_KINDS.has(kind))) {
     return blocked("--commit selects a review surface; it only applies to review and adversarial-review", "review-surface");
   }
   if (role === "reviewer" && TEMPLATE_KINDS.has(kind)) {
     if (surface && !["head", "working-tree", "diff", "commit"].includes(surface)) {
       return blocked(`unknown review surface '${surface}'; use head, working-tree, diff, or commit`, "review-surface");
     }
-    if (commit && surface && surface !== "commit") {
+    if (commit != null && surface && surface !== "commit") {
       return blocked(`--commit reviews a commit; it can't be combined with --surface ${surface}`, "review-surface");
     }
-    if (surface === "commit" && !commit) {
+    if (surface === "commit" && commit == null) {
       return blocked("--surface commit needs --commit <sha> or --commit <a>..<b>", "review-surface");
     }
     // #12: a landed commit is reviewed in place — the worktree is created at its
     // parent (or <a>) and its tree staged over it — instead of re-applying its
     // diff onto a HEAD that already contains it.
-    if (commit) {
+    if (commit != null) {
       if (requestedBase !== undefined && String(requestedBase).trim() !== "") {
         return blocked("--commit reviews against the commit's parent (or <a> of <a>..<b>); drop --base", "review-surface");
       }
@@ -714,7 +716,7 @@ export function runWorkerSync(cwd, opts) {
       }
       baseRef = commitRange.base;
     }
-    resolvedSurface = commit ? "commit" : surface || (looksLikeDiff(brief) ? "diff" : mainDirtyPathsAtLaunch.length ? null : "head");
+    resolvedSurface = commitRange ? "commit" : surface || (looksLikeDiff(brief) ? "diff" : mainDirtyPathsAtLaunch.length ? null : "head");
     if (!resolvedSurface) {
       return blocked(
         `review target is ambiguous because the checkout has uncommitted changes (${mainDirtyPathsAtLaunch.join(", ")}). ` +
@@ -1474,6 +1476,16 @@ export function resolveFallbackKinds(env = process.env) {
 
 export function runWithFallback(cwd, opts) {
   const { driver, worker, available, fallback, fallbackKinds, task, ...rest } = opts;
+  // #12: pin --commit once, so a fallback attempt reviews the same SHAs as the
+  // first even if the named ref moves in between. An unresolvable spec is left
+  // for runWorkerSync to refuse with a job record.
+  if (rest.commit != null) {
+    try {
+      rest.commit = pinCommitRange(cwd, rest.commit);
+    } catch {
+      /* refused per attempt by runWorkerSync */
+    }
+  }
   const kinds =
     fallbackKinds instanceof Set
       ? fallbackKinds
@@ -1667,11 +1679,10 @@ export function launchBackground(cwd, opts) {
     base = probe.stdout.trim();
   }
   // #12: pin --commit the same way, so a queued review can't drift to a moved ref.
-  let commit = typeof opts.commit === "string" ? opts.commit.trim() : "";
-  if (commit) {
+  let commit;
+  if (opts.commit != null) {
     try {
-      const range = resolveCommitRange(cwd, commit);
-      commit = `${range.base}..${range.tip}`;
+      commit = pinCommitRange(cwd, opts.commit);
     } catch (e) {
       return refuse("review-surface", e?.message || String(e));
     }
@@ -1712,7 +1723,7 @@ export function launchBackground(cwd, opts) {
     request: {
       driver, worker, workerRef, role, brief, kind, focus, targetLabel, profile, surface,
       base: base || undefined,
-      commit: commit || undefined,
+      commit,
       timeoutMs: resolvedTimeoutMs, idleMs: resolvedIdleMs, maxAttempts,
       breachHeadBefore, breachReflogCount, breachBefore
     },

@@ -7,11 +7,14 @@
   `--commit <sha>` (that commit against its first parent) or
   `--commit <a>..<b>` (a range). The reviewer's worktree is created at the
   parent (or `<a>`) and the commit's tree is staged over it, so `git diff HEAD`
-  shows exactly that change, deletions included. Refs are pinned to SHAs at
-  launch, including for `--background`. The brief becomes optional focus text,
-  and the job records `reviewContext.commit: {base, tip}`. Root commits,
-  symmetric (`a...b`) or open-ended ranges, and combinations with `--surface`
-  or `--base` are refused. So is `--commit` on `delegate`.
+  shows exactly that change, deletions included. Refs are pinned to SHAs once
+  per command, so dual-review legs, fallback attempts and `--background` runs
+  all review the same commits even if the named ref moves mid-run. The brief
+  becomes optional focus text, and the job records
+  `reviewContext.commit: {base, tip}`. Refused: an empty `--commit`, root
+  commits, symmetric (`a...b`) or open-ended ranges, and combinations with
+  `--surface` or `--base`. So is `--commit` on `delegate`. `review-followup`
+  now forwards `--base`, as `review` does.
 - **The diff surface no longer stages an empty review.** Pasting a commit that
   `HEAD` already contains used to fail in one of two ways. If the commit
   deleted a file, it failed with `does not exist in index`. If it only modified
