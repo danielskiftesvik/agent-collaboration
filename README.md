@@ -466,7 +466,9 @@ companion's own job worktrees for this repository. Linked worktrees created by t
 other tools (PBI checkouts, a board-runner review-base) are not counted, and a refusal lists the
 worktrees it counted. Limits are read from the main checkout's `.agent-collab.json`, or from the
 nearest one above the cwd if the main checkout has none. A review run from an older detached
-checkout therefore gets the host repo's current limits.
+checkout therefore gets the host repo's current limits. Submodules and `--separate-git-dir`
+checkouts are the exception: Git records no main checkout there, so only the walk-up from the cwd
+applies.
 
 ## Configuration
 

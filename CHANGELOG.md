@@ -7,7 +7,8 @@
   review run from board-runner's detached review-base checkout, alongside two
   PBI worktrees, was blocked at `3/3` before the companion had created
   anything. The cap now counts only job worktrees under
-  `agent-collaboration-worktrees/<repo key>/`, under any harness's TMPDIR. A
+  `agent-collaboration-worktrees/<repo key>/`, whichever harness TMPDIR or
+  checkout created them (including submodule and separate-git-dir layouts). A
   refusal now lists the worktrees it counted and the config file that set the
   cap. `checkPreflight` returns the counted paths as `companionWorktrees`.
 - **Preflight limits come from the main checkout.** They are read from the

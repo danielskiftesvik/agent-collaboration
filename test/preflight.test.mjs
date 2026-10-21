@@ -111,3 +111,33 @@ test("preflight limits fall back to the nearest config above cwd when the main c
   assert.equal(config.maxWorktrees, 2);
   assert.equal(config._file, path.join(reviewBase, ".agent-collab.json"));
 });
+
+// Codex review of #11: with separate Git metadata (submodules, --separate-git-dir)
+// resolveWorkspaceRoot keys each checkout by its own toplevel, so a key-based
+// ownership match missed jobs created from a sibling checkout — a cap bypass.
+test("the worktree cap holds across checkouts with separate Git metadata", () => {
+  isolateStateRoot();
+  const parent = real(fs.mkdtempSync(path.join(os.tmpdir(), "ac-sepgit-")));
+  const repo = path.join(parent, "repo");
+  git(["init", "-q", "-b", "main", "--separate-git-dir", path.join(parent, "meta.git"), repo], parent);
+  git(["config", "user.email", "t@example.com"], repo);
+  git(["config", "user.name", "Test"], repo);
+  fs.writeFileSync(path.join(repo, "README.md"), "seed\n");
+  git(["add", "-A"], repo);
+  git(["commit", "-q", "-m", "init"], repo);
+  fs.writeFileSync(path.join(repo, ".agent-collab.json"), JSON.stringify({ preflight: { maxWorktrees: 1 } }));
+  git(["add", "-A"], repo);
+  git(["commit", "-q", "-m", "cap"], repo);
+  git(["worktree", "add", "-q", "--detach", path.join(parent, "sibling"), "HEAD"], repo);
+  const job = createWorktree(repo, "job-a", "HEAD");
+  try {
+    const result = checkPreflight(path.join(parent, "sibling"));
+
+    // Git records no main checkout here, so the sibling's own config applies.
+    assert.equal(result.config._file, path.join(parent, "sibling", ".agent-collab.json"));
+    assert.equal(result.ok, false, "a job created from the main checkout counts from a sibling checkout");
+    assert.deepEqual(result.companionWorktrees, [job]);
+  } finally {
+    removeWorktree(repo, job);
+  }
+});

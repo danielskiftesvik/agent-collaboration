@@ -3,7 +3,7 @@ import path from "node:path";
 
 import { run } from "./process.mjs";
 import { PIN_FILE } from "./pins.mjs";
-import { resolveWorkspaceRoot, worktreesDir } from "./workspace.mjs";
+import { resolveWorkspaceRoot, WORKTREES_ROOT_NAME } from "./workspace.mjs";
 
 function findConfig(start) {
   let dir = path.resolve(start);
@@ -21,7 +21,9 @@ function findConfig(start) {
  * Limits guard resources the whole repository shares, so the main checkout's
  * config wins: a review run from an older detached checkout (#11: board-runner's
  * review-base) must not be held to the cap that checkout happened to commit.
- * Falls back to the nearest config walking up from `cwd`.
+ * Falls back to the nearest config walking up from `cwd` — the only option in
+ * submodules and separate-git-dir layouts, where Git records no main checkout
+ * (`git worktree list` names the git dir) and the root resolves to `cwd`'s own.
  */
 export function readPreflightConfig(cwd) {
   const mainFile = path.join(resolveWorkspaceRoot(cwd), PIN_FILE);
@@ -36,16 +38,16 @@ export function readPreflightConfig(cwd) {
 }
 
 /**
- * Job worktrees this runtime created for `cwd`'s repository. Matched by the
- * `agent-collaboration-worktrees/<repo key>/<job>` shape rather than one
- * absolute root, because each driving harness may run with its own TMPDIR.
- * Host-repo worktrees (PBI checkouts, board-runner's review-base) never match.
+ * Job worktrees this runtime created, out of this repository's linked
+ * worktrees: anything at `agent-collaboration-worktrees/<repo key>/<job>`.
+ * Matched by shape, not one absolute root or key: each driving harness may run
+ * with its own TMPDIR, and with separate Git metadata (submodules,
+ * --separate-git-dir) each checkout derives its own key. `git worktree list`
+ * only lists this repository, so the shape alone proves ownership. Host-repo
+ * worktrees (PBI checkouts, board-runner's review-base) never match.
  */
-function companionWorktrees(cwd, paths) {
-  const own = worktreesDir(cwd);
-  const key = path.basename(own);
-  const rootName = path.basename(path.dirname(own));
-  return paths.filter((p) => path.basename(path.dirname(p)) === key && path.basename(path.dirname(path.dirname(p))) === rootName);
+function companionWorktrees(paths) {
+  return paths.filter((p) => path.basename(path.dirname(path.dirname(p))) === WORKTREES_ROOT_NAME);
 }
 
 /** Enforce optional, repo-owned resource limits before creating another worktree. */
@@ -58,7 +60,7 @@ export function checkPreflight(cwd, config = readPreflightConfig(cwd)) {
     ? worktrees.stdout.split(/\r?\n/).filter((line) => line.startsWith("worktree ")).slice(1).map((line) => line.slice("worktree ".length).trim())
     : null;
   const linkedWorktrees = linkedPaths?.length ?? null;
-  const owned = linkedPaths ? companionWorktrees(cwd, linkedPaths) : null;
+  const owned = linkedPaths ? companionWorktrees(linkedPaths) : null;
   if (Number.isFinite(config.maxWorktrees) && owned == null) {
     failures.push(`cannot evaluate worktree cap: ${worktrees.stderr || "git worktree list failed"}`);
   } else if (Number.isFinite(config.maxWorktrees) && owned.length >= config.maxWorktrees) {
