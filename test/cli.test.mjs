@@ -638,6 +638,92 @@ test("review --workers a,b reaches the dual branch (no --worker required)", () =
   assert.match(r.stderr + r.stdout, /unknown worker/i, "dual branch validates workers");
 });
 
+test("review --commit needs no brief; delegate --commit is refused (#12)", () => {
+  const dataDir = isolateStateRoot();
+  const repo = makeRepo();
+  fs.writeFileSync(path.join(repo, "app.js"), "const x = 1;\n");
+  git(["add", "-A"], repo);
+  git(["commit", "-q", "-m", "add app"], repo);
+  const bin = stubBin(
+    `process.stdout.write('\`\`\`json\\n' + JSON.stringify({verdict:'approve',summary:'ok',findings:[]}) + '\\n\`\`\`')`
+  );
+  const env = { AGENT_COLLAB_DATA: dataDir, AGENT_COLLAB_AGY_BIN: bin };
+
+  const review = cli(["review", "--worker", "agy", "--driver", "claude", "--commit", "HEAD", "--json"], { cwd: repo, env });
+  assert.equal(review.status, 0, review.stderr);
+  const job = getJob(repo, JSON.parse(review.stdout).jobId);
+  assert.equal(job.reviewContext.surface, "commit");
+  assert.equal(job.reviewContext.commit.tip, git(["rev-parse", "HEAD"], repo));
+
+  const delegate = cli(["delegate", "--worker", "agy", "--driver", "claude", "--commit", "HEAD", "do it"], { cwd: repo, env });
+  assert.equal(delegate.status, 1);
+  assert.match(delegate.stderr, /--commit/);
+});
+
+// Codex review of #14: dual-review legs each resolved a symbolic --commit, so a
+// ref moving during the first leg had the legs review different ranges.
+test("review --workers pins --commit once so every leg reviews the same range (#12)", () => {
+  const dataDir = isolateStateRoot();
+  const repo = makeRepo();
+  fs.writeFileSync(path.join(repo, "app.js"), "const x = 1;\n");
+  git(["add", "-A"], repo);
+  git(["commit", "-q", "-m", "B"], repo);
+  const b = git(["rev-parse", "HEAD"], repo);
+  const a = git(["rev-parse", "HEAD~1"], repo);
+  git(["branch", "topic", b], repo);
+  const agy = stubBin(`
+    import { execFileSync } from 'node:child_process';
+    if (process.argv.includes('models')) { process.exit(0); }
+    // Only during the review run itself (not the companion's availability probe).
+    if (process.cwd().includes('agent-collaboration-worktrees')) execFileSync('git', ['branch', '-f', 'topic', process.env.AC_MOVE_TO]);
+    process.stdout.write('\`\`\`json\\n' + JSON.stringify({verdict:'approve',summary:'ok',findings:[]}) + '\\n\`\`\`');
+  `);
+  const claude = stubBin(`
+    process.stdout.write(JSON.stringify({ result: '\`\`\`json\\n{"verdict":"approve","summary":"ok","findings":[]}\\n\`\`\`' }));
+  `);
+  const env = { AGENT_COLLAB_DATA: dataDir, AGENT_COLLAB_AGY_BIN: agy, AGENT_COLLAB_CLAUDE_BIN: claude, AC_MOVE_TO: a };
+
+  const r = cli(["review", "--workers", "agy,claude", "--driver", "codex", "--commit", "topic", "--json"], { cwd: repo, env });
+
+  assert.equal(r.status, 0, r.stderr);
+  assert.equal(git(["rev-parse", "topic"], repo), a, "the first leg moved the ref");
+  const legs = JSON.parse(r.stdout).legs;
+  assert.equal(legs.length, 2);
+  for (const leg of legs) {
+    assert.equal(leg.status, "completed", JSON.stringify(getJob(repo, leg.jobId).errors));
+    assert.deepEqual(getJob(repo, leg.jobId).reviewContext.commit, { base: a, tip: b }, leg.worker);
+  }
+});
+
+test("review --commit with an empty value fails instead of reviewing HEAD (#12)", () => {
+  const dataDir = isolateStateRoot();
+  const repo = makeRepo();
+  const env = { AGENT_COLLAB_DATA: dataDir, AGENT_COLLAB_AGY_BIN: stubBin("process.exit(0)") };
+  const r = cli(["review", "--worker", "agy", "--driver", "claude", "--no-fallback", "--commit", "", "focus text"], { cwd: repo, env });
+  assert.equal(r.status, 1);
+  assert.match(r.stderr, /--commit needs a commit/);
+});
+
+test("review-followup keeps the --commit/--base conflict check (#12)", () => {
+  const dataDir = isolateStateRoot();
+  const repo = makeRepo();
+  fs.writeFileSync(path.join(repo, "app.js"), "const x = 1;\n");
+  git(["add", "-A"], repo);
+  git(["commit", "-q", "-m", "B"], repo);
+  const artifactDir = path.join(dataDir, "artifacts", "prior-review");
+  fs.mkdirSync(path.join(artifactDir, "outputs"), { recursive: true });
+  fs.writeFileSync(path.join(artifactDir, "outputs", "agy.json"), JSON.stringify({ verdict: "approve", summary: "ok", findings: [] }));
+  appendJob(repo, { id: "prior-review", worker: "agy", role: "reviewer", driver: "claude", status: "completed", resultValid: true, artifactDir });
+  const env = { AGENT_COLLAB_DATA: dataDir, AGENT_COLLAB_AGY_BIN: stubBin("process.exit(0)") };
+
+  const r = cli(["review-followup", "--job", "prior-review", "--driver", "claude", "--no-fallback", "--commit", "HEAD", "--base", "HEAD~1", "--json"], { cwd: repo, env });
+
+  assert.equal(r.status, 2, r.stderr);
+  const res = JSON.parse(r.stdout);
+  assert.equal(res.status, "blocked");
+  assert.match(res.errors[0], /drop --base/);
+});
+
 test("review --workers rejects --background and single-entry lists explicitly", () => {
   const dataDir = isolateStateRoot();
   const repo = makeRepo();

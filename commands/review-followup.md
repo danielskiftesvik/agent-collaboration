@@ -1,6 +1,6 @@
 ---
 description: Recheck a prior cross-harness review against a focused follow-up change
-argument-hint: '--job <prior-job-id> [--worker <name>] [--surface head|working-tree|diff] <focused diff / context>'
+argument-hint: '--job <prior-job-id> [--worker <name>] [--surface head|working-tree|diff | --commit <sha|a..b>] <focused diff / context>'
 disable-model-invocation: true
 allowed-tools: Bash(node:*), Read
 ---

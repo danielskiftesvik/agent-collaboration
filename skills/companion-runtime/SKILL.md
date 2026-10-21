@@ -17,9 +17,9 @@ generalization of codex-plugin-cc's `codex-cli-runtime` skill.
 setup [--json] [--gate on|off] [--sandbox on|off] [--retention-days <n>]
 doctor [--live] [--workers a,b] [--json]
 delegate --worker <agy|codex|claude|cursor|grok|opencode|dsh|instance-alias> [--driver <name>] [--role worker|reviewer] [--profile <name>] [--background] [--apply] [--timeout <s>] [--no-fallback] <brief>
-review  --worker <name> | --workers a,b [--focus <text>] [--profile <name>] [--background] [--no-fallback] [--json] <diff/context>
-adversarial-review --worker <name> | --workers a,b [--surface head|working-tree|diff] [--focus <text>] [--profile <name>] [--background] [--no-fallback] [--json] <diff/context>
-review-followup --job <prior-id> [--worker <name>] [--surface head|working-tree|diff] <focused diff/context>
+review  --worker <name> | --workers a,b [--surface head|working-tree|diff | --commit <sha|a..b>] [--focus <text>] [--profile <name>] [--background] [--no-fallback] [--json] <diff/context>
+adversarial-review --worker <name> | --workers a,b [--surface head|working-tree|diff | --commit <sha|a..b>] [--focus <text>] [--profile <name>] [--background] [--no-fallback] [--json] <diff/context>
+review-followup --job <prior-id> [--worker <name>] [--surface head|working-tree|diff | --commit <sha|a..b>] <focused diff/context>
 status [jobId|--latest] [--worker <name>] [--role <role>] [--refresh|--wait] [--timeout <s>] [--active] [--recent <n>] [--json]
 result <jobId|--latest> [--worker <name>] [--role <role>] [--refresh] [--json]
 apply  <jobId>

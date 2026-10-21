@@ -187,11 +187,73 @@ export function stageDiffIntoWorktree(worktree, diff) {
     // half-applied state (the caller falls back to the pasted-diff path).
     run("git", ["reset", "-q", "--hard"], { cwd: worktree });
     run("git", ["clean", "-fdq"], { cwd: worktree });
-    return { staged: false, reason: r.stderr || "patch did not apply to HEAD" };
+    // #12: a landed commit's deletions fail as "does not exist in index".
+    const landed = run("git", ["apply", "--reverse", "--check", "--whitespace=nowarn"], { cwd: worktree, input: patch }).status === 0;
+    return { staged: false, reason: landed ? "the diff is already contained in HEAD" : r.stderr || "patch did not apply to HEAD" };
   }
   run("git", ["add", "-A"], { cwd: worktree });
+  // #12: a 3-way apply of a change HEAD already has "succeeds" as a no-op —
+  // staging it would hand the reviewer an empty change to approve.
+  if (run("git", ["diff", "--cached", "--quiet"], { cwd: worktree }).status === 0) {
+    return { staged: false, reason: "the diff is already contained in HEAD (applying it changed nothing)" };
+  }
   const s = run("git", ["diff", "--cached", "--stat"], { cwd: worktree });
   return { staged: true, stat: s.status === 0 ? s.stdout.trim() : "" };
+}
+
+/**
+ * Resolve a review `--commit` spec to pinned SHAs: `<rev>` is that commit
+ * against its first parent, `<a>..<b>` is the tree change from a to b. Throws
+ * a caller-facing message when the spec can't be reviewed unambiguously.
+ */
+export function resolveCommitRange(cwd, spec) {
+  const text = String(spec ?? "").trim();
+  const verify = (rev) => {
+    const r = run("git", ["rev-parse", "--verify", "--quiet", `${rev}^{commit}`], { cwd });
+    if (r.status !== 0) {
+      throw new Error(`--commit '${text}': '${rev}' is not a commit visible from this repository. Fetch it first, or pass a full SHA.`);
+    }
+    return r.stdout.trim();
+  };
+  if (!text) throw new Error("--commit needs a commit (<sha>) or a range (<a>..<b>)");
+  if (text.includes("...")) throw new Error(`--commit '${text}': symmetric ranges are not supported; use <a>..<b>`);
+  const ends = text.split("..");
+  if (ends.length === 2) {
+    if (!ends[0] || !ends[1]) throw new Error(`--commit '${text}': name both ends of the range (<a>..<b>)`);
+    return { base: verify(ends[0]), tip: verify(ends[1]) };
+  }
+  const tip = verify(text);
+  const parent = run("git", ["rev-parse", "--verify", "--quiet", `${tip}^1`], { cwd });
+  if (parent.status !== 0) {
+    throw new Error(`--commit '${text}': ${tip.slice(0, 12)} is a root commit with no parent to review it against`);
+  }
+  return { base: parent.stdout.trim(), tip };
+}
+
+/**
+ * Resolve a `--commit` spec once to its pinned `base..tip` SHA form, so every
+ * dual-review leg, fallback attempt and queued run reviews the same commits
+ * even if the named ref moves mid-run. Idempotent on its own output.
+ */
+export function pinCommitRange(cwd, spec) {
+  const { base, tip } = resolveCommitRange(cwd, spec);
+  return `${base}..${tip}`;
+}
+
+/**
+ * Stage `tip`'s tree over a reviewer worktree checked out at the range's base,
+ * so `git diff HEAD` is exactly base..tip — deletions included, which a
+ * re-applied patch can't express once the change has landed (#12).
+ */
+export function stageCommitIntoWorktree(worktree, tip) {
+  const r = run("git", ["read-tree", "--reset", "-u", tip], { cwd: worktree });
+  if (r.status !== 0) return { staged: false, reason: r.stderr || `could not stage ${tip}'s tree` };
+  if (run("git", ["diff", "--cached", "--quiet"], { cwd: worktree }).status === 0) {
+    return { staged: false, reason: "the range has no changes (both ends have the same tree)" };
+  }
+  const s = run("git", ["diff", "--cached", "--stat"], { cwd: worktree });
+  const d = run("git", ["diff", "--cached"], { cwd: worktree });
+  return { staged: true, stat: s.status === 0 ? s.stdout.trim() : "", diff: d.status === 0 ? d.stdout : "" };
 }
 
 /** Paths a unified diff touches (a/ and b/ sides, minus /dev/null), for targeted unstaging. */

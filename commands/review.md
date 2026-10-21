@@ -1,6 +1,6 @@
 ---
 description: Get a read-only correctness review from another harness against an explicit change surface
-argument-hint: '--worker <codex|claude|cursor|grok|agy|opencode|dsh> [--surface head|working-tree|diff] [--focus <text>] <diff / what to review>'
+argument-hint: '--worker <codex|claude|cursor|grok|agy|opencode|dsh> [--surface head|working-tree|diff | --commit <sha|a..b>] [--focus <text>] <diff / what to review>'
 disable-model-invocation: true
 allowed-tools: Bash(node:*), Bash(git:*), Read
 ---
@@ -18,6 +18,8 @@ to weight an area.
 Unified diffs select the `diff` surface automatically. A clean prose brief defaults to `head`;
 if the checkout is dirty, explicitly choose `--surface working-tree` to snapshot it or
 `--surface head` to exclude those changes. Ambiguous dirty reviews fail closed.
+
+To review a commit that has already landed, pass `--commit <sha>`, which reviews it against its first parent, or `--commit <a>..<b>` for a range. Don't paste its diff: re-applying a change onto a HEAD that already contains it fails, and the diff surface now refuses it. The reviewer's worktree starts at the parent (or `<a>`) with the commit's tree staged on top, so `git diff HEAD` shows exactly that change, deletions included. Refs are pinned to SHAs at launch, and the brief becomes optional focus text.
 
 ```bash
 node "${CLAUDE_PLUGIN_ROOT}/scripts/agent-companion.mjs" review $ARGUMENTS --driver claude
