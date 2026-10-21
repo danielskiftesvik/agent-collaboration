@@ -1281,6 +1281,162 @@ test("working-tree surface snapshots dirty content without changing the real ind
   delete process.env.AC_SEEN;
 });
 
+// ---- #12: reviewing a commit that has already landed ----
+
+// Records the reviewer's view: which files exist and what `git diff HEAD` says.
+const COMMIT_PROBE_STUB = `
+  import fs from 'node:fs';
+  import { execFileSync } from 'node:child_process';
+  if (process.argv.includes('models')) { process.exit(0); }
+  const prompt = process.argv[process.argv.length - 1];
+  const read = (f) => fs.existsSync(f) ? fs.readFileSync(f, 'utf8').trim() : null;
+  fs.writeFileSync(process.env.AC_SEEN, JSON.stringify({
+    app: read('app.js'), old: read('old.js'), added: read('new.js'),
+    nameStatus: execFileSync('git', ['diff', 'HEAD', '--name-status'], { encoding: 'utf8' }).trim(),
+    promptSaysApplied: /has been APPLIED to your working tree/.test(prompt),
+    promptHasBrief: prompt.includes('Focus on the deletion.')
+  }));
+  process.stdout.write('\`\`\`json\\n' + JSON.stringify({verdict:'approve',summary:'ok',findings:[]}) + '\\n\`\`\`');
+`;
+
+/** main: A (app.js x=1, old.js) -> B (x=2, delete old.js, add new.js) -> C (later, unrelated). */
+function landedCommitRepo() {
+  const repo = makeRepo();
+  fs.writeFileSync(path.join(repo, "app.js"), "const x = 1;\n");
+  fs.writeFileSync(path.join(repo, "old.js"), "old\n");
+  git(["add", "-A"], repo);
+  git(["commit", "-q", "-m", "A"], repo);
+  fs.writeFileSync(path.join(repo, "app.js"), "const x = 2;\n");
+  fs.rmSync(path.join(repo, "old.js"));
+  fs.writeFileSync(path.join(repo, "new.js"), "new\n");
+  git(["add", "-A"], repo);
+  git(["commit", "-q", "-m", "B"], repo);
+  fs.writeFileSync(path.join(repo, "later.txt"), "later\n");
+  git(["add", "-A"], repo);
+  git(["commit", "-q", "-m", "C"], repo);
+  return { repo, a: git(["rev-parse", "HEAD~2"], repo), b: git(["rev-parse", "HEAD~1"], repo), c: git(["rev-parse", "HEAD"], repo) };
+}
+
+function probeSeen() {
+  const seen = path.join(real(fs.mkdtempSync(path.join(os.tmpdir(), "ac-seen-"))), "seen.json");
+  process.env.AC_SEEN = seen;
+  process.env.AGENT_COLLAB_AGY_BIN = stubBin(COMMIT_PROBE_STUB);
+  return () => JSON.parse(fs.readFileSync(seen, "utf8"));
+}
+
+test("--commit reviews a landed commit against its parent, deletions included (#12)", () => {
+  isolateStateRoot();
+  const { repo, a, b } = landedCommitRepo();
+  const seen = probeSeen();
+
+  const res = runWorkerSync(repo, {
+    driver: "claude", worker: "agy", role: "reviewer", kind: "review",
+    commit: b.slice(0, 7), brief: "Focus on the deletion."
+  });
+
+  assert.equal(res.status, "completed", (res.errors || []).join("; "));
+  const got = seen();
+  assert.equal(got.app, "const x = 2;");
+  assert.equal(got.old, null, "the commit's deletion is materialized");
+  assert.equal(got.added, "new");
+  assert.deepEqual(got.nameStatus.split("\n").sort(), ["A\tnew.js", "D\told.js", "M\tapp.js"], "git diff HEAD is exactly the commit");
+  assert.equal(got.promptSaysApplied, true);
+  assert.equal(got.promptHasBrief, true, "the driver's brief rides along as focus context");
+  const job = getJob(repo, res.jobId);
+  assert.equal(job.reviewContext.surface, "commit");
+  assert.deepEqual(job.reviewContext.commit, { base: a, tip: b });
+  assert.equal(job.reviewContext.currentCheckoutMatchesSurface, true, "a pinned commit can't drift with the checkout");
+
+  delete process.env.AGENT_COLLAB_AGY_BIN;
+  delete process.env.AC_SEEN;
+});
+
+test("--commit a..b reviews the whole range (#12)", () => {
+  isolateStateRoot();
+  const { repo, a, c } = landedCommitRepo();
+  const seen = probeSeen();
+
+  const res = runWorkerSync(repo, { driver: "claude", worker: "agy", role: "reviewer", kind: "review", commit: `${a}..${c}` });
+
+  assert.equal(res.status, "completed", (res.errors || []).join("; "));
+  assert.deepEqual(seen().nameStatus.split("\n").sort(), ["A\tlater.txt", "A\tnew.js", "D\told.js", "M\tapp.js"]);
+  assert.deepEqual(getJob(repo, res.jobId).reviewContext.commit, { base: a, tip: c });
+
+  delete process.env.AGENT_COLLAB_AGY_BIN;
+  delete process.env.AC_SEEN;
+});
+
+test("--commit refuses specs it can't review unambiguously (#12)", () => {
+  isolateStateRoot();
+  const { repo, a } = landedCommitRepo();
+  process.env.AGENT_COLLAB_AGY_BIN = stubBin(COMMIT_PROBE_STUB);
+  const review = (extra) => runWorkerSync(repo, { driver: "claude", worker: "agy", role: "reviewer", kind: "review", brief: "x", ...extra });
+  const root = git(["rev-list", "--max-parents=0", "HEAD"], repo);
+
+  const cases = [
+    [{ commit: root }, /root commit/],
+    [{ commit: "no-such-ref" }, /not a commit/],
+    [{ commit: `${a}...HEAD` }, /symmetric/],
+    [{ commit: `${a}..` }, /both ends/],
+    [{ commit: "HEAD", surface: "diff" }, /--surface diff/],
+    [{ commit: "HEAD", base: a }, /--base/],
+    [{ surface: "commit" }, /needs --commit/],
+    [{ commit: "HEAD", role: "worker", kind: undefined }, /only applies to review/]
+  ];
+  for (const [extra, reason] of cases) {
+    const res = review(extra);
+    assert.equal(res.status, "blocked", JSON.stringify(extra));
+    assert.equal(res.failureKind, "review-surface", JSON.stringify(extra));
+    assert.match(res.errors[0], reason, JSON.stringify(extra));
+  }
+
+  delete process.env.AGENT_COLLAB_AGY_BIN;
+});
+
+test("a pasted diff that HEAD already contains fails closed and points at --commit (#12)", () => {
+  isolateStateRoot();
+  const { repo, b } = landedCommitRepo();
+  process.env.AGENT_COLLAB_AGY_BIN = stubBin(COMMIT_PROBE_STUB);
+  // Modify/add only: `git apply --3way` used to "succeed" as a no-op and hand the
+  // reviewer an empty change. With the deletion: "does not exist in index".
+  const modifyOnly = git(["show", b, "--", "app.js", "new.js"], repo);
+  const withDeletion = git(["show", b], repo);
+
+  for (const brief of [modifyOnly, withDeletion]) {
+    const res = runWorkerSync(repo, { driver: "claude", worker: "agy", role: "reviewer", kind: "review", surface: "diff", brief });
+    assert.equal(res.status, "blocked");
+    assert.equal(res.failureKind, "review-surface");
+    assert.match(res.errors[0], /already contained in HEAD/);
+    assert.match(res.errors[0], /--commit <sha>/);
+  }
+
+  delete process.env.AGENT_COLLAB_AGY_BIN;
+});
+
+test("launchBackground pins --commit to resolved SHAs at launch time (#12)", () => {
+  isolateStateRoot();
+  const { repo, b, c } = landedCommitRepo();
+  probeSeen();
+
+  git(["branch", "topic", c], repo);
+
+  const launched = launchBackground(repo, { driver: "claude", worker: "agy", role: "reviewer", kind: "review", brief: "x", maxAttempts: 1, commit: "topic" });
+  assert.equal(getJob(repo, launched.jobId).request.commit, `${b}..${c}`, "the request records pinned SHAs, not the raw ref");
+  // The branch moves while the job runs (HEAD untouched, so no breach) — the pinned range must not.
+  git(["branch", "-f", "topic", b], repo);
+
+  const job = waitForJob(repo, launched.jobId, { timeoutMs: 30000, pollMs: 150 });
+  assert.equal(job.status, "completed");
+  assert.deepEqual(job.reviewContext.commit, { base: b, tip: c });
+
+  const refused = launchBackground(repo, { driver: "claude", worker: "agy", role: "reviewer", kind: "review", brief: "x", commit: "no-such-ref" });
+  assert.equal(refused.status, "blocked");
+  assert.equal(refused.failureKind, "review-surface");
+
+  delete process.env.AGENT_COLLAB_AGY_BIN;
+  delete process.env.AC_SEEN;
+});
+
 // ---- async background execution ----
 
 test("launchBackground runs a worker detached; waitForJob blocks until completed", () => {

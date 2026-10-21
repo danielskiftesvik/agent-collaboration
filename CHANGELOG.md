@@ -1,5 +1,25 @@
 # Changelog
 
+## 0.13.5 - 2026-10-21
+
+- **Review a commit that has already landed with `--commit` (#12).**
+  `review`, `adversarial-review` and `review-followup` accept
+  `--commit <sha>` (that commit against its first parent) or
+  `--commit <a>..<b>` (a range). The reviewer's worktree is created at the
+  parent (or `<a>`) and the commit's tree is staged over it, so `git diff HEAD`
+  shows exactly that change, deletions included. Refs are pinned to SHAs at
+  launch, including for `--background`. The brief becomes optional focus text,
+  and the job records `reviewContext.commit: {base, tip}`. Root commits,
+  symmetric (`a...b`) or open-ended ranges, and combinations with `--surface`
+  or `--base` are refused. So is `--commit` on `delegate`.
+- **The diff surface no longer stages an empty review.** Pasting a commit that
+  `HEAD` already contains used to fail in one of two ways. If the commit
+  deleted a file, it failed with `does not exist in index`. If it only modified
+  or added files, `git apply --3way` "succeeded" as a no-op: the reviewer was
+  told the change was applied and saw an empty diff. Both cases now fail closed
+  with `already contained in HEAD`. Every diff-surface refusal points to
+  `--commit <sha>`.
+
 ## 0.13.4 - 2026-10-21
 
 - **The preflight worktree cap counts only the companion's own worktrees

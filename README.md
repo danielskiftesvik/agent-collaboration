@@ -228,7 +228,7 @@ Two delegation paths, chosen automatically:
 | `/agent-collab:gc [--dry-run] [--artifacts-older-than days] [--include-unapplied]` | Reclaim dead/terminal worktrees and expired artifacts; unapplied patches are preserved by default |
 | `/agent-collab:cancel <jobId> [--force]` | Cancel an unhealthy job; healthy within-budget jobs require the explicit `--force` override |
 
-Review commands accept `--surface head|working-tree|diff`. Unified diffs are detected automatically and clean prose defaults to `head`. Dirty prose fails closed until the caller chooses `working-tree` (safely snapshotted with a temporary Git index) or `head` (dirty paths excluded). `review-followup --job <prior-id> ...` runs a focused verification tied to the earlier review.
+Review commands accept `--surface head|working-tree|diff`. Unified diffs are detected automatically and clean prose defaults to `head`. Dirty prose fails closed until the caller chooses `working-tree` (safely snapshotted with a temporary Git index) or `head` (dirty paths excluded). To review a commit that has already landed, pass `--commit <sha>`, which reviews it against its first parent, or `--commit <a>..<b>` for a range. Don't paste its diff: re-applying a change onto a HEAD that already contains it fails, and the diff surface now refuses it. The reviewer's worktree starts at the parent (or `<a>`) with the commit's tree staged on top, so `git diff HEAD` shows exactly that change, deletions included. Refs are pinned to SHAs at launch, and the brief becomes optional focus text. `review-followup --job <prior-id> ...` runs a focused verification tied to the earlier review.
 
 ## Skills
 

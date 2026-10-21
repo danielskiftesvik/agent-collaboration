@@ -1,6 +1,6 @@
 ---
 description: Get an adversarial ("try to break it") review from another harness (codex, claude, cursor, grok, agy, opencode, or dsh) against the current changes
-argument-hint: '--worker <codex|claude|cursor|grok|agy|opencode|dsh> [--focus <text>] <what to review>'
+argument-hint: '--worker <codex|claude|cursor|grok|agy|opencode|dsh> [--surface head|working-tree|diff | --commit <sha|a..b>] [--focus <text>] <what to review>'
 disable-model-invocation: true
 allowed-tools: Bash(node:*), Bash(git:*), Read
 ---
@@ -13,7 +13,8 @@ Raw arguments:
 
 Any worker (**codex**, **claude**, **cursor**, **grok**, **agy**, **opencode**, or **dsh**) can review. Gather the diff to review
 (`git diff` / `git diff --cached`) and pass it as the brief; it becomes the
-template's `{{REVIEW_INPUT}}`. Use `--focus` to weight an area.
+template's `{{REVIEW_INPUT}}`. Use `--focus` to weight an area. For a commit that has
+already landed, pass `--commit <sha>` (or `--commit <a>..<b>`) instead of its diff.
 
 ```bash
 node "${CLAUDE_PLUGIN_ROOT}/scripts/agent-companion.mjs" adversarial-review $ARGUMENTS --driver claude

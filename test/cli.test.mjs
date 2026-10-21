@@ -638,6 +638,28 @@ test("review --workers a,b reaches the dual branch (no --worker required)", () =
   assert.match(r.stderr + r.stdout, /unknown worker/i, "dual branch validates workers");
 });
 
+test("review --commit needs no brief; delegate --commit is refused (#12)", () => {
+  const dataDir = isolateStateRoot();
+  const repo = makeRepo();
+  fs.writeFileSync(path.join(repo, "app.js"), "const x = 1;\n");
+  git(["add", "-A"], repo);
+  git(["commit", "-q", "-m", "add app"], repo);
+  const bin = stubBin(
+    `process.stdout.write('\`\`\`json\\n' + JSON.stringify({verdict:'approve',summary:'ok',findings:[]}) + '\\n\`\`\`')`
+  );
+  const env = { AGENT_COLLAB_DATA: dataDir, AGENT_COLLAB_AGY_BIN: bin };
+
+  const review = cli(["review", "--worker", "agy", "--driver", "claude", "--commit", "HEAD", "--json"], { cwd: repo, env });
+  assert.equal(review.status, 0, review.stderr);
+  const job = getJob(repo, JSON.parse(review.stdout).jobId);
+  assert.equal(job.reviewContext.surface, "commit");
+  assert.equal(job.reviewContext.commit.tip, git(["rev-parse", "HEAD"], repo));
+
+  const delegate = cli(["delegate", "--worker", "agy", "--driver", "claude", "--commit", "HEAD", "do it"], { cwd: repo, env });
+  assert.equal(delegate.status, 1);
+  assert.match(delegate.stderr, /--commit/);
+});
+
 test("review --workers rejects --background and single-entry lists explicitly", () => {
   const dataDir = isolateStateRoot();
   const repo = makeRepo();
