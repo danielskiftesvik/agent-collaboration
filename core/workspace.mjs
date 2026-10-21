@@ -63,11 +63,14 @@ export function resolveWorkspaceRoot(cwd) {
   return canonical(cwd);
 }
 
+/** Temp-root directory name every companion job worktree lives under. */
+export const WORKTREES_ROOT_NAME = "agent-collaboration-worktrees";
+
 /** Directory (outside the repo) where ephemeral worktrees for a workspace live. */
 export function worktreesDir(cwd) {
   // agy ignores workspace URIs under hidden directories; keep state hidden, but
   // put ephemeral git worktrees in a visible temp root.
-  return path.join(os.tmpdir(), "agent-collaboration-worktrees", path.basename(resolveStateDir(cwd)));
+  return path.join(os.tmpdir(), WORKTREES_ROOT_NAME, path.basename(resolveStateDir(cwd)));
 }
 
 /** True only for a direct child of this repository's plugin-owned temp root. */

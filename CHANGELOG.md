@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.13.4 - 2026-10-21
+
+- **The preflight worktree cap counts only the companion's own worktrees
+  (#11).** `preflight.maxWorktrees` used to count every linked worktree. A
+  review run from board-runner's detached review-base checkout, alongside two
+  PBI worktrees, was blocked at `3/3` before the companion had created
+  anything. The cap now counts only job worktrees under
+  `agent-collaboration-worktrees/<repo key>/`, whichever harness TMPDIR or
+  checkout created them (including submodule and separate-git-dir layouts). A
+  refusal now lists the worktrees it counted and the config file that set the
+  cap. `checkPreflight` returns the counted paths as `companionWorktrees`.
+- **Preflight limits come from the main checkout.** They are read from the
+  main checkout's `.agent-collab.json`, falling back to the nearest one above
+  the cwd. A review from an older detached checkout no longer uses the cap that
+  checkout happened to commit.
+
 ## 0.13.3 - 2026-10-13
 
 - **Codex jobs record the model and effort of the turn that actually ran,
