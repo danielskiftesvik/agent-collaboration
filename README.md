@@ -461,7 +461,12 @@ Optional repo-owned resource guards can live alongside model pins:
 {"preflight":{"maxWorktrees":3,"minFreeDiskGb":20}}
 ```
 
-They are checked before another isolated worktree is created.
+They are checked before another isolated worktree is created. `maxWorktrees` caps the
+companion's own job worktrees for this repository. Linked worktrees created by the host repo or
+other tools (PBI checkouts, a board-runner review-base) are not counted, and a refusal lists the
+worktrees it counted. Limits are read from the main checkout's `.agent-collab.json`, or from the
+nearest one above the cwd if the main checkout has none. A review run from an older detached
+checkout therefore gets the host repo's current limits.
 
 ## Configuration
 
