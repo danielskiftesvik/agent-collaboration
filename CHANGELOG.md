@@ -1,5 +1,19 @@
 # Changelog
 
+## Unreleased
+
+- **Codex telemetry now resolves after a repair attempt.** A review that needed
+  a second attempt (the repair runs on its own thread) used to record
+  `resolvedModel` and `effort` as null, because telemetry bound only when the
+  job directory held exactly one companion record. It now binds to the one
+  record naming the thread the result came from (completed, with a turn id) and
+  reads that turn's `turn_context` as before. Every other attempt that completed
+  a turn must have used the same model, and its turn must be readable; a model
+  disagreement, an unreadable attempt, several records for the thread, no record
+  for it, or any unreadable job record still yields null. A repair that resumes
+  the SAME thread leaves two records for it and still records null. The model is
+  never taken from the CLI envelope, config or a pin.
+
 ## 0.13.5 - 2026-10-21
 
 - **Review a commit that has already landed with `--commit` (#12).**
