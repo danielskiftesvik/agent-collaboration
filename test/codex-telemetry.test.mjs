@@ -138,14 +138,13 @@ test("codex telemetry is null when the thread has two completed jobs, even if th
   assert.equal(r.telemetry.turnId, null);
 });
 
-test("codex telemetry is null when artifactDir holds any second companion job (a repair attempt on another thread)", () => {
+test("codex telemetry still binds when the other companion job is a failed attempt that never completed a turn", () => {
   const { artifactDir, home } = fixture();
   writeJob(artifactDir, "task-1", completedJob());
   writeJob(artifactDir, "task-0", { id: "task-0", status: "failed", threadId: "01a1344a-cf0a-7510-b1a0-bd95629856ff" });
   writeRollout(home, [turnContext()]);
   const r = parse({ artifactDir, home });
-  assert.equal(r.telemetry.resolvedModel, null, "a job with a repair attempt must not bind");
-  assert.equal(r.telemetry.effort, null);
+  assert.deepEqual(r.telemetry, { threadId: THREAD, turnId: TURN, resolvedModel: "gpt-5.6-luna", effort: "medium" });
 });
 
 test("codex telemetry ignores a job record outside artifactDir (sibling dir or symlink escape)", () => {
@@ -563,7 +562,7 @@ test("a codex repair whose final response is plain text records null, not attemp
   assertNullAttribution(out);
 });
 
-test("a codex repair is never turn-bound, even when attempt 2 has its own bound turn", () => {
+test("a codex repair on another thread whose model DISAGREES with attempt 1 records null", () => {
   const out = runCodexStub(
     [ATTEMPT1_BOUND, { job: completedJob({ id: "task-2", threadId: THREAD2, turnId: TURN2, completedAt: LATER }), stdout: envelope({ threadId: THREAD2 }) }],
     {
@@ -585,4 +584,111 @@ test("a same-thread codex repair after a clock rollback records null, not attemp
   assert.equal(out.attempts, 2);
   assert.equal(out.res.status, "completed");
   assertNullAttribution(out);
+});
+
+// ---- last-attempt binding (a repair attempt runs on its own thread) --------------
+// Synthetic ids only: obviously fake, never taken from a real session.
+const TA = "00000000-0000-7000-8000-0000000000a1";
+const TB = "00000000-0000-7000-8000-0000000000b1";
+const UA = "00000000-0000-7000-8000-0000000000a2";
+const UB = "00000000-0000-7000-8000-0000000000b2";
+const MODEL = "model-x";
+
+function ctxFor(turn, model = MODEL, effort = "medium") {
+  return turnContext({ turn_id: turn, model, effort }, { model, reasoning_effort: effort });
+}
+
+// Two attempts: A (first, thread TA) and B (the repair, thread TB, the one the
+// dispatch result names). Each has a companion job record and a rollout.
+function twoAttempts({ aModel = MODEL, aEffort = "medium", bModel = MODEL, bEffort = "high", aJob = {}, bJob = {}, aRollout = true, bRollout = true } = {}) {
+  const { artifactDir, home } = fixture();
+  writeJob(artifactDir, "task-1", completedJob({ id: "task-1", threadId: TA, turnId: UA, ...aJob }));
+  writeJob(artifactDir, "task-2", completedJob({ id: "task-2", threadId: TB, turnId: UB, ...bJob }));
+  if (aRollout) writeRollout(home, [ctxFor(UA, aModel, aEffort)], { thread: TA, stamp: "2026-10-13T08-00-00" });
+  if (bRollout) writeRollout(home, [ctxFor(UB, bModel, bEffort)], { thread: TB, stamp: "2026-10-13T09-00-00" });
+  return { artifactDir, home };
+}
+const finalEnvelope = (over = {}) => envelope({ threadId: TB, ...over });
+
+test("two attempts that used the same model resolve from the final attempt's own turn", () => {
+  const { artifactDir, home } = twoAttempts({ aEffort: "medium", bEffort: "high" });
+  const r = parse({ artifactDir, home, stdout: finalEnvelope() });
+  assert.deepEqual(r.telemetry, { threadId: TB, turnId: UB, resolvedModel: MODEL, effort: "high" });
+});
+
+test("two attempts that disagree on the model resolve to null", () => {
+  const { artifactDir, home } = twoAttempts({ aModel: "model-y", bModel: MODEL });
+  const r = parse({ artifactDir, home, stdout: finalEnvelope() });
+  assert.equal(r.telemetry.resolvedModel, null);
+  assert.equal(r.telemetry.effort, null);
+});
+
+test("no companion job record names the dispatch result's thread: null", () => {
+  const { artifactDir, home } = twoAttempts();
+  const r = parse({ artifactDir, home, stdout: envelope({ threadId: "00000000-0000-7000-8000-0000000000c1" }) });
+  assert.equal(r.telemetry.resolvedModel, null);
+  assert.equal(r.telemetry.turnId, null);
+});
+
+test("another completed attempt with no rollout cannot be checked for agreement: null", () => {
+  const { artifactDir, home } = twoAttempts({ aRollout: false });
+  const r = parse({ artifactDir, home, stdout: finalEnvelope() });
+  assert.equal(r.telemetry.resolvedModel, null);
+});
+
+test("another completed attempt with no turn id cannot be checked for agreement: null", () => {
+  const { artifactDir, home } = twoAttempts({ aJob: { turnId: undefined } });
+  const r = parse({ artifactDir, home, stdout: finalEnvelope() });
+  assert.equal(r.telemetry.resolvedModel, null);
+});
+
+test("an earlier attempt that failed without a turn does not block the final attempt", () => {
+  const { artifactDir, home } = twoAttempts({ aJob: { status: "failed", turnId: undefined }, aRollout: false });
+  const r = parse({ artifactDir, home, stdout: finalEnvelope() });
+  assert.deepEqual(r.telemetry, { threadId: TB, turnId: UB, resolvedModel: MODEL, effort: "high" });
+});
+
+test("the final attempt binds by its thread, never by completedAt order (clock rollback)", () => {
+  const { artifactDir, home } = twoAttempts({ bJob: { completedAt: "2026-10-13T07:00:00.000Z" } });
+  const r = parse({ artifactDir, home, stdout: finalEnvelope() });
+  assert.deepEqual(r.telemetry, { threadId: TB, turnId: UB, resolvedModel: MODEL, effort: "high" });
+});
+
+test("the final attempt's record must be completed: a running one binds nothing", () => {
+  const { artifactDir, home } = twoAttempts({ bJob: { status: "running" } });
+  const r = parse({ artifactDir, home, stdout: finalEnvelope() });
+  assert.equal(r.telemetry.resolvedModel, null);
+});
+
+test("two attempts never take a model from the envelope", () => {
+  const { artifactDir, home } = twoAttempts({ aRollout: false });
+  const r = parse({ artifactDir, home, stdout: finalEnvelope({ model: "envelope-model", effort: "xhigh" }) });
+  assert.equal(r.telemetry.resolvedModel, null);
+  assert.equal(r.telemetry.effort, null);
+});
+
+test("a malformed job record next to the final attempt still fails closed", () => {
+  const { artifactDir, home } = twoAttempts();
+  writeJob(artifactDir, "task-3", "{ not json");
+  const r = parse({ artifactDir, home, stdout: finalEnvelope() });
+  assert.equal(r.telemetry.resolvedModel, null);
+});
+
+test("runWorkerSync: a repair on its own thread with the same model records the model, not null", () => {
+  const out = runCodexStub(
+    [
+      { job: completedJob({ threadId: TA, turnId: UA }), stdout: envelope({ threadId: TA, rawOutput: INVALID }) },
+      { job: completedJob({ id: "task-2", threadId: TB, turnId: UB }), stdout: envelope({ threadId: TB }) }
+    ],
+    { rollouts: [
+      { lines: [ctxFor(UA, MODEL, "medium")], opts: { thread: TA, stamp: "2026-10-13T08-00-00" } },
+      { lines: [ctxFor(UB, MODEL, "high")], opts: { thread: TB, stamp: "2026-10-13T09-00-00" } }
+    ] }
+  );
+  assert.equal(out.attempts, 2);
+  assert.equal(out.res.status, "completed");
+  assert.equal(out.res.resolvedModel, MODEL);
+  assert.equal(out.res.workerTelemetry?.turnId, UB);
+  assert.equal(out.job.resolvedModel, MODEL);
+  assert.equal(out.job.workerTelemetry?.effort, "high");
 });

@@ -78,13 +78,19 @@ function readJsonFile(file, maxBytes) {
   }
 }
 
-// The turn id of a SINGLE-ATTEMPT job, else null. artifactDir is one
-// agent-collaboration job; each companion task (the first attempt and every
-// repair re-send or resume) leaves one record in a jobs directory under it.
-// Telemetry binds only when there is exactly one such record, it is
-// completed, and it names this thread. Any repair attempt or sibling job
-// returns null, so no turn is ever chosen by wall-clock order.
-function singleAttemptTurnId(artifactDir, threadId) {
+// The turn the dispatch result came from, plus every OTHER attempt that
+// completed a turn, else null. artifactDir is one agent-collaboration job; each
+// companion task (the first attempt and every repair re-send or resume) leaves
+// one record in a jobs directory under it, and a repair attempt runs on its own
+// thread. The result names its thread (`threadId`, from that attempt's own
+// output), so the record to bind is the one record naming that thread: it must
+// be completed and carry a turn id. Any other shape is ambiguous and returns
+// null: no record names the thread, several do (a same-thread resume), or a job
+// record cannot be read or lies outside artifactDir. Records of other attempts
+// never choose the turn (no wall-clock order); each one that completed a turn
+// is returned so the caller can require that it used the same model. An
+// attempt that failed or never finished carries no turn and is skipped.
+function boundAttemptTurn(artifactDir, threadId) {
   const realArtifactDir = realpathOrNull(artifactDir);
   if (!realArtifactDir) return null;
   const root = path.join(artifactDir, "codex-companion", "state");
@@ -105,13 +111,20 @@ function singleAttemptTurnId(artifactDir, threadId) {
       const job = readJsonFile(full, MAX_JOB_BYTES);
       if (!job) return null;
       records.push(job);
-      if (records.length > 1) return null; // a repair attempt or a sibling job
     }
   }
-  if (records.length !== 1) return null;
-  const job = records[0];
-  if (job.status !== "completed" || job.threadId !== threadId) return null;
-  return UUID_RE.test(job.turnId || "") ? job.turnId : null;
+  const named = records.filter((job) => job.threadId === threadId);
+  if (named.length !== 1) return null;
+  const target = named[0];
+  if (target.status !== "completed" || !UUID_RE.test(target.turnId || "")) return null;
+  const others = [];
+  for (const job of records) {
+    if (job === target || job.status !== "completed") continue;
+    // A completed attempt must name its own thread and turn, or its model cannot be read.
+    if (!UUID_RE.test(job.threadId || "") || !UUID_RE.test(job.turnId || "")) return null;
+    others.push({ threadId: job.threadId, turnId: job.turnId });
+  }
+  return { turnId: target.turnId, others };
 }
 
 // The sessions root may itself be a symlink (resolved first); each matching
@@ -297,13 +310,21 @@ function resolveCodexTurnTelemetry({ artifactDir, env, threadId }) {
   const tid = nonemptyString(threadId);
   if (!tid || !UUID_RE.test(tid)) return emptyTelemetry(null, null);
   if (!artifactDir) return emptyTelemetry(tid, null);
-  const turnId = singleAttemptTurnId(artifactDir, tid);
-  if (!turnId) return emptyTelemetry(tid, null);
+  const bound = boundAttemptTurn(artifactDir, tid);
+  if (!bound) return emptyTelemetry(tid, null);
+  const { turnId, others } = bound;
   const home = resolveCodexHome(env || {});
   const rollout = findRollout(home, tid);
   if (!rollout) return emptyTelemetry(tid, turnId);
   const ctx = readTurnContext(rollout, turnId);
   if (!ctx) return emptyTelemetry(tid, turnId);
+  // Every other attempt that completed a turn must have used the same model;
+  // one whose turn cannot be read, or that used another model, is ambiguous.
+  for (const other of others) {
+    const otherRollout = findRollout(home, other.threadId);
+    const otherCtx = otherRollout ? readTurnContext(otherRollout, other.turnId) : null;
+    if (!otherCtx || otherCtx.model !== ctx.model) return emptyTelemetry(tid, turnId);
+  }
   return { threadId: tid, turnId, resolvedModel: ctx.model, effort: ctx.effort };
 }
 
